@@ -1,0 +1,21 @@
+[project]
+name = "local-transcriber"
+version = "0.1.0"
+description = "Local system + mic audio transcription"
+requires-python = ">=3.10"
+dependencies = [
+  "python-dotenv>=1.0.0",
+  "openai-whisper>=20250625",
+  "watchdog>=4.0.0",
+]
+
+[project.scripts]
+local-transcriber = "local_transcriber.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
