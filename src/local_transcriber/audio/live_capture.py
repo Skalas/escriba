@@ -9,14 +9,26 @@ import threading
 import time
 from pathlib import Path
 
+from local_transcriber.audio.device_detection import auto_detect_devices
+from local_transcriber.transcribe.streaming import StreamingTranscriber
 from local_transcriber.watch.watch_folder import watch_folder, wait_for_queue_empty
 
 logger = logging.getLogger(__name__)
 
 
 def run_live_capture(output_dir: Path, combined_transcript: Path | None = None) -> None:
-    system_device = _get_str_env("SYSTEM_DEVICE", "0")
-    mic_device = _get_str_env("MIC_DEVICE", "1")
+    # Detección automática de dispositivos (como Notion AI)
+    auto_detect = _get_bool_env("AUTO_DETECT_DEVICES", True)
+
+    if auto_detect:
+        logger.info("Auto-detecting audio devices...")
+        detected_system, detected_mic = auto_detect_devices()
+        system_device = detected_system or _get_str_env("SYSTEM_DEVICE", "0")
+        mic_device = detected_mic or _get_str_env("MIC_DEVICE", "1")
+        logger.info(f"Using devices - System: {system_device}, Mic: {mic_device}")
+    else:
+        system_device = _get_str_env("SYSTEM_DEVICE", "0")
+        mic_device = _get_str_env("MIC_DEVICE", "1")
     sample_rate = _get_int_env("SAMPLE_RATE", 16000, min_value=8000)
     channels = _get_int_env("CHANNELS", 1, min_value=1)
     segment_seconds = _get_int_env("SEGMENT_SECONDS", 30, min_value=1)
@@ -262,6 +274,350 @@ def _get_int_env(name: str, default: int, min_value: int | None = None) -> int:
     if min_value is not None and value < min_value:
         raise ValueError(f"{name} must be >= {min_value}, got {value}")
     return value
+
+
+def run_streaming_capture(
+    output_dir: Path,
+    combined_transcript: Path | None = None,
+) -> None:
+    """
+    Captura y transcribe audio en tiempo real usando streaming.
+
+    Similar a Notion AI Meeting Notes, procesa chunks pequeños (1-3s)
+    y muestra transcripciones mientras ocurre la llamada.
+    """
+    # Detección automática de dispositivos (como Notion AI)
+    auto_detect = _get_bool_env("AUTO_DETECT_DEVICES", True)
+
+    if auto_detect:
+        logger.info("Auto-detecting audio devices...")
+        detected_system, detected_mic = auto_detect_devices()
+        system_device = detected_system or _get_str_env("SYSTEM_DEVICE", "0")
+        mic_device = detected_mic or _get_str_env("MIC_DEVICE", "1")
+        logger.info(f"Using devices - System: {system_device}, Mic: {mic_device}")
+
+        # Información sobre captura de audio del sistema
+        if not detected_system:
+            logger.warning(
+                "⚠️  No se detectó dispositivo para capturar audio del sistema.\n"
+                "  - Solo se capturará el micrófono\n"
+                "  - Para capturar audio del sistema, instala BlackHole: brew install blackhole-2ch"
+            )
+        else:
+            # Verificar si el dispositivo de salida actual es compatible
+            try:
+                from local_transcriber.audio.system_audio_capture import (
+                    get_current_output_device,
+                )
+
+                current_output = get_current_output_device()
+                if current_output:
+                    current_name = current_output.get("name", "").lower()
+                    if "blackhole" not in current_name:
+                        logger.info(
+                            f"💡 Dispositivo de salida actual: {current_output.get('name')}\n"
+                            f"  - El audio del sistema puede no capturarse si no está configurado BlackHole\n"
+                            f"  - Considera crear un Multi-Output Device que combine {current_output.get('name')} + BlackHole"
+                        )
+            except Exception as e:
+                logger.debug(f"Could not check current output device: {e}")
+    else:
+        system_device = _get_str_env("SYSTEM_DEVICE", "0")
+        mic_device = _get_str_env("MIC_DEVICE", "1")
+    sample_rate = _get_int_env("SAMPLE_RATE", 16000, min_value=8000)
+    channels = _get_int_env("CHANNELS", 1, min_value=1)
+    chunk_duration = _get_float_env("STREAMING_CHUNK_DURATION", 2.0, min_value=0.5)
+    model_size = _get_str_env("STREAMING_MODEL_SIZE", "base")
+    language = _get_str_env("STREAMING_LANGUAGE", "es")
+    vad_enabled = _get_bool_env("STREAMING_VAD_ENABLED", True)
+    realtime_output = _get_bool_env("STREAMING_REALTIME_OUTPUT", True)
+
+    # Configurar archivo de salida
+    output_file = combined_transcript or output_dir / "live_transcription.txt"
+
+    # Inicializar transcriber
+    transcriber = StreamingTranscriber(
+        model_size=model_size,
+        language=language,
+        output_file=output_file,
+        vad_enabled=vad_enabled,
+        realtime_output=realtime_output,
+    )
+
+    # Construir comando ffmpeg para streaming
+    ffmpeg_cmd = _build_streaming_ffmpeg_command(
+        system_device=system_device,
+        mic_device=mic_device,
+        sample_rate=sample_rate,
+        channels=channels,
+        chunk_duration=chunk_duration,
+    )
+
+    stop_event = threading.Event()
+    process = None
+
+    try:
+        logger.info("Starting streaming capture...")
+        logger.info(f"Chunk duration: {chunk_duration}s")
+        logger.info(f"Model: {model_size}, Language: {language}")
+        logger.info(f"Output file: {output_file}")
+        logger.info(f"ffmpeg command: {' '.join(ffmpeg_cmd)}")
+
+        # Iniciar ffmpeg con stdout como pipe
+        process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,  # Sin buffering
+        )
+
+        # Thread para leer stderr (logs de ffmpeg)
+        def read_stderr():
+            if process.stderr:
+                for line in iter(process.stderr.readline, b""):
+                    if line:
+                        line_str = line.decode("utf-8", errors="ignore").strip()
+                        # Mostrar errores y warnings en nivel INFO
+                        if (
+                            "error" in line_str.lower()
+                            or "warning" in line_str.lower()
+                            or "failed" in line_str.lower()
+                        ):
+                            logger.warning(f"ffmpeg: {line_str}")
+                        else:
+                            logger.debug(f"ffmpeg: {line_str}")
+
+        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+        stderr_thread.start()
+
+        # Leer stream de audio desde stdout
+        # ffmpeg con -f wav - escribe un WAV continuo con header al inicio
+        import struct
+
+        logger.info("Capturing and transcribing audio... Press Ctrl+C to stop")
+
+        # Leer header WAV completo (44 bytes típicamente)
+        wav_header = b""
+        while len(wav_header) < 44 and not stop_event.is_set():
+            if process.poll() is not None:
+                logger.warning("ffmpeg process ended unexpectedly")
+                return
+            chunk = process.stdout.read(44 - len(wav_header))
+            if not chunk:
+                if stop_event.is_set():
+                    return
+                time.sleep(0.1)
+                continue
+            wav_header += chunk
+
+        if len(wav_header) < 44:
+            logger.error("Could not read complete WAV header")
+            return
+
+        # Parsear header para obtener información
+        # bytes 22-23: número de canales
+        # bytes 24-27: sample rate
+        # bytes 34-35: bits per sample
+        n_channels = struct.unpack("<H", wav_header[22:24])[0]
+        file_sample_rate = struct.unpack("<I", wav_header[24:28])[0]
+        bits_per_sample = struct.unpack("<H", wav_header[34:36])[0]
+        bytes_per_sample = bits_per_sample // 8
+
+        logger.info(
+            f"WAV format: {n_channels} channels, {file_sample_rate} Hz, {bits_per_sample} bits"
+        )
+
+        # Calcular tamaño de chunk de audio (en bytes de datos PCM)
+        chunk_audio_bytes = int(
+            file_sample_rate * n_channels * bytes_per_sample * chunk_duration
+        )
+
+        # Buffer para acumular datos PCM
+        pcm_buffer = bytearray()
+
+        # Thread para leer y procesar chunks
+        def process_audio_stream():
+            nonlocal pcm_buffer
+
+            while not stop_event.is_set():
+                if process.poll() is not None:
+                    break
+
+                # Leer datos PCM (sin header)
+                chunk = process.stdout.read(8192)
+                if not chunk:
+                    if stop_event.is_set():
+                        break
+                    time.sleep(0.05)
+                    continue
+
+                pcm_buffer.extend(chunk)
+
+                # Procesar chunks completos
+                while len(pcm_buffer) >= chunk_audio_bytes:
+                    # Extraer chunk de audio PCM
+                    pcm_chunk = bytes(pcm_buffer[:chunk_audio_bytes])
+                    pcm_buffer = pcm_buffer[chunk_audio_bytes:]
+
+                    # Crear WAV chunk completo con header
+                    wav_chunk = _create_wav_chunk(
+                        wav_header,
+                        pcm_chunk,
+                        n_channels,
+                        file_sample_rate,
+                        bits_per_sample,
+                    )
+
+                    # Procesar chunk
+                    try:
+                        result = transcriber.process_wav_chunk(wav_chunk)
+                        if result:
+                            logger.debug(f"Transcription result: {result[:50]}...")
+                        else:
+                            logger.debug(
+                                "No transcription result (silence or VAD filtered)"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing audio chunk: {e}", exc_info=True
+                        )
+
+        # Iniciar thread de procesamiento
+        process_thread = threading.Thread(target=process_audio_stream, daemon=True)
+        process_thread.start()
+
+        # Esperar hasta que se detenga
+        try:
+            while process_thread.is_alive() and not stop_event.is_set():
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            logger.info("Interrupted, stopping gracefully...")
+    except Exception as e:
+        logger.error(f"Error in streaming capture: {e}", exc_info=True)
+    finally:
+        logger.info("Stopping ffmpeg...")
+        stop_event.set()
+
+        # Detener ffmpeg
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.warning("ffmpeg did not stop, killing...")
+                process.kill()
+
+        logger.info("Shutdown complete")
+        logger.info(f"Full transcript saved to: {output_file}")
+
+
+def _create_wav_chunk(
+    original_header: bytes,
+    pcm_data: bytes,
+    n_channels: int,
+    sample_rate: int,
+    bits_per_sample: int,
+) -> bytes:
+    """Crea un chunk WAV completo con header y datos PCM."""
+    import struct
+
+    # Calcular tamaños
+    data_size = len(pcm_data)
+    # Tamaño del archivo = 4 (RIFF) + 4 (file_size) + 4 (WAVE) +
+    #                     4 (fmt ) + 4 (fmt_size) + 18 (fmt_data) +
+    #                     4 (data) + 4 (data_size) + data_size
+    # Total header = 44 bytes
+    file_size = 36 + data_size  # 36 = tamaño del header sin RIFF y file_size
+
+    # Crear header WAV completo desde cero
+    header = bytearray()
+
+    # RIFF chunk descriptor
+    header.extend(b"RIFF")  # ChunkID
+    header.extend(struct.pack("<I", file_size))  # ChunkSize
+    header.extend(b"WAVE")  # Format
+
+    # fmt sub-chunk
+    header.extend(b"fmt ")  # Subchunk1ID
+    header.extend(struct.pack("<I", 16))  # Subchunk1Size (16 para PCM)
+    header.extend(struct.pack("<H", 1))  # AudioFormat (1 = PCM)
+    header.extend(struct.pack("<H", n_channels))  # NumChannels
+    header.extend(struct.pack("<I", sample_rate))  # SampleRate
+    header.extend(
+        struct.pack("<I", sample_rate * n_channels * (bits_per_sample // 8))
+    )  # ByteRate
+    header.extend(struct.pack("<H", n_channels * (bits_per_sample // 8)))  # BlockAlign
+    header.extend(struct.pack("<H", bits_per_sample))  # BitsPerSample
+
+    # data sub-chunk
+    header.extend(b"data")  # Subchunk2ID
+    header.extend(struct.pack("<I", data_size))  # Subchunk2Size
+
+    # Combinar header + datos
+    return bytes(header) + pcm_data
+
+
+def _build_streaming_ffmpeg_command(
+    system_device: str,
+    mic_device: str,
+    sample_rate: int,
+    channels: int,
+    chunk_duration: float,
+) -> list[str]:
+    """
+    Construye comando ffmpeg para captura en streaming.
+
+    Output a stdout en formato WAV para procesamiento en tiempo real.
+
+    Nota: Para capturar audio del sistema en macOS, necesitas:
+    1. Instalar BlackHole (https://github.com/ExistentialAudio/BlackHole)
+    2. Configurar BlackHole como dispositivo de salida en Preferencias del Sistema > Sonido
+    3. O usar Multi-Output Device que combine tu salida normal + BlackHole
+    """
+    system_input = _format_device(system_device)
+    mic_input = _format_device(mic_device)
+
+    # Usar dos inputs separados y combinarlos con amix
+    # system_input captura el audio del sistema (BlackHole)
+    # mic_input captura el micrófono (AirPods, etc.)
+    return [
+        "ffmpeg",
+        "-f",
+        "avfoundation",
+        "-i",
+        system_input,  # Audio del sistema (BlackHole)
+        "-f",
+        "avfoundation",
+        "-i",
+        mic_input,  # Micrófono
+        "-filter_complex",
+        "amix=inputs=2:duration=longest:dropout_transition=0",
+        "-ar",
+        str(sample_rate),
+        "-ac",
+        str(channels),
+        "-f",
+        "wav",  # Formato WAV
+        "-",  # Output a stdout
+    ]
+
+
+def _get_float_env(name: str, default: float, min_value: float | None = None) -> float:
+    """Obtiene variable de entorno como float."""
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a float, got {raw!r}") from exc
+    if min_value is not None and value < min_value:
+        raise ValueError(f"{name} must be >= {min_value}, got {value}")
+    return value
+
+
+def _get_bool_env(name: str, default: bool) -> bool:
+    """Obtiene variable de entorno como bool."""
+    raw = os.getenv(name, str(default)).strip().lower()
+    return raw in ("true", "1", "yes", "on")
 
 
 def _cleanup_temp_dir(path: Path, label: str) -> None:
