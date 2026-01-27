@@ -189,8 +189,8 @@ class StreamingTranscriber:
                         beam_size=5,
                         vad_filter=self.vad_enabled,
                         vad_parameters=dict(
-                            min_silence_duration_ms=1000,  # Aumentado para ser menos agresivo
-                            threshold=0.3,  # Reducido para detectar más voz
+                            min_silence_duration_ms=500,  # Reducido para ser menos agresivo
+                            threshold=0.2,  # Reducido aún más para detectar más voz (incluyendo audio de video)
                         )
                         if self.vad_enabled
                         else None,

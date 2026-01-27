@@ -159,7 +159,7 @@ def main() -> None:
         if system_device:
             print(f"  System audio: Device {system_device}")
         else:
-            print("  System audio: Not found (may need BlackHole)")
+            print("  System audio: Using ScreenCaptureKit (no device needed)")
         if mic_device:
             print(f"  Microphone: Device {mic_device}")
         else:

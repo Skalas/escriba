@@ -112,7 +112,14 @@ def wait_for_queue_empty(
     worker_thread: threading.Thread,
     timeout: float = 300.0,
 ) -> None:
-    """Espera a que la cola de trabajo esté vacía y el worker termine."""
+    """
+    Espera a que la cola de trabajo esté vacía y el worker termine.
+    
+    Args:
+        work_queue: Cola de trabajo a esperar
+        worker_thread: Thread del worker a esperar
+        timeout: Tiempo máximo de espera en segundos
+    """
     LOGGER.info("Waiting for queue to empty...")
     start_time = time.time()
 

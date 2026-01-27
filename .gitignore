@@ -206,3 +206,25 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 *.txt
+
+# Swift
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Swift compiled modules
+*.swiftmodule
+*.swiftdoc
+*.swiftsourceinfo
+
+# Swift debug symbols
+*.dSYM/
+
+# Swift object files and libraries
+*.o
+*.a
+
+# Xcode (if used)
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/

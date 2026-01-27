@@ -62,7 +62,6 @@ def list_audio_devices() -> dict[str, list[dict[str, str]]]:
                     # Formato 2: Buscar nombres de dispositivos conocidos en la línea
                     # Si la línea contiene palabras clave de dispositivos
                     device_keywords = [
-                        "blackhole",
                         "airpods",
                         "built-in",
                         "microphone",
@@ -111,11 +110,6 @@ def list_audio_devices() -> dict[str, list[dict[str, str]]]:
                 else:
                     logger.debug(f"Excluding device: {name}")
 
-        # Si no encontramos dispositivos, intentar método alternativo usando sounddevice
-        if not devices["inputs"]:
-            logger.warning("No devices found via ffmpeg parsing, trying sounddevice...")
-            devices = _list_devices_sounddevice()
-
         logger.info(f"Detected {len(devices['inputs'])} audio input devices")
         if devices["inputs"]:
             logger.info("Available devices:")
@@ -126,12 +120,21 @@ def list_audio_devices() -> dict[str, list[dict[str, str]]]:
         return devices
     except Exception as e:
         logger.error(f"Error listing audio devices: {e}", exc_info=True)
-        # Intentar método alternativo si ffmpeg falla
-        return _list_devices_sounddevice()
+        # Retornar estructura vacía si falla
+        return {"inputs": [], "outputs": []}
 
 
 def _classify_device(name: str) -> str:
-    """Clasifica un dispositivo por su nombre."""
+    """
+    Clasifica un dispositivo de audio por su nombre.
+    
+    Args:
+        name: Nombre del dispositivo
+    
+    Returns:
+        Tipo del dispositivo: "airpods", "microphone", "external_microphone",
+        "system_output", "unknown", o "excluded"
+    """
     name_lower = name.lower()
 
     # Excluir dispositivos que no queremos (más estricto)
@@ -147,8 +150,6 @@ def _classify_device(name: str) -> str:
         or "airpods max" in name_lower
     ):
         return "airpods"  # Máxima prioridad para AirPods
-    elif "blackhole" in name_lower:
-        return "system_audio"
     elif "built-in" in name_lower and "microphone" in name_lower:
         return "microphone"
     elif "microphone" in name_lower and "built-in" not in name_lower:
@@ -165,39 +166,6 @@ def _classify_device(name: str) -> str:
         if "iphone" in name_lower or "ipad" in name_lower:
             return "excluded"
         return "unknown"
-
-
-def find_system_audio_device() -> Optional[str]:
-    """
-    Encuentra automáticamente el dispositivo para capturar audio del sistema.
-
-    Prioridad:
-    1. BlackHole (si está disponible)
-    2. Built-in Output (fallback)
-
-    Returns:
-        Índice del dispositivo o None si no se encuentra
-    """
-    devices = list_audio_devices()
-
-    # Buscar BlackHole primero
-    for device in devices["inputs"]:
-        if device["type"] == "system_audio":
-            logger.info(
-                f"Found system audio device: {device['name']} (index {device['index']})"
-            )
-            return device["index"]
-
-    # Fallback: buscar Built-in Output
-    for device in devices["inputs"]:
-        if device["type"] == "system_output":
-            logger.info(
-                f"Found system output device: {device['name']} (index {device['index']})"
-            )
-            return device["index"]
-
-    logger.warning("No system audio device found. You may need to install BlackHole.")
-    return None
 
 
 def find_microphone_device() -> Optional[str]:
@@ -257,19 +225,15 @@ def auto_detect_devices() -> tuple[Optional[str], Optional[str]]:
     """
     Detecta automáticamente los dispositivos de audio.
 
-    Usa detección inteligente que verifica el dispositivo de salida actual
-    y asegura que el audio del sistema se pueda capturar.
+    Nota: El audio del sistema ahora se captura usando ScreenCaptureKit,
+    así que system_device siempre será None. Solo detectamos el micrófono.
 
     Returns:
         Tuple (system_device_index, mic_device_index)
+        system_device_index será None porque usamos ScreenCaptureKit
     """
-    try:
-        from local_transcriber.audio.system_audio_capture import get_smart_audio_devices
-
-        return get_smart_audio_devices()
-    except ImportError:
-        # Fallback a detección básica si el módulo no está disponible
-        logger.debug("system_audio_capture not available, using basic detection")
-        system_device = find_system_audio_device()
-        mic_device = find_microphone_device()
-        return system_device, mic_device
+    # ScreenCaptureKit captura el audio del sistema directamente
+    # No necesitamos un dispositivo virtual
+    system_device = None
+    mic_device = find_microphone_device()
+    return system_device, mic_device
