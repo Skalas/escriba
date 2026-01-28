@@ -43,7 +43,8 @@ class StreamingTranscriber:
             model_size: Tamaño del modelo (tiny, base, small, medium, large)
             language: Idioma para transcripción (código ISO 639-1)
             output_file: Archivo donde escribir transcripciones en tiempo real
-            device: Dispositivo a usar (auto, cpu, cuda, mps). "auto" detecta automáticamente.
+            device: Dispositivo a usar (auto, cpu, cuda). "auto" detecta automáticamente.
+                Nota: MPS no está soportado por faster-whisper (solo cpu y cuda).
             compute_type: Tipo de computación (int8, int8_float16, float16, float32).
                 Si es None, se determina automáticamente según el device.
             vad_enabled: Habilitar Voice Activity Detection
@@ -65,10 +66,28 @@ class StreamingTranscriber:
         elif compute_type is None:
             # Si device no es auto pero compute_type no está especificado,
             # usar valores por defecto según el device
-            if device == "mps":
-                compute_type = "float16"  # MPS no soporta int8
+            if device == "cuda":
+                compute_type = "float16"  # CUDA puede usar float16
+            elif device == "mps":
+                # MPS no está soportado por faster-whisper (ctranslate2)
+                logger.warning(
+                    "MPS is not supported by faster-whisper (ctranslate2). "
+                    "Falling back to CPU."
+                )
+                device = "cpu"
+                compute_type = "int8"
             else:
                 compute_type = "int8"
+
+        # Validar que el device sea soportado por faster-whisper
+        if device == "mps":
+            logger.error(
+                "MPS (Apple Silicon GPU) is not supported by faster-whisper. "
+                "faster-whisper only supports 'cpu' and 'cuda'. "
+                "Falling back to CPU."
+            )
+            device = "cpu"
+            compute_type = "int8"
 
         self.device = device
         self.compute_type = compute_type
@@ -76,6 +95,7 @@ class StreamingTranscriber:
         # Buffer para mantener contexto entre chunks
         self.transcription_buffer: list[str] = []
         # Segmentos con timestamps para exportación estructurada
+        # Nota: En transcripciones muy largas (>10k segmentos), considerar flush periódico
         self.segments: list[dict[str, Any]] = []
         self.start_time = time.time()
 
@@ -418,12 +438,18 @@ class StreamingTranscriber:
     def export_transcript(self, formats: list[str], output_dir: Path) -> None:
         """
         Exporta la transcripción completa en los formatos especificados.
-        
+
         Args:
-            formats: Lista de formatos a exportar ('txt', 'json')
+            formats: Lista de formatos a exportar ('txt', 'json', 'srt', 'markdown')
             output_dir: Directorio donde guardar los archivos exportados
         """
-        from local_transcriber.transcribe.formats import export_to_json, export_to_txt
+        # Import here to avoid circular dependency
+        from local_transcriber.transcribe.formats import (
+            export_to_json,
+            export_to_txt,
+            export_to_srt,
+            export_to_markdown,
+        )
 
         with self.lock:
             segments = self.segments.copy()
@@ -452,6 +478,12 @@ class StreamingTranscriber:
             elif fmt == "txt":
                 output_path = output_dir / f"{base_name}.txt"
                 export_to_txt(segments, output_path)
+            elif fmt == "srt":
+                output_path = output_dir / f"{base_name}.srt"
+                export_to_srt(segments, output_path)
+            elif fmt == "markdown":
+                output_path = output_dir / f"{base_name}.md"
+                export_to_markdown(segments, output_path)
             else:
                 logger.warning(f"Unknown format: {fmt}, skipping")
 
@@ -459,25 +491,17 @@ class StreamingTranscriber:
 def get_device_config() -> tuple[str, str]:
     """
     Detecta y retorna la configuración óptima de device y compute_type.
-    
-    Detecta automáticamente si MPS (Apple Silicon GPU) está disponible.
-    Si está disponible, usa MPS con float16. Si no, usa CPU con int8.
-    
+
+    Nota: faster-whisper (que usa ctranslate2) solo soporta 'cpu' y 'cuda'.
+    MPS (Apple Silicon GPU) no está soportado actualmente por ctranslate2.
+
+    Para usar GPU en Apple Silicon, usa 'openai-whisper' con el backend 'mps'.
+
     Returns:
         Tupla (device, compute_type)
     """
-    # Intentar detectar MPS (Apple Silicon)
-    try:
-        import torch
-
-        if torch.backends.mps.is_available():
-            logger.info("MPS (Apple Silicon GPU) detected, using GPU acceleration")
-            return "mps", "float16"
-    except ImportError:
-        # torch no está disponible, usar CPU
-        pass
-    except Exception as e:
-        logger.debug(f"Error checking MPS availability: {e}")
-
-    logger.info("Using CPU (MPS not available)")
+    # faster-whisper solo soporta 'cpu' y 'cuda', no 'mps'
+    # Aunque MPS esté disponible en PyTorch, ctranslate2 no lo soporta
+    logger.info("Using CPU (faster-whisper only supports cpu and cuda, not mps)")
+    logger.info("To use GPU on Apple Silicon, use --backend openai-whisper")
     return "cpu", "int8"

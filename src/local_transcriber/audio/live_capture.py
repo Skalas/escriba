@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import struct
 import subprocess
@@ -14,7 +13,22 @@ import numpy as np
 
 from local_transcriber.audio.device_detection import auto_detect_devices
 from local_transcriber.transcribe.streaming import StreamingTranscriber
+from local_transcriber.utils.env import (
+    get_bool_env,
+    get_float_env,
+    get_int_env,
+    get_str_env,
+)
 from local_transcriber.watch.watch_folder import watch_folder, wait_for_queue_empty
+
+# Intentar importar StreamingTranscriberMPS (requiere openai-whisper y torch)
+try:
+    from local_transcriber.transcribe.streaming_mps import StreamingTranscriberMPS
+
+    MPS_AVAILABLE = True
+except ImportError:
+    MPS_AVAILABLE = False
+    StreamingTranscriberMPS = None
 
 # Intentar importar ScreenCaptureKit (CLI Swift)
 try:
@@ -24,6 +38,7 @@ try:
         request_screen_recording_permission,
         SWIFT_CLI_AVAILABLE,
     )
+
     SCREENCAPTUREKIT_AVAILABLE = SWIFT_CLI_AVAILABLE
 except ImportError:
     SCREENCAPTUREKIT_AVAILABLE = False
@@ -35,29 +50,29 @@ logger = logging.getLogger(__name__)
 def run_live_capture(output_dir: Path, combined_transcript: Path | None = None) -> None:
     """
     Captura audio en vivo usando ffmpeg y transcribe segmentos (modo legacy).
-    
+
     Este modo captura audio en segmentos de 30 segundos y los transcribe
     usando Whisper CLI. Tiene mayor latencia que el modo streaming.
-    
+
     Args:
         output_dir: Directorio donde guardar transcripciones
         combined_transcript: Archivo opcional para transcripción combinada
     """
     # Detección automática de dispositivos (como Notion AI)
-    auto_detect = _get_bool_env("AUTO_DETECT_DEVICES", True)
+    auto_detect = get_bool_env("AUTO_DETECT_DEVICES", True)
 
     if auto_detect:
         logger.info("Auto-detecting audio devices...")
         detected_system, detected_mic = auto_detect_devices()
-        system_device = detected_system or _get_str_env("SYSTEM_DEVICE", "0")
-        mic_device = detected_mic or _get_str_env("MIC_DEVICE", "1")
+        system_device = detected_system or get_str_env("SYSTEM_DEVICE", "0")
+        mic_device = detected_mic or get_str_env("MIC_DEVICE", "1")
         logger.info(f"Using devices - System: {system_device}, Mic: {mic_device}")
     else:
-        system_device = _get_str_env("SYSTEM_DEVICE", "0")
-        mic_device = _get_str_env("MIC_DEVICE", "1")
-    sample_rate = _get_int_env("SAMPLE_RATE", 16000, min_value=8000)
-    channels = _get_int_env("CHANNELS", 1, min_value=1)
-    segment_seconds = _get_int_env("SEGMENT_SECONDS", 30, min_value=1)
+        system_device = get_str_env("SYSTEM_DEVICE", "0")
+        mic_device = get_str_env("MIC_DEVICE", "1")
+    sample_rate = get_int_env("SAMPLE_RATE", 16000, min_value=8000)
+    channels = get_int_env("CHANNELS", 1, min_value=1)
+    segment_seconds = get_int_env("SEGMENT_SECONDS", 30, min_value=1)
 
     # ffmpeg escribe en temp_dir, el mover los completa a watched_dir
     temp_segment_dir = Path(tempfile.mkdtemp(prefix="local-transcriber-temp-"))
@@ -137,7 +152,7 @@ def _build_ffmpeg_command(
 ) -> list[str]:
     """
     Construye el comando ffmpeg para captura en modo legacy.
-    
+
     Args:
         system_device: Índice o nombre del dispositivo de audio del sistema
         mic_device: Índice o nombre del dispositivo de micrófono
@@ -145,7 +160,7 @@ def _build_ffmpeg_command(
         channels: Número de canales
         segment_seconds: Duración de cada segmento en segundos
         output_dir: Directorio donde guardar segmentos
-    
+
     Returns:
         Lista de argumentos para subprocess.Popen
     """
@@ -293,10 +308,10 @@ def _move_file(source: Path, dest_dir: Path) -> None:
 def _format_device(device: str) -> str:
     """
     Formatea un dispositivo de audio para uso con ffmpeg.
-    
+
     Args:
         device: Índice o nombre del dispositivo
-    
+
     Returns:
         String formateado para ffmpeg (ej: ":0" o nombre completo)
     """
@@ -308,49 +323,42 @@ def _format_device(device: str) -> str:
     return device
 
 
-def _get_str_env(name: str, default: str) -> str:
+def mix_audio(
+    system: np.ndarray, mic: np.ndarray, mic_boost: float = 1.2
+) -> np.ndarray:
     """
-    Obtiene una variable de entorno como string.
-    
-    Args:
-        name: Nombre de la variable de entorno
-        default: Valor por defecto si no existe
-    
-    Returns:
-        Valor de la variable de entorno o default
-    
-    Raises:
-        ValueError: Si la variable está vacía
-    """
-    value = os.getenv(name, default).strip()
-    if not value:
-        raise ValueError(f"{name} must not be empty")
-    return value
+    Mezcla audio del sistema y micrófono con normalización dinámica.
 
+    Aplica un boost al micrófono (usualmente más bajo que el sistema),
+    mezcla ambos canales y normaliza para evitar clipping.
 
-def _get_int_env(name: str, default: int, min_value: int | None = None) -> int:
-    """
-    Obtiene una variable de entorno como entero.
-    
     Args:
-        name: Nombre de la variable de entorno
-        default: Valor por defecto si no existe
-        min_value: Valor mínimo permitido (opcional)
-    
+        system: Array numpy con audio del sistema (int16)
+        mic: Array numpy con audio del micrófono (int16)
+        mic_boost: Factor de boost para el micrófono (default: 1.2)
+
     Returns:
-        Valor de la variable de entorno como int
-    
-    Raises:
-        ValueError: Si el valor no es un entero válido o es menor que min_value
+        Array numpy con audio mezclado (int16)
     """
-    raw = os.getenv(name, str(default)).strip()
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
-    if min_value is not None and value < min_value:
-        raise ValueError(f"{name} must be >= {min_value}, got {value}")
-    return value
+    # Manejar arrays vacíos
+    if len(system) == 0 or len(mic) == 0:
+        # Si alguno está vacío, retornar array vacío del mismo tipo
+        return np.array([], dtype=np.int16)
+
+    # Boost del micrófono (usualmente más bajo que sistema)
+    mic_boosted = mic.astype(np.float32) * mic_boost
+
+    # Mezclar en float32 para evitar overflow
+    mixed = system.astype(np.float32) + mic_boosted
+
+    # Normalizar para evitar clipping
+    peak = np.abs(mixed).max()
+    if peak > 32767.0:
+        # Escalar para que el pico máximo sea 32767
+        mixed = mixed * (32767.0 / peak)
+
+    # Convertir de vuelta a int16
+    return mixed.astype(np.int16)
 
 
 def run_streaming_capture(
@@ -364,53 +372,86 @@ def run_streaming_capture(
     y muestra transcripciones mientras ocurre la llamada.
     """
     # Detección automática de dispositivos (como Notion AI)
-    auto_detect = _get_bool_env("AUTO_DETECT_DEVICES", True)
+    auto_detect = get_bool_env("AUTO_DETECT_DEVICES", True)
 
     if auto_detect:
         logger.info("Auto-detecting audio devices...")
         detected_system, detected_mic = auto_detect_devices()
-        system_device = detected_system or _get_str_env("SYSTEM_DEVICE", "0")
-        mic_device = detected_mic or _get_str_env("MIC_DEVICE", "1")
+        system_device = detected_system or get_str_env("SYSTEM_DEVICE", "0")
+        mic_device = detected_mic or get_str_env("MIC_DEVICE", "1")
         logger.info(f"Using devices - System: {system_device}, Mic: {mic_device}")
 
         # ScreenCaptureKit captura el audio del sistema directamente
         # No necesitamos un dispositivo virtual
-        logger.info("Using ScreenCaptureKit for system audio capture (no virtual device needed)")
+        logger.info(
+            "Using ScreenCaptureKit for system audio capture (no virtual device needed)"
+        )
     else:
-        system_device = _get_str_env("SYSTEM_DEVICE", "0")
-        mic_device = _get_str_env("MIC_DEVICE", "1")
-    sample_rate = _get_int_env("SAMPLE_RATE", 16000, min_value=8000)
-    channels = _get_int_env("CHANNELS", 1, min_value=1)
-    chunk_duration = _get_float_env("STREAMING_CHUNK_DURATION", 30.0, min_value=0.5)
-    model_size = _get_str_env("STREAMING_MODEL_SIZE", "base")
-    language = _get_str_env("STREAMING_LANGUAGE", "es")
-    device = _get_str_env("STREAMING_DEVICE", "auto")
-    vad_enabled = _get_bool_env("STREAMING_VAD_ENABLED", False)  # Deshabilitado por defecto para capturar todo el audio
-    realtime_output = _get_bool_env("STREAMING_REALTIME_OUTPUT", True)
+        system_device = get_str_env("SYSTEM_DEVICE", "0")
+        mic_device = get_str_env("MIC_DEVICE", "1")
+    sample_rate = get_int_env("SAMPLE_RATE", 16000, min_value=8000)
+    channels = get_int_env("CHANNELS", 1, min_value=1)
+    chunk_duration = get_float_env("STREAMING_CHUNK_DURATION", 30.0, min_value=0.5)
+    model_size = get_str_env("STREAMING_MODEL_SIZE", "base")
+    language = get_str_env("STREAMING_LANGUAGE", "es")
+    device = get_str_env("STREAMING_DEVICE", "auto")
+    backend = get_str_env(
+        "STREAMING_BACKEND", "faster-whisper"
+    )  # faster-whisper o openai-whisper
+    vad_enabled = get_bool_env(
+        "STREAMING_VAD_ENABLED", False
+    )  # Deshabilitado por defecto para capturar todo el audio
+    realtime_output = get_bool_env("STREAMING_REALTIME_OUTPUT", True)
 
     # Configurar archivo de salida
     output_file = combined_transcript or output_dir / "live_transcription.txt"
 
-    # Inicializar transcriber
-    transcriber = StreamingTranscriber(
-        model_size=model_size,
-        language=language,
-        output_file=output_file,
-        device=device,
-        vad_enabled=vad_enabled,
-        realtime_output=realtime_output,
-    )
+    # Inicializar transcriber según el backend
+    if backend == "openai-whisper" or backend == "mps":
+        if not MPS_AVAILABLE:
+            logger.warning(
+                "openai-whisper backend requested but not available. "
+                "Falling back to faster-whisper. "
+                "Install: pip install openai-whisper torch"
+            )
+            backend = "faster-whisper"
+        else:
+            logger.info("Using openai-whisper backend")
+            logger.warning(
+                "openai-whisper has known stability issues with MPS (GPU). "
+                "It will use CPU by default. For better performance, consider using faster-whisper."
+            )
+            transcriber = StreamingTranscriberMPS(
+                model_size=model_size,
+                language=language,
+                output_file=output_file,
+                vad_enabled=vad_enabled,
+                realtime_output=realtime_output,
+            )
+    else:
+        # faster-whisper (default)
+        logger.info("Using faster-whisper backend (CPU optimized)")
+        transcriber = StreamingTranscriber(
+            model_size=model_size,
+            language=language,
+            output_file=output_file,
+            device=device,
+            vad_enabled=vad_enabled,
+            realtime_output=realtime_output,
+        )
 
     # Verificar si debemos usar ScreenCaptureKit para audio del sistema
-    use_screen_capture = SCREENCAPTUREKIT_AVAILABLE and not _get_bool_env("MIC_ONLY", False)
-    
+    use_screen_capture = SCREENCAPTUREKIT_AVAILABLE and not get_bool_env(
+        "MIC_ONLY", False
+    )
+
     if use_screen_capture:
         # Verificar permisos de Screen Recording
         if not check_screen_recording_permission():
             logger.warning("Screen Recording permission not granted")
             request_screen_recording_permission()
             logger.info("Will attempt to use ScreenCaptureKit anyway...")
-    
+
     # Construir comando ffmpeg para streaming (solo micrófono)
     ffmpeg_cmd = _build_streaming_ffmpeg_command(
         system_device=system_device,
@@ -429,9 +470,11 @@ def run_streaming_capture(
         logger.info(f"Chunk duration: {chunk_duration}s")
         logger.info(f"Model: {model_size}, Language: {language}")
         logger.info(f"Output file: {output_file}")
-        
+
         if use_screen_capture:
-            logger.info("Using Swift CLI (ScreenCaptureKit) for system audio + ffmpeg for microphone")
+            logger.info(
+                "Using Swift CLI (ScreenCaptureKit) for system audio + ffmpeg for microphone"
+            )
         else:
             logger.info("Using ffmpeg for microphone only")
             logger.info(f"ffmpeg command: {' '.join(ffmpeg_cmd)}")
@@ -440,25 +483,32 @@ def run_streaming_capture(
         combined_audio_buffer = bytearray()
         system_audio_buffer = bytearray()
         mic_audio_buffer = bytearray()
-        
+
         # Iniciar ScreenCaptureKit si está disponible
         if use_screen_capture:
             try:
+
                 def system_audio_callback(pcm_data: bytes):
                     """Callback para audio del sistema desde ScreenCaptureKit"""
                     system_audio_buffer.extend(pcm_data)
                     # Log solo ocasionalmente para no saturar los logs
-                    if len(system_audio_buffer) % 64000 == 0:  # ~4 segundos de audio a 16kHz
-                        logger.debug(f"System audio buffer: {len(system_audio_buffer)} bytes")
-                
+                    if (
+                        len(system_audio_buffer) % 64000 == 0
+                    ):  # ~4 segundos de audio a 16kHz
+                        logger.debug(
+                            f"System audio buffer: {len(system_audio_buffer)} bytes"
+                        )
+
                 screen_capture = ScreenCaptureAudioCapture(
                     sample_rate=sample_rate,
                     channels=channels,
                     audio_callback=system_audio_callback,
                 )
-                
+
                 if screen_capture.start():
-                    logger.info("✓ Swift CLI (ScreenCaptureKit) started for system audio")
+                    logger.info(
+                        "✓ Swift CLI (ScreenCaptureKit) started for system audio"
+                    )
                 else:
                     logger.warning(
                         "⚠️  Failed to start ScreenCaptureKit.\n"
@@ -469,7 +519,87 @@ def run_streaming_capture(
             except Exception as e:
                 logger.error(f"Error starting ScreenCaptureKit: {e}", exc_info=True)
                 screen_capture = None
-        
+
+        # Thread para monitorear y reconectar Swift CLI si falla
+        max_retries = 3
+        retry_count = 0
+
+        def monitor_swift_cli():
+            """Monitorea el proceso Swift CLI y lo reinicia si falla."""
+            nonlocal screen_capture, retry_count, system_audio_buffer
+
+            if not use_screen_capture or not screen_capture:
+                return
+
+            while not stop_event.is_set():
+                # Verificar cada 5 segundos si el proceso está vivo
+                time.sleep(5.0)
+
+                if stop_event.is_set():
+                    break
+
+                # Verificar si el proceso Swift terminó inesperadamente
+                if screen_capture and screen_capture.process:
+                    if screen_capture.process.poll() is not None:
+                        # Proceso terminó
+                        if retry_count < max_retries:
+                            retry_count += 1
+                            backoff_time = min(
+                                2.0**retry_count, 10.0
+                            )  # Exponential backoff, max 10s
+
+                            logger.warning(
+                                f"Swift CLI process ended unexpectedly. "
+                                f"Attempting to restart ({retry_count}/{max_retries}) "
+                                f"after {backoff_time:.1f}s..."
+                            )
+
+                            time.sleep(backoff_time)
+
+                            # Limpiar buffer de audio del sistema
+                            system_audio_buffer.clear()
+
+                            # Intentar reiniciar
+                            if screen_capture.restart():
+                                logger.info("✓ Swift CLI restarted successfully")
+                                retry_count = 0  # Reset retry count on success
+                            else:
+                                logger.error(
+                                    f"Failed to restart Swift CLI ({retry_count}/{max_retries})"
+                                )
+                        else:
+                            logger.error(
+                                f"Max retries ({max_retries}) reached for Swift CLI. "
+                                "Continuing with microphone-only capture."
+                            )
+                            screen_capture = None
+                            break
+                elif screen_capture and not screen_capture.is_capturing:
+                    # Si no está capturando pero debería, intentar reiniciar
+                    if retry_count < max_retries:
+                        retry_count += 1
+                        logger.warning(
+                            f"Swift CLI not capturing. Attempting restart ({retry_count}/{max_retries})..."
+                        )
+                        if screen_capture.restart():
+                            logger.info("✓ Swift CLI restarted successfully")
+                            retry_count = 0
+                        else:
+                            logger.error(
+                                f"Failed to restart Swift CLI ({retry_count}/{max_retries})"
+                            )
+                    else:
+                        logger.error("Max retries reached for Swift CLI")
+                        screen_capture = None
+                        break
+
+        # Iniciar thread de monitoreo si ScreenCaptureKit está activo
+        monitor_thread = None
+        if use_screen_capture and screen_capture:
+            monitor_thread = threading.Thread(target=monitor_swift_cli, daemon=True)
+            monitor_thread.start()
+            logger.debug("Started Swift CLI monitoring thread")
+
         # Iniciar ffmpeg con stdout como pipe (micrófono)
         process = subprocess.Popen(
             ffmpeg_cmd,
@@ -532,7 +662,7 @@ def run_streaming_capture(
         logger.info(
             f"WAV format: {n_channels} channels, {file_sample_rate} Hz, {bits_per_sample} bits"
         )
-        
+
         # Verificar que el sample rate coincida con el configurado
         if file_sample_rate != sample_rate:
             logger.warning(
@@ -549,7 +679,11 @@ def run_streaming_capture(
 
         # Thread para leer y procesar chunks
         def process_audio_stream():
-            nonlocal pcm_buffer, system_audio_buffer, mic_audio_buffer, combined_audio_buffer
+            nonlocal \
+                pcm_buffer, \
+                system_audio_buffer, \
+                mic_audio_buffer, \
+                combined_audio_buffer
 
             while not stop_event.is_set():
                 if process.poll() is not None:
@@ -566,35 +700,41 @@ def run_streaming_capture(
                     # Combinar buffers cuando tengamos datos de ambos
                     # Necesitamos sincronizar los dos streams
                     # Por simplicidad, combinamos cuando ambos tienen datos suficientes
-                    
+
                     # Calcular tamaño necesario para un chunk combinado
                     chunk_size = chunk_audio_bytes
-                    
+
                     # Log solo ocasionalmente para no saturar los logs
                     # (comentado para reducir logs, descomentar si necesitas debuggear)
                     # logger.debug(
                     #     f"Buffers - System: {len(system_audio_buffer)}/{chunk_size} bytes, "
                     #     f"Mic: {len(mic_audio_buffer)}/{chunk_size} bytes"
                     # )
-                    
-                    if len(system_audio_buffer) >= chunk_size and len(mic_audio_buffer) >= chunk_size:
+
+                    if (
+                        len(system_audio_buffer) >= chunk_size
+                        and len(mic_audio_buffer) >= chunk_size
+                    ):
                         # Extraer chunks del mismo tamaño
                         system_chunk = bytes(system_audio_buffer[:chunk_size])
                         mic_chunk = bytes(mic_audio_buffer[:chunk_size])
-                        
+
                         # Remover del buffer
                         system_audio_buffer = system_audio_buffer[chunk_size:]
                         mic_audio_buffer = mic_audio_buffer[chunk_size:]
-                        
+
                         # Combinar audio (mixear)
                         # Convertir a numpy arrays para mezclar
                         system_array = np.frombuffer(system_chunk, dtype=np.int16)
                         mic_array = np.frombuffer(mic_chunk, dtype=np.int16)
-                        
-                        # Mezclar (promedio simple, puede mejorarse con normalización)
-                        combined_array = ((system_array.astype(np.int32) + mic_array.astype(np.int32)) // 2).astype(np.int16)
+
+                        # Mezclar con normalización dinámica
+                        mic_boost = get_float_env(
+                            "AUDIO_MIC_BOOST", 1.2, min_value=0.1, max_value=5.0
+                        )
+                        combined_array = mix_audio(system_array, mic_array, mic_boost)
                         combined_chunk = combined_array.tobytes()
-                        
+
                         # Crear WAV chunk completo con header
                         wav_chunk = _create_wav_chunk(
                             wav_header,
@@ -603,7 +743,7 @@ def run_streaming_capture(
                             file_sample_rate,
                             bits_per_sample,
                         )
-                        
+
                         # Procesar chunk
                         try:
                             logger.info(
@@ -624,12 +764,17 @@ def run_streaming_capture(
                     else:
                         # Si no tenemos datos suficientes, esperar un poco
                         # Pero también procesar solo micrófono si el sistema no tiene datos
-                        if len(mic_audio_buffer) >= chunk_size and len(system_audio_buffer) == 0:
+                        if (
+                            len(mic_audio_buffer) >= chunk_size
+                            and len(system_audio_buffer) == 0
+                        ):
                             # Solo micrófono disponible, procesar solo eso
-                            logger.warning("⚠️  No system audio available, processing microphone only")
+                            logger.warning(
+                                "⚠️  No system audio available, processing microphone only"
+                            )
                             mic_chunk = bytes(mic_audio_buffer[:chunk_size])
                             mic_audio_buffer = mic_audio_buffer[chunk_size:]
-                            
+
                             # Crear WAV chunk solo con micrófono
                             wav_chunk = _create_wav_chunk(
                                 wav_header,
@@ -638,20 +783,32 @@ def run_streaming_capture(
                                 file_sample_rate,
                                 bits_per_sample,
                             )
-                            
+
                             try:
-                                logger.info(f"🎤 Processing microphone-only chunk: {len(mic_chunk)} bytes")
+                                logger.info(
+                                    f"🎤 Processing microphone-only chunk: {len(mic_chunk)} bytes"
+                                )
                                 result = transcriber.process_wav_chunk(wav_chunk)
                                 if result:
-                                    logger.info(f"✅ Transcription result (mic only): {result}")
+                                    logger.info(
+                                        f"✅ Transcription result (mic only): {result}"
+                                    )
                             except Exception as e:
-                                logger.error(f"Error processing mic-only chunk: {e}", exc_info=True)
-                        elif len(system_audio_buffer) >= chunk_size and len(mic_audio_buffer) == 0:
+                                logger.error(
+                                    f"Error processing mic-only chunk: {e}",
+                                    exc_info=True,
+                                )
+                        elif (
+                            len(system_audio_buffer) >= chunk_size
+                            and len(mic_audio_buffer) == 0
+                        ):
                             # Solo sistema disponible, procesar solo eso
-                            logger.info("🔊 Processing system audio only (no microphone)")
+                            logger.info(
+                                "🔊 Processing system audio only (no microphone)"
+                            )
                             system_chunk = bytes(system_audio_buffer[:chunk_size])
                             system_audio_buffer = system_audio_buffer[chunk_size:]
-                            
+
                             # Crear WAV chunk solo con sistema
                             wav_chunk = _create_wav_chunk(
                                 wav_header,
@@ -660,14 +817,21 @@ def run_streaming_capture(
                                 file_sample_rate,
                                 bits_per_sample,
                             )
-                            
+
                             try:
-                                logger.info(f"🔊 Processing system-only chunk: {len(system_chunk)} bytes")
+                                logger.info(
+                                    f"🔊 Processing system-only chunk: {len(system_chunk)} bytes"
+                                )
                                 result = transcriber.process_wav_chunk(wav_chunk)
                                 if result:
-                                    logger.info(f"✅ Transcription result (system only): {result}")
+                                    logger.info(
+                                        f"✅ Transcription result (system only): {result}"
+                                    )
                             except Exception as e:
-                                logger.error(f"Error processing system-only chunk: {e}", exc_info=True)
+                                logger.error(
+                                    f"Error processing system-only chunk: {e}",
+                                    exc_info=True,
+                                )
                         else:
                             time.sleep(0.01)
                 else:
@@ -743,11 +907,17 @@ def run_streaming_capture(
                 process.kill()
 
         # Exportar en formatos adicionales si se especificó
-        export_formats_str = os.getenv("STREAMING_EXPORT_FORMATS", "").strip()
+        export_formats_str = get_str_env(
+            "STREAMING_EXPORT_FORMATS", "", allow_empty=True
+        )
         if export_formats_str:
-            export_formats = [f.strip() for f in export_formats_str.split(",") if f.strip()]
+            export_formats = [
+                f.strip() for f in export_formats_str.split(",") if f.strip()
+            ]
             if export_formats:
-                logger.info(f"Exporting transcript in formats: {', '.join(export_formats)}")
+                logger.info(
+                    f"Exporting transcript in formats: {', '.join(export_formats)}"
+                )
                 try:
                     transcriber.export_transcript(export_formats, output_dir)
                 except Exception as e:
@@ -766,14 +936,14 @@ def _create_wav_chunk(
 ) -> bytes:
     """
     Crea un chunk WAV completo con header y datos PCM.
-    
+
     Args:
         original_header: Header WAV original (no se usa, pero se mantiene para compatibilidad)
         pcm_data: Datos PCM en formato int16
         n_channels: Número de canales
         sample_rate: Sample rate en Hz
         bits_per_sample: Bits por muestra (típicamente 16)
-    
+
     Returns:
         Bytes del chunk WAV completo (header + datos)
     """
@@ -822,7 +992,7 @@ def _build_streaming_ffmpeg_command(
 ) -> list[str]:
     """
     Construye comando ffmpeg para captura en streaming.
-    
+
     Nota: chunk_duration no se usa en el comando actual, pero se mantiene
     para compatibilidad futura.
 
@@ -855,50 +1025,10 @@ def _build_streaming_ffmpeg_command(
     ]
 
 
-def _get_float_env(name: str, default: float, min_value: float | None = None) -> float:
-    """
-    Obtiene una variable de entorno como float.
-    
-    Args:
-        name: Nombre de la variable de entorno
-        default: Valor por defecto si no existe
-        min_value: Valor mínimo permitido (opcional)
-    
-    Returns:
-        Valor de la variable de entorno como float
-    
-    Raises:
-        ValueError: Si el valor no es un float válido o es menor que min_value
-    """
-    raw = os.getenv(name, str(default)).strip()
-    try:
-        value = float(raw)
-    except ValueError as exc:
-        raise ValueError(f"{name} must be a float, got {raw!r}") from exc
-    if min_value is not None and value < min_value:
-        raise ValueError(f"{name} must be >= {min_value}, got {value}")
-    return value
-
-
-def _get_bool_env(name: str, default: bool) -> bool:
-    """
-    Obtiene una variable de entorno como bool.
-    
-    Args:
-        name: Nombre de la variable de entorno
-        default: Valor por defecto si no existe
-    
-    Returns:
-        True si el valor es "true", "1", "yes", o "on" (case-insensitive)
-    """
-    raw = os.getenv(name, str(default)).strip().lower()
-    return raw in ("true", "1", "yes", "on")
-
-
 def _cleanup_temp_dir(path: Path, label: str) -> None:
     """
     Elimina un directorio temporal.
-    
+
     Args:
         path: Ruta del directorio a eliminar
         label: Etiqueta descriptiva para logs

@@ -228,3 +228,4 @@ __marimo__/
 *.xcodeproj/
 *.xcworkspace/
 DerivedData/
+transcripts/

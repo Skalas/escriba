@@ -1,6 +1,6 @@
 # Mejoras Propuestas — local-transcriber
 
-Análisis y roadmap de mejoras. Enero 2026.
+Análisis y roadmap de mejoras. Última actualización: 27 Enero 2026.
 
 ---
 
@@ -56,31 +56,49 @@ def mix_audio(system: np.ndarray, mic: np.ndarray, mic_boost: float = 1.2) -> np
 
 ---
 
-### 3. ✅ Soporte para GPU (MPS en Apple Silicon) [COMPLETADO]
+### 3. ⚠️ Soporte GPU - LIMITADO [COMPLETADO - Con limitaciones del backend]
 **Problema:** Anteriormente usaba solo CPU:
 ```python
 device="cpu", compute_type="int8"
 ```
 
-**Solución implementada:**
-- ✅ Función `get_device_config()` que detecta MPS automáticamente
+**Estado actual:**
+- ✅ Función `get_device_config()` para configuración de dispositivo
 - ✅ `StreamingTranscriber` acepta `device="auto"` para detección automática
-- ✅ Flag CLI `--device auto|cpu|mps` agregado
-- ✅ Si MPS disponible: `device="mps"`, `compute_type="float16"`
-- ✅ Si no: `device="cpu"`, `compute_type="int8"` (fallback)
+- ✅ Flag CLI `--device auto|cpu|cuda` agregado
+- ✅ Backend alternativo `openai-whisper` implementado (con fallback a CPU)
+- ⚠️ **Limitación técnica:** `faster-whisper` usa `ctranslate2` que solo soporta `cpu` y `cuda`, no `mps`
+- ⚠️ **Problema conocido:** `openai-whisper` con MPS produce NaN en tensores (bug de PyTorch MPS)
+- ✅ **Solución actual:** CPU con `int8` es la mejor opción (eficiente en Apple Silicon gracias al Neural Engine)
+
+**Análisis de backends:**
+| Backend | GPU Support | Estado | Rendimiento |
+|---------|-------------|--------|-------------|
+| `faster-whisper` | ❌ No (solo CPU/CUDA) | ✅ Estable | ⚡⚡⚡ Muy rápido en CPU |
+| `openai-whisper` | ⚠️ Sí, pero buggy | ⚠️ Usa CPU por defecto | ⚡ Rápido, pero inestable con MPS |
 
 **Archivos modificados:**
 - `src/local_transcriber/transcribe/streaming.py`
+- `src/local_transcriber/transcribe/streaming_mps.py` (nuevo - backend alternativo)
 - `src/local_transcriber/cli.py`
 - `src/local_transcriber/audio/live_capture.py`
 - `.env.example`
 
 **Uso:**
 ```bash
-local-transcriber live-stream --device auto  # Detecta automáticamente
-local-transcriber live-stream --device mps   # Fuerza MPS
-local-transcriber live-stream --device cpu   # Fuerza CPU
+# faster-whisper (recomendado - default)
+local-transcriber live-stream --backend faster-whisper
+
+# openai-whisper (CPU por defecto, MPS puede fallar)
+local-transcriber live-stream --backend openai-whisper
 ```
+
+**Conclusión:** El problema es a nivel de backend, no del código:
+- `faster-whisper` → usa `ctranslate2` → solo CPU/CUDA
+- `openai-whisper` → MPS buggy (NaN en tensores)
+- La buena noticia: `int8` en CPU de Apple Silicon es bastante eficiente (el Neural Engine ayuda)
+
+**Alternativa real para el futuro:** Ver mejora #14 (mlx-whisper) - está hecho específicamente para Apple Silicon con MLX y es significativamente más rápido.
 
 **Esfuerzo:** ~1 hora ✅
 
@@ -106,6 +124,49 @@ local-transcriber status
 - Mantener `StreamingTranscriber` cargado en memoria
 
 **Esfuerzo:** ~1 día
+
+---
+
+### 14. Migrar a mlx-whisper para aceleración GPU real en Apple Silicon
+**Descripción:** `mlx-whisper` es una implementación de Whisper optimizada específicamente para Apple Silicon usando MLX (framework de ML nativo de Apple).
+
+**Ventajas:**
+- ✅ **Aceleración GPU real** en Apple Silicon (M1/M2/M3/M4)
+- ✅ **2-3x más rápido** que `faster-whisper` en CPU
+- ✅ **Optimizado nativamente** para Apple Silicon
+- ✅ **Sin problemas de NaN** (a diferencia de openai-whisper con MPS)
+- ✅ **Mejor uso del Neural Engine**
+
+**Implementación:**
+```python
+# Nuevo backend mlx-whisper
+from mlx_whisper import transcribe
+
+class StreamingTranscriberMLX:
+    def __init__(self, model_size: str = "base"):
+        self.model = mlx_whisper.load_model(model_size)
+        # MLX usa GPU automáticamente
+```
+
+**Agregar flag CLI:**
+```bash
+local-transcriber live-stream --backend mlx-whisper
+```
+
+**Requisitos:**
+- `mlx` (framework de Apple)
+- `mlx-whisper` (implementación de Whisper para MLX)
+
+**Consideraciones:**
+- Requiere reimplementar el streaming (mlx-whisper puede tener API diferente)
+- Verificar compatibilidad con chunks de audio en tiempo real
+- Puede requerir ajustes en el procesamiento de audio
+
+**Esfuerzo:** ~2-3 días (investigación + implementación + testing)
+
+**Referencias:**
+- https://github.com/ml-explore/mlx-examples/tree/main/whisper
+- MLX está diseñado específicamente para Apple Silicon
 
 ---
 
@@ -337,6 +398,7 @@ class CaptureMetrics:
 - [ ] Speaker diarization
 - [ ] Integración calendario
 - [ ] Crear issues desde transcripción
+- [ ] Migrar a mlx-whisper para GPU real en Apple Silicon
 
 ---
 
@@ -350,11 +412,55 @@ class CaptureMetrics:
 
 ## 📝 Estado de Implementación
 
+### ✅ Cambios Recientes (Enero 2026)
+
+#### Optimización de duración de chunks (27 Enero 2026)
+**Cambio:** Duración de chunks aumentada de 2.0s a 30.0s por defecto.
+
+**Motivación:** 
+- Chunks más largos proporcionan más contexto a Whisper, mejorando la calidad de la transcripción
+- Mejor comprensión de contexto y coherencia en el texto transcrito
+- Trade-off: mayor latencia (30s vs 2s) pero mejor precisión
+
+**Archivos modificados:**
+- `src/local_transcriber/audio/live_capture.py` - Valor por defecto actualizado
+- `src/local_transcriber/cli.py` - Mensaje de ayuda actualizado
+- `README.md` - Documentación actualizada
+
+**Configuración:**
+```bash
+# En .env o como variable de entorno
+STREAMING_CHUNK_DURATION=30.0
+
+# O como argumento CLI
+local-transcriber live-stream --chunk-duration 30.0
+```
+
+**Nota:** El valor puede ajustarse según necesidades (más corto = menor latencia, más largo = mejor calidad).
+
+#### Gitignore para Swift (27 Enero 2026)
+**Cambio:** Agregadas entradas al `.gitignore` para ignorar artefactos de compilación de Swift.
+
+**Patrones agregados:**
+- `.build/` - Directorio de compilación de Swift Package Manager
+- `.swiftpm/` - Cache de Swift Package Manager
+- `*.swiftmodule`, `*.swiftdoc`, `*.swiftsourceinfo` - Módulos compilados
+- `*.dSYM/` - Símbolos de depuración
+- `*.o`, `*.a` - Archivos objeto y librerías
+- `*.xcodeproj/`, `*.xcworkspace/`, `DerivedData/` - Artefactos de Xcode
+
+**Archivos modificados:**
+- `.gitignore` - Sección Swift agregada
+
+---
+
 ### ✅ Completado (Enero 2026)
 
 1. **Centralizar configuración VAD** - Configuración centralizada con variables de entorno
 2. **Soporte GPU (MPS)** - Detección automática y uso de Apple Silicon GPU
 3. **Exportar JSON estructurado** - Exportación en formato JSON con metadata completa
+4. **Optimización de duración de chunks** - Cambio de 2.0s a 30.0s para mejorar calidad de transcripción
+5. **Gitignore para Swift** - Agregadas entradas para ignorar artefactos de compilación de Swift Package Manager
 
 ### 🔄 En Progreso
 
@@ -373,3 +479,4 @@ Basado en el esfuerzo y valor, las siguientes mejoras son buenos candidatos:
 
 - **Resumen automático con LLM** (3-4 horas) - Feature muy útil para reuniones
 - **Modo daemon** (1 día) - Reduce tiempo de startup significativamente
+- **Migrar a mlx-whisper** (2-3 días) - Aceleración GPU real en Apple Silicon, 2-3x más rápido

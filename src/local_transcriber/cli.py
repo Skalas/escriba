@@ -84,14 +84,20 @@ def main() -> None:
     )
     live_stream_parser.add_argument(
         "--device",
-        choices=["auto", "cpu", "mps"],
+        choices=["auto", "cpu", "cuda"],
         default=None,
-        help="Dispositivo a usar para transcripción (auto detecta MPS en Apple Silicon). Sobrescribe STREAMING_DEVICE.",
+        help="Dispositivo a usar para transcripción (auto usa CPU). faster-whisper solo soporta cpu y cuda. Sobrescribe STREAMING_DEVICE.",
     )
     live_stream_parser.add_argument(
         "--format",
         default=None,
         help="Formatos de exportación separados por comas (txt,json). Ejemplo: txt,json. Sobrescribe STREAMING_EXPORT_FORMATS.",
+    )
+    live_stream_parser.add_argument(
+        "--backend",
+        choices=["faster-whisper", "openai-whisper", "mps"],
+        default=None,
+        help="Backend a usar: faster-whisper (CPU optimizado, default) o openai-whisper (soporta MPS/GPU). Sobrescribe STREAMING_BACKEND.",
     )
 
     watch_parser = subparsers.add_parser("watch", help="Transcribe audios nuevos.")
@@ -139,6 +145,8 @@ def main() -> None:
             os.environ["STREAMING_DEVICE"] = args.device
         if args.format:
             os.environ["STREAMING_EXPORT_FORMATS"] = args.format
+        if args.backend:
+            os.environ["STREAMING_BACKEND"] = args.backend
 
         # Auto-detección de llamada si está habilitada
         if args.auto_start:

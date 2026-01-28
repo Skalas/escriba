@@ -27,22 +27,22 @@ def _find_swift_cli() -> Optional[Path]:
     # Buscar en el directorio del proyecto
     project_root = Path(__file__).parent.parent.parent.parent
     swift_capture_dir = project_root / "swift-audio-capture"
-    
+
     # Intentar release primero
     release_path = swift_capture_dir / ".build" / "release" / "audio-capture"
     if release_path.exists():
         return release_path
-    
+
     # Intentar debug
     debug_path = swift_capture_dir / ".build" / "debug" / "audio-capture"
     if debug_path.exists():
         return debug_path
-    
+
     # Intentar en PATH
     which_path = shutil.which("audio-capture")
     if which_path:
         return Path(which_path)
-    
+
     return None
 
 
@@ -131,11 +131,14 @@ class ScreenCaptureAudioCapture:
         try:
             # Leer chunks de PCM (int16, little-endian)
             # Leemos en bloques de ~1 segundo de audio
-            chunk_size = self.sample_rate * self.channels * 2  # 2 bytes por sample (int16)
-            
+            chunk_size = (
+                self.sample_rate * self.channels * 2
+            )  # 2 bytes por sample (int16)
+
             while not self.stop_event.is_set() and self.is_capturing:
                 if self.process.poll() is not None:
-                    # Proceso terminó
+                    # Proceso terminó inesperadamente
+                    logger.warning("Swift CLI process ended unexpectedly")
                     break
 
                 chunk = self.process.stdout.read(chunk_size)
@@ -154,6 +157,28 @@ class ScreenCaptureAudioCapture:
             logger.error(f"Error reading audio stream: {e}", exc_info=True)
         finally:
             logger.info("Audio reading thread stopped")
+            # Marcar que ya no está capturando
+            self.is_capturing = False
+
+    def restart(self) -> bool:
+        """
+        Reinicia la captura de audio del sistema.
+
+        Útil para recuperarse de fallos del proceso Swift.
+
+        Returns:
+            True si se reinició exitosamente, False en caso contrario
+        """
+        logger.info("Attempting to restart Swift CLI...")
+
+        # Detener captura actual si está activa
+        if self.is_capturing:
+            self.stop()
+            # Esperar un poco antes de reiniciar
+            threading.Event().wait(1.0)
+
+        # Reiniciar
+        return self.start()
 
     def stop(self):
         """Detiene la captura de audio."""

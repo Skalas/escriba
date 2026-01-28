@@ -6,7 +6,7 @@ Transcriptor local que captura audio del sistema + micrófono (macOS) y procesa 
 
 - 🎙️ **Captura de audio del sistema y micrófono** usando ScreenCaptureKit (API nativa de macOS)
 - ⚡ **Transcripción en tiempo real** con latencia baja (2-5 segundos)
-- 🚀 **Aceleración GPU** con soporte automático para MPS (Apple Silicon)
+- ⚡ **Optimización CPU** con compute_type int8 para mejor rendimiento
 - 🔍 **Auto-detección de dispositivos** (similar a Notion AI)
 - 📞 **Detección automática de llamadas** (Zoom, Teams, Meet, etc.)
 - 🎧 **Soporte para AirPods** y otros micrófonos externos
@@ -102,7 +102,8 @@ MIC_ONLY=false                   # true = solo micrófono, false = sistema + mic
 STREAMING_CHUNK_DURATION=30.0      # Duración de chunks en segundos (0.5+)
 STREAMING_MODEL_SIZE=base         # tiny, base, small, medium, large
 STREAMING_LANGUAGE=es             # Código ISO 639-1 (es, en, fr, etc.)
-STREAMING_DEVICE=auto             # auto|cpu|mps - auto detecta MPS (Apple Silicon GPU)
+STREAMING_DEVICE=auto             # auto|cpu|cuda - solo para faster-whisper (no mps)
+STREAMING_BACKEND=faster-whisper  # faster-whisper (CPU optimizado) o openai-whisper (soporta MPS/GPU)
 STREAMING_VAD_ENABLED=false       # Voice Activity Detection (true = solo voz, false = todo)
 STREAMING_REALTIME_OUTPUT=true    # Mostrar transcripciones en consola en tiempo real
 STREAMING_EXPORT_FORMATS=txt,json # Formatos de exportación separados por comas (txt,json)
@@ -438,10 +439,43 @@ uv pip install -e .
 - Usa GPU con `--device auto` o `--device mps` (Apple Silicon)
 - Verifica que no haya otros procesos consumiendo CPU
 
-**GPU no se detecta (Apple Silicon)**
-- Verifica que `torch` esté instalado: `python -c "import torch; print(torch.backends.mps.is_available())"`
-- Usa `--device auto` para detección automática
-- Si no funciona, usa `--device cpu` como fallback
+**Usar GPU en Apple Silicon (MPS) - Limitado**
+- ⚠️ **Problema conocido**: `openai-whisper` tiene problemas de estabilidad con MPS que producen errores NaN
+- `faster-whisper` (que usa `ctranslate2`) solo soporta `cpu` y `cuda`, no `mps`
+- **Recomendación**: Usa `faster-whisper` (backend por defecto) que es más rápido y estable en CPU
+- Si quieres intentar `openai-whisper`:
+  ```bash
+  local-transcriber live-stream --backend openai-whisper
+  # Por defecto usará CPU (más estable)
+  # Para forzar MPS (puede fallar): export WHISPER_FORCE_MPS=true
+  ```
+- `openai-whisper` puede ser más rápido en modelos grandes (medium, large) pero tiene problemas con MPS
+- `faster-whisper` es más rápido y estable en CPU con todos los modelos
+- Requisitos para `openai-whisper`: `pip install openai-whisper torch` (ya incluido en dependencias)
+
+**Error SSL al descargar modelo (openai-whisper)**
+Si ves `SSL: CERTIFICATE_VERIFY_FAILED` al usar `openai-whisper`:
+```bash
+# Solución 1: Instalar certificados de Python
+/Applications/Python\ 3.13/Install\ Certificates.command
+
+# Solución 2: Usar directorio de caché personalizado
+export WHISPER_CACHE_DIR=~/.cache/whisper
+# Descarga el modelo manualmente y colócalo ahí
+
+# Solución 3: Usar faster-whisper (no requiere descarga manual, más estable)
+local-transcriber live-stream --backend faster-whisper
+```
+
+**Error NaN con openai-whisper y MPS**
+Si ves `ValueError: ... nan, nan, nan ...` al usar `openai-whisper`:
+- Este es un problema conocido de `openai-whisper` con MPS (GPU)
+- **Solución**: El sistema automáticamente usa CPU por defecto
+- Si quieres forzar MPS (puede fallar): `export WHISPER_FORCE_MPS=true`
+- **Recomendación**: Usa `faster-whisper` que es más rápido y estable:
+  ```bash
+  local-transcriber live-stream --backend faster-whisper
+  ```
 
 **No se detecta audio del sistema**
 - Verifica permisos de Screen Recording
