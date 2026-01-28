@@ -31,7 +31,11 @@ model_size = "base"
     assert cfg.streaming.model_size == "base"
 
 
-def test_env_used_when_toml_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_used_when_toml_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("SAMPLE_RATE", "8000")
+    missing_path = tmp_path / "does-not-exist.toml"
+    monkeypatch.setenv("LOCAL_TRANSCRIBER_CONFIG", str(missing_path))
     cfg = AppConfig.load(None)
     assert cfg.audio.sample_rate == 8000
