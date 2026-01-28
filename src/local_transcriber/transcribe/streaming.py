@@ -98,6 +98,8 @@ class StreamingTranscriber:
         # Nota: En transcripciones muy largas (>10k segmentos), considerar flush periódico
         self.segments: list[dict[str, Any]] = []
         self.start_time = time.time()
+        # Tiempo acumulado de audio procesado (para calcular timestamps correctos)
+        self.accumulated_audio_time = 0.0
 
         # Lock para thread-safety
         self.lock = threading.Lock()
@@ -158,11 +160,18 @@ class StreamingTranscriber:
                 text = segment.text.strip()
                 if text:
                     texts.append(text)
+                    # Sumar tiempo acumulado a los tiempos relativos del segmento
                     self._handle_transcription(
                         text,
-                        segment.start,
-                        segment.end,
+                        self.accumulated_audio_time + segment.start,
+                        self.accumulated_audio_time + segment.end,
                     )
+
+            # Actualizar tiempo acumulado con la duración del chunk procesado
+            # Calcular duración del chunk desde el audio
+            if len(audio_float) > 0:
+                chunk_duration = len(audio_float) / sample_rate
+                self.accumulated_audio_time += chunk_duration
 
             return " ".join(texts) if texts else None
 
@@ -248,11 +257,17 @@ class StreamingTranscriber:
                         if text:
                             texts.append(text)
                             logger.info(f"Found transcription segment: {text[:50]}")
+                            # Sumar tiempo acumulado a los tiempos relativos del segmento
                             self._handle_transcription(
                                 text,
-                                segment.start,
-                                segment.end,
+                                self.accumulated_audio_time + segment.start,
+                                self.accumulated_audio_time + segment.end,
                             )
+
+                    # Actualizar tiempo acumulado con la duración del chunk procesado
+                    if len(audio_float) > 0:
+                        chunk_duration = len(audio_float) / sample_rate
+                        self.accumulated_audio_time += chunk_duration
 
                     if segment_count == 0:
                         logger.debug(
