@@ -82,6 +82,21 @@ echo 'dotenv' > .envrc
 direnv allow
 ```
 
+### Configuración con TOML (Recomendado)
+
+También puedes usar un archivo `local-transcriber.toml` para configurar defaults.
+
+- Se incluye un ejemplo en `local-transcriber.toml.example`.
+- Precedencia:
+  - **CLI flags** (para esa ejecución)
+  - `local-transcriber.toml`
+  - variables de entorno (`.env`)
+
+Opciones:
+- `--config /ruta/al/local-transcriber.toml`
+- o `LOCAL_TRANSCRIBER_CONFIG=/ruta/al/local-transcriber.toml`
+- o `./local-transcriber.toml`
+
 ### Configuración Básica
 
 ```bash
@@ -296,6 +311,18 @@ local-transcriber live-stream \
 - `--format`: Formatos de exportación separados por comas (txt, json). Se exportan al finalizar
 - `--auto-start`: Esperar a que se detecte una llamada antes de comenzar
 - `--no-realtime-output`: No mostrar transcripciones en consola
+
+### Speaker diarization (pyannote-audio)
+
+Para diarización real (Speaker A/B/etc.) al finalizar la sesión, usa `pyannote-audio` (opcional) y un token de HuggingFace.
+
+- Config:
+  - En TOML: `[speaker] mode = "pyannote"`
+  - O env: `STREAMING_SPEAKER_MODE=pyannote`
+  - Token: `HUGGINGFACE_TOKEN=...`
+
+Notas:
+- Esta integración corre diarización **post-run** sobre un WAV de la sesión y luego anota speakers en las exportaciones (JSON/Markdown).
 
 ### Modo Legacy (Batch)
 

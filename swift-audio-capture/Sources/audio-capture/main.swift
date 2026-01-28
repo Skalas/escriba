@@ -156,9 +156,14 @@ if #available(macOS 13.0, *) {
 }
 
 // Run until stopped
+// NOTE: runLoop.run() returns false if no events were processed.
+// We must NOT use it as a loop condition, or the loop exits immediately
+// if there are no pending events (race condition with audio capture startup).
 let runLoop = RunLoop.current
-while !shouldStop && runLoop.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1)) {
-    // Keep running
+while !shouldStop {
+    // Process run loop events with a short timeout
+    // This keeps the process alive while ScreenCaptureKit captures audio
+    runLoop.run(until: Date(timeIntervalSinceNow: 0.1))
 }
 
 // Cleanup

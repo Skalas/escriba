@@ -5,11 +5,20 @@ description = "Local system + mic audio transcription"
 requires-python = ">=3.10"
 dependencies = [
   "python-dotenv>=1.0.0",
+  "typer>=0.16.0",
+  "tomli>=2.0.1",
   "openai-whisper>=20250625",
   "faster-whisper>=1.0.0",
   "numpy>=1.24.0",
   "sounddevice>=0.4.6",
   "watchdog>=4.0.0",
+  "mlx-whisper>=0.4.3",
+  "pyannote-audio>=4.0.3",
+]
+
+[project.optional-dependencies]
+diarization = [
+  "pyannote-audio>=3.3.0",
 ]
 
 [project.scripts]

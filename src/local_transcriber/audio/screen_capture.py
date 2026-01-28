@@ -124,9 +124,14 @@ class ScreenCaptureAudioCapture:
     def _read_audio_stream(self):
         """Lee datos PCM desde stdout del proceso Swift."""
         if not self.process or not self.process.stdout:
+            logger.error("Swift process or stdout not available")
             return
 
         logger.info("🎧 Audio reading thread started")
+
+        # Track consecutive empty reads to detect stalled process
+        consecutive_empty_reads = 0
+        max_empty_reads = 100  # ~1 second of empty reads before warning
 
         try:
             # Leer chunks de PCM (int16, little-endian)
@@ -137,17 +142,38 @@ class ScreenCaptureAudioCapture:
 
             while not self.stop_event.is_set() and self.is_capturing:
                 if self.process.poll() is not None:
-                    # Proceso terminó inesperadamente
-                    logger.warning("Swift CLI process ended unexpectedly")
+                    # Proceso terminó - obtener código de salida
+                    exit_code = self.process.returncode
+                    logger.warning(
+                        f"Swift CLI process ended unexpectedly (exit code: {exit_code})"
+                    )
+                    # Leer stderr para diagnóstico
+                    if self.process.stderr:
+                        try:
+                            stderr_output = self.process.stderr.read()
+                            if stderr_output:
+                                logger.warning(
+                                    f"Swift CLI stderr: {stderr_output.decode('utf-8', errors='ignore')}"
+                                )
+                        except Exception:
+                            pass
                     break
 
                 chunk = self.process.stdout.read(chunk_size)
                 if not chunk:
+                    consecutive_empty_reads += 1
+                    if consecutive_empty_reads >= max_empty_reads:
+                        logger.debug(
+                            f"No audio data for {consecutive_empty_reads} reads, Swift CLI may be starting up"
+                        )
+                        consecutive_empty_reads = 0  # Reset to avoid log spam
                     if self.stop_event.is_set():
                         break
                     # Esperar un poco si no hay datos
                     threading.Event().wait(0.01)
                     continue
+
+                consecutive_empty_reads = 0  # Reset on successful read
 
                 # El CLI Swift ya entrega PCM int16, solo pasarlo al callback
                 if self.audio_callback:
@@ -157,7 +183,7 @@ class ScreenCaptureAudioCapture:
             logger.error(f"Error reading audio stream: {e}", exc_info=True)
         finally:
             logger.info("Audio reading thread stopped")
-            # Marcar que ya no está capturando
+            # Marcar que ya no está capturando - use lock for thread safety
             self.is_capturing = False
 
     def restart(self) -> bool:

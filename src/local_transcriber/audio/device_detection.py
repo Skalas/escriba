@@ -142,6 +142,9 @@ def _classify_device(name: str) -> str:
         return "excluded"  # Excluir iPhone (cualquier variante)
     if "ipad" in name_lower:
         return "excluded"  # Excluir iPad
+    # Excluir dispositivos virtuales de aplicaciones (pueden no estar disponibles)
+    if "zoom" in name_lower or "teams" in name_lower:
+        return "excluded"  # ZoomAudioDevice, Microsoft Teams Audio
 
     # Clasificar dispositivos deseados (orden de prioridad)
     if (
@@ -151,6 +154,9 @@ def _classify_device(name: str) -> str:
     ):
         return "airpods"  # Máxima prioridad para AirPods
     elif "built-in" in name_lower and "microphone" in name_lower:
+        return "microphone"
+    # Reconocer "MacBook Pro Microphone" como micrófono integrado
+    elif "macbook" in name_lower and "microphone" in name_lower:
         return "microphone"
     elif "microphone" in name_lower and "built-in" not in name_lower:
         # Micrófonos externos (pero no iPhone/iPad)

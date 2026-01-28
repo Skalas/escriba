@@ -14,7 +14,7 @@ from faster_whisper import WhisperModel
 
 from local_transcriber.transcribe.config import VADConfig
 from local_transcriber.transcribe.metrics import CaptureMetrics
-from local_transcriber.utils.env import get_bool_env, get_float_env
+from local_transcriber.utils.env import get_bool_env, get_float_env, get_str_env
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,8 @@ class StreamingTranscriber:
         realtime_output: bool = True,
         vad_config: Optional[VADConfig] = None,
         metrics: Optional[CaptureMetrics] = None,
+        speaker_mode: str | None = None,
+        speaker_threshold: float | None = None,
     ):
         """
         Inicializa el transcriber en streaming.
@@ -54,6 +56,9 @@ class StreamingTranscriber:
             realtime_output: Mostrar transcripciones en consola en tiempo real
             vad_config: Configuración VAD. Si es None, se carga desde variables de entorno.
             metrics: Instancia de CaptureMetrics para tracking de métricas (opcional)
+            speaker_mode: Modo de speaker labeling ('none'|'simple'|'pyannote').
+                Nota: 'pyannote' se aplica post-run en live_capture, no aquí.
+            speaker_threshold: Umbral para modo 'simple' (0.0-1.0). Si None, usa env/default.
         """
         self.model_size = model_size
         self.language = language
@@ -66,12 +71,22 @@ class StreamingTranscriber:
         self.vad_config = vad_config or VADConfig.from_env()
 
         # Speaker detection (opcional)
-        self.speaker_detection_enabled = get_bool_env("STREAMING_SPEAKER_DETECTION", False)
+        # 'simple' = lightweight change detection per chunk (not real diarization)
+        effective_mode = speaker_mode or get_str_env("STREAMING_SPEAKER_MODE", "none")
+        self.speaker_detection_enabled = effective_mode == "simple" or get_bool_env(
+            "STREAMING_SPEAKER_DETECTION", False
+        )
         self.speaker_detector = None
         if self.speaker_detection_enabled:
             try:
                 from local_transcriber.speaker.detection import SpeakerDetector
-                self.speaker_detector = SpeakerDetector(threshold=get_float_env("SPEAKER_DETECTION_THRESHOLD", 0.3))
+
+                threshold = (
+                    float(speaker_threshold)
+                    if speaker_threshold is not None
+                    else get_float_env("SPEAKER_DETECTION_THRESHOLD", 0.3)
+                )
+                self.speaker_detector = SpeakerDetector(threshold=threshold)
             except ImportError:
                 logger.warning("Speaker detection requested but module not available")
                 self.speaker_detection_enabled = False
@@ -321,7 +336,9 @@ class StreamingTranscriber:
                     result = " ".join(texts) if texts else None
                     # Registrar métricas
                     if self.metrics and start_timestamp:
-                        self.metrics.record_chunk_end(start_timestamp, had_transcription=(result is not None))
+                        self.metrics.record_chunk_end(
+                            start_timestamp, had_transcription=(result is not None)
+                        )
                     return result
 
             except wave.Error as e:
@@ -329,7 +346,9 @@ class StreamingTranscriber:
                 logger.debug(f"wave.open failed, parsing manually: {e}")
                 result = self._process_wav_manual(wav_data)
                 if self.metrics and start_timestamp:
-                    self.metrics.record_chunk_end(start_timestamp, had_transcription=(result is not None))
+                    self.metrics.record_chunk_end(
+                        start_timestamp, had_transcription=(result is not None)
+                    )
                 return result
 
         except Exception as e:
@@ -337,7 +356,9 @@ class StreamingTranscriber:
             if self.metrics:
                 self.metrics.record_error()
                 if start_timestamp:
-                    self.metrics.record_chunk_end(start_timestamp, had_transcription=False)
+                    self.metrics.record_chunk_end(
+                        start_timestamp, had_transcription=False
+                    )
             return None
 
     def _process_wav_manual(self, wav_data: bytes) -> Optional[str]:

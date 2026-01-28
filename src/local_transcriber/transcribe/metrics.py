@@ -4,7 +4,6 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 
@@ -215,9 +214,76 @@ class CaptureMetrics:
                 "total_transcription_time_seconds": self.total_transcription_time,
             }
 
-    def print_summary(self) -> None:
+    def try_get_summary(self, timeout_seconds: float = 0.5) -> dict[str, any] | None:
+        """
+        Obtiene un resumen de métricas sin bloquear indefinidamente.
+
+        Esto evita hangs en shutdown si otro thread mantiene el lock.
+
+        Args:
+            timeout_seconds: Tiempo máximo para adquirir el lock.
+
+        Returns:
+            Summary dict o None si no se pudo adquirir el lock a tiempo.
+        """
+        acquired = self._lock.acquire(timeout=timeout_seconds)
+        if not acquired:
+            return None
+        try:
+            latencies = list(self._latencies)
+            chunks_processed = self.chunks_processed
+            chunks_silent = self.chunks_silent
+            chunks_with_transcription = self.chunks_with_transcription
+            errors = self.errors
+
+            avg_latency_ms = (sum(latencies) / len(latencies)) if latencies else 0.0
+            min_latency_ms = min(latencies) if latencies else 0.0
+            max_latency_ms = max(latencies) if latencies else 0.0
+
+            silent_chunks_percent = (
+                (chunks_silent / chunks_processed) * 100.0 if chunks_processed else 0.0
+            )
+            transcription_chunks_percent = (
+                (chunks_with_transcription / chunks_processed) * 100.0
+                if chunks_processed
+                else 0.0
+            )
+            error_rate_percent = (
+                (errors / chunks_processed) * 100.0 if chunks_processed else 0.0
+            )
+
+            audio_level_db = (
+                (self.audio_level_sum / self.audio_level_samples)
+                if self.audio_level_samples
+                else -np.inf
+            )
+
+            return {
+                "chunks_processed": chunks_processed,
+                "chunks_silent": chunks_silent,
+                "chunks_with_transcription": chunks_with_transcription,
+                "silent_chunks_percent": silent_chunks_percent,
+                "transcription_chunks_percent": transcription_chunks_percent,
+                "errors": errors,
+                "error_rate_percent": error_rate_percent,
+                "avg_latency_ms": avg_latency_ms,
+                "min_latency_ms": min_latency_ms,
+                "max_latency_ms": max_latency_ms,
+                "audio_level_db": audio_level_db,
+                "total_audio_duration_seconds": self.total_audio_duration,
+                "total_transcription_time_seconds": self.total_transcription_time,
+            }
+        finally:
+            self._lock.release()
+
+    def print_summary(self, timeout_seconds: float = 0.5) -> None:
         """Imprime un resumen de las métricas en consola."""
-        summary = self.get_summary()
+        summary = self.try_get_summary(timeout_seconds=timeout_seconds)
+        if summary is None:
+            print(
+                "\n[CaptureMetrics] Skipping metrics print: lock busy (shutdown in progress)\n"
+            )
+            return
         print("\n" + "=" * 60)
         print("📊 Capture Metrics Summary")
         print("=" * 60)
@@ -225,11 +291,11 @@ class CaptureMetrics:
         print(f"Chunks with transcription: {summary['chunks_with_transcription']} ({summary['transcription_chunks_percent']:.1f}%)")
         print(f"Silent chunks:           {summary['chunks_silent']} ({summary['silent_chunks_percent']:.1f}%)")
         print(f"Errors:                  {summary['errors']} ({summary['error_rate_percent']:.2f}%)")
-        print(f"\nLatency:")
+        print("\nLatency:")
         print(f"  Average:               {summary['avg_latency_ms']:.1f} ms")
         print(f"  Min:                    {summary['min_latency_ms']:.1f} ms")
         print(f"  Max:                    {summary['max_latency_ms']:.1f} ms")
-        print(f"\nAudio:")
+        print("\nAudio:")
         print(f"  Average level:         {summary['audio_level_db']:.1f} dB")
         print(f"  Total duration:        {summary['total_audio_duration_seconds']:.1f} s")
         print(f"  Transcription time:    {summary['total_transcription_time_seconds']:.1f} s")

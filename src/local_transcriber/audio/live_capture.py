@@ -7,7 +7,9 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections import deque
 from pathlib import Path
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 
@@ -23,6 +25,9 @@ from local_transcriber.utils.env import (
 )
 from local_transcriber.watch.watch_folder import watch_folder, wait_for_queue_empty
 
+if TYPE_CHECKING:
+    from local_transcriber.config import AppConfig
+
 # Intentar importar StreamingTranscriberMPS (requiere openai-whisper y torch)
 try:
     from local_transcriber.transcribe.streaming_mps import StreamingTranscriberMPS
@@ -34,7 +39,10 @@ except ImportError:
 
 # Intentar importar StreamingTranscriberMLX (requiere mlx-whisper)
 try:
-    from local_transcriber.transcribe.streaming_mlx import StreamingTranscriberMLX, MLX_AVAILABLE
+    from local_transcriber.transcribe.streaming_mlx import (
+        StreamingTranscriberMLX,
+        MLX_AVAILABLE,
+    )
 
     MLX_WHISPER_AVAILABLE = MLX_AVAILABLE
 except ImportError:
@@ -58,7 +66,12 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def run_live_capture(output_dir: Path, combined_transcript: Path | None = None) -> None:
+def run_live_capture(
+    output_dir: Path,
+    combined_transcript: Path | None = None,
+    *,
+    config: AppConfig | None = None,
+) -> None:
     """
     Captura audio en vivo usando ffmpeg y transcribe segmentos (modo legacy).
 
@@ -68,21 +81,28 @@ def run_live_capture(output_dir: Path, combined_transcript: Path | None = None) 
     Args:
         output_dir: Directorio donde guardar transcripciones
         combined_transcript: Archivo opcional para transcripción combinada
+        config: AppConfig opcional (TOML/env resuelto)
     """
+    if config is None:
+        from local_transcriber.config import AppConfig
+
+        config = AppConfig.load(None)
+
     # Detección automática de dispositivos (como Notion AI)
-    auto_detect = get_bool_env("AUTO_DETECT_DEVICES", True)
+    auto_detect = config.audio.auto_detect_devices
 
     if auto_detect:
         logger.info("Auto-detecting audio devices...")
         detected_system, detected_mic = auto_detect_devices()
-        system_device = detected_system or get_str_env("SYSTEM_DEVICE", "0")
-        mic_device = detected_mic or get_str_env("MIC_DEVICE", "1")
+        system_device = detected_system or config.audio.system_device
+        mic_device = detected_mic or config.audio.mic_device
         logger.info(f"Using devices - System: {system_device}, Mic: {mic_device}")
     else:
-        system_device = get_str_env("SYSTEM_DEVICE", "0")
-        mic_device = get_str_env("MIC_DEVICE", "1")
-    sample_rate = get_int_env("SAMPLE_RATE", 16000, min_value=8000)
-    channels = get_int_env("CHANNELS", 1, min_value=1)
+        system_device = config.audio.system_device
+        mic_device = config.audio.mic_device
+
+    sample_rate = config.audio.sample_rate
+    channels = config.audio.channels
     segment_seconds = get_int_env("SEGMENT_SECONDS", 30, min_value=1)
 
     # ffmpeg escribe en temp_dir, el mover los completa a watched_dir
@@ -375,6 +395,9 @@ def mix_audio(
 def run_streaming_capture(
     output_dir: Path,
     combined_transcript: Path | None = None,
+    *,
+    config: AppConfig | None = None,
+    streaming_overrides: dict[str, object] | None = None,
 ) -> None:
     """
     Captura y transcribe audio en tiempo real usando streaming.
@@ -382,14 +405,20 @@ def run_streaming_capture(
     Similar a Notion AI Meeting Notes, procesa chunks pequeños (1-3s)
     y muestra transcripciones mientras ocurre la llamada.
     """
+    if config is None:
+        from local_transcriber.config import AppConfig
+
+        config = AppConfig.load(None)
+    overrides = streaming_overrides or {}
+
     # Detección automática de dispositivos (como Notion AI)
-    auto_detect = get_bool_env("AUTO_DETECT_DEVICES", True)
+    auto_detect = config.audio.auto_detect_devices
 
     if auto_detect:
         logger.info("Auto-detecting audio devices...")
         detected_system, detected_mic = auto_detect_devices()
-        system_device = detected_system or get_str_env("SYSTEM_DEVICE", "0")
-        mic_device = detected_mic or get_str_env("MIC_DEVICE", "1")
+        system_device = detected_system or config.audio.system_device
+        mic_device = detected_mic or config.audio.mic_device
         logger.info(f"Using devices - System: {system_device}, Mic: {mic_device}")
 
         # ScreenCaptureKit captura el audio del sistema directamente
@@ -398,30 +427,39 @@ def run_streaming_capture(
             "Using ScreenCaptureKit for system audio capture (no virtual device needed)"
         )
     else:
-        system_device = get_str_env("SYSTEM_DEVICE", "0")
-        mic_device = get_str_env("MIC_DEVICE", "1")
-    sample_rate = get_int_env("SAMPLE_RATE", 16000, min_value=8000)
-    channels = get_int_env("CHANNELS", 1, min_value=1)
-    chunk_duration = get_float_env("STREAMING_CHUNK_DURATION", 30.0, min_value=0.5)
-    model_size = get_str_env("STREAMING_MODEL_SIZE", "base")
-    language = get_str_env("STREAMING_LANGUAGE", "es")
-    device = get_str_env("STREAMING_DEVICE", "auto")
-    backend = get_str_env(
-        "STREAMING_BACKEND", "faster-whisper"
-    )  # faster-whisper o openai-whisper
-    vad_enabled = get_bool_env(
-        "STREAMING_VAD_ENABLED", False
-    )  # Deshabilitado por defecto para capturar todo el audio
-    realtime_output = get_bool_env("STREAMING_REALTIME_OUTPUT", True)
-    summarize_enabled = get_bool_env("STREAMING_SUMMARIZE", False)
-    summary_model = get_str_env("STREAMING_SUMMARY_MODEL", "gemini")
+        system_device = config.audio.system_device
+        mic_device = config.audio.mic_device
+
+    sample_rate = config.audio.sample_rate
+    channels = config.audio.channels
+
+    chunk_duration = float(
+        overrides.get("chunk_duration", config.streaming.chunk_duration)
+    )
+    model_size = str(overrides.get("model_size", config.streaming.model_size))
+    language = str(overrides.get("language", config.streaming.language))
+    device = str(overrides.get("device", config.streaming.device))
+    backend = str(overrides.get("backend", config.streaming.backend))
+    vad_enabled = bool(overrides.get("vad_enabled", config.streaming.vad_enabled))
+    realtime_output = bool(
+        overrides.get("realtime_output", config.streaming.realtime_output)
+    )
+    export_formats = overrides.get("export_formats", config.streaming.export_formats)
+    if not isinstance(export_formats, list):
+        export_formats = config.streaming.export_formats
+
+    show_metrics = bool(overrides.get("show_metrics", config.streaming.show_metrics))
+    summarize_enabled = bool(overrides.get("summarize", config.streaming.summarize))
+    summary_model = str(overrides.get("summary_model", config.streaming.summary_model))
+    speaker_mode = str(overrides.get("speaker_mode", config.streaming.speaker.mode))
 
     # Configurar archivo de salida
     output_file = combined_transcript or output_dir / "live_transcription.txt"
 
     # Crear instancia de métricas si está habilitado
-    show_metrics = get_bool_env("STREAMING_SHOW_METRICS", False)
     metrics = CaptureMetrics() if show_metrics else None
+
+    transcriber: Any | None = None
 
     # Inicializar transcriber según el backend
     if backend == "mlx-whisper":
@@ -474,12 +512,13 @@ def run_streaming_capture(
             vad_enabled=vad_enabled,
             realtime_output=realtime_output,
             metrics=metrics,
+            speaker_mode=speaker_mode,
+            speaker_threshold=config.streaming.speaker.threshold,
+            vad_config=config.vad,
         )
 
     # Verificar si debemos usar ScreenCaptureKit para audio del sistema
-    use_screen_capture = SCREENCAPTUREKIT_AVAILABLE and not get_bool_env(
-        "MIC_ONLY", False
-    )
+    use_screen_capture = SCREENCAPTUREKIT_AVAILABLE and not config.audio.mic_only
 
     if use_screen_capture:
         # Verificar permisos de Screen Recording
@@ -487,6 +526,17 @@ def run_streaming_capture(
             logger.warning("Screen Recording permission not granted")
             request_screen_recording_permission()
             logger.info("Will attempt to use ScreenCaptureKit anyway...")
+
+    # Validar que tenemos un dispositivo de micrófono
+    if not mic_device:
+        logger.error(
+            "No microphone device detected or configured.\n"
+            "Run 'ffmpeg -f avfoundation -list_devices true -i \"\"' to see available devices.\n"
+            "Then set AUDIO_MIC_DEVICE=<index> in your environment or config."
+        )
+        raise RuntimeError("No microphone device available")
+
+    logger.info(f"Using microphone device: {mic_device}")
 
     # Construir comando ffmpeg para streaming (solo micrófono)
     ffmpeg_cmd = _build_streaming_ffmpeg_command(
@@ -496,10 +546,12 @@ def run_streaming_capture(
         channels=channels,
         chunk_duration=chunk_duration,
     )
+    logger.info(f"ffmpeg command: {' '.join(ffmpeg_cmd)}")
 
     stop_event = threading.Event()
     process = None
     screen_capture = None
+    # transcriber already initialized above
 
     try:
         logger.info("Starting streaming capture...")
@@ -645,11 +697,14 @@ def run_streaming_capture(
         )
 
         # Thread para leer stderr (logs de ffmpeg)
+        stderr_tail = deque(maxlen=50)
+
         def read_stderr():
             if process.stderr:
                 for line in iter(process.stderr.readline, b""):
                     if line:
                         line_str = line.decode("utf-8", errors="ignore").strip()
+                        stderr_tail.append(line_str)
                         # Mostrar errores y warnings en nivel INFO
                         if (
                             "error" in line_str.lower()
@@ -671,8 +726,27 @@ def run_streaming_capture(
         # ffmpeg siempre envía header WAV, incluso cuando usamos ScreenCaptureKit
         wav_header = b""
         while len(wav_header) < 44 and not stop_event.is_set():
-            if process.poll() is not None:
-                logger.warning("ffmpeg process ended unexpectedly")
+            poll_result = process.poll()
+            if poll_result is not None:
+                logger.error(
+                    f"ffmpeg process died while reading WAV header. Exit code: {poll_result}"
+                )
+                # Give stderr_thread time to read, then dump what we have
+                time.sleep(0.5)
+                if process.stderr:
+                    try:
+                        remaining = process.stderr.read()
+                        if remaining:
+                            logger.error(
+                                f"ffmpeg stderr (remaining):\n{remaining.decode('utf-8', errors='ignore')}"
+                            )
+                    except Exception:
+                        pass
+                logger.error(
+                    f"ffmpeg command was: {' '.join(ffmpeg_cmd)}\n"
+                    f"This usually means the microphone device could not be opened.\n"
+                    f"Run 'ffmpeg -f avfoundation -list_devices true -i \"\"' to see available devices."
+                )
                 return
             chunk = process.stdout.read(44 - len(wav_header))
             if not chunk:
@@ -710,19 +784,61 @@ def run_streaming_capture(
             file_sample_rate * n_channels * bytes_per_sample * chunk_duration
         )
 
+        # Persist full session audio for optional diarization (post-run).
+        session_wav_path = output_dir / f"session_{int(time.time())}.wav"
+        session_wav_writer = None
+        try:
+            import wave
+
+            session_wav_path.parent.mkdir(parents=True, exist_ok=True)
+            session_wav_writer = wave.open(str(session_wav_path), "wb")
+            session_wav_writer.setnchannels(n_channels)
+            session_wav_writer.setsampwidth(bytes_per_sample)
+            session_wav_writer.setframerate(file_sample_rate)
+            logger.info("Recording session audio to: %s", session_wav_path)
+        except Exception:
+            logger.warning("Failed to open session WAV for diarization (continuing)")
+            session_wav_writer = None
+
         # Buffer para acumular datos PCM (solo micrófono cuando no hay ScreenCaptureKit)
         pcm_buffer = bytearray()
 
         # Thread para leer y procesar chunks
-        def process_audio_stream():
+        def process_audio_stream(transcriber_local: Any) -> None:
             nonlocal \
                 pcm_buffer, \
                 system_audio_buffer, \
                 mic_audio_buffer, \
                 combined_audio_buffer
 
+            logger.debug("process_audio_stream started")
+            iteration = 0
+
             while not stop_event.is_set():
-                if process.poll() is not None:
+                iteration += 1
+                poll_result = process.poll()
+                if poll_result is not None:
+                    # ffmpeg process died - capture stderr for diagnosis
+                    logger.error(
+                        f"ffmpeg process died unexpectedly after {iteration} iterations. "
+                        f"Exit code: {poll_result}"
+                    )
+                    logger.error(f"ffmpeg command was: {' '.join(ffmpeg_cmd)}")
+                    if stderr_tail:
+                        logger.error(
+                            "ffmpeg stderr (recent):\n%s", "\n".join(stderr_tail)
+                        )
+                    # Read any remaining stderr for the error message
+                    if process.stderr:
+                        try:
+                            stderr_data = process.stderr.read()
+                            if stderr_data:
+                                stderr_text = stderr_data.decode(
+                                    "utf-8", errors="ignore"
+                                )
+                                logger.error(f"ffmpeg stderr output:\n{stderr_text}")
+                        except Exception as e:
+                            logger.error(f"Could not read ffmpeg stderr: {e}")
                     break
 
                 # Leer datos PCM del micrófono (sin header WAV, solo datos PCM)
@@ -786,7 +902,9 @@ def run_streaming_capture(
                                 f"🎵 Processing COMBINED audio: System={len(system_chunk)} bytes, "
                                 f"Mic={len(mic_chunk)} bytes, Combined={len(combined_chunk)} bytes"
                             )
-                            result = transcriber.process_wav_chunk(wav_chunk)
+                            if session_wav_writer:
+                                session_wav_writer.writeframes(combined_chunk)
+                            result = transcriber_local.process_wav_chunk(wav_chunk)
                             if result:
                                 logger.info(f"✅ Transcription (combined): {result}")
                             else:
@@ -824,7 +942,9 @@ def run_streaming_capture(
                                 logger.info(
                                     f"🎤 Processing microphone-only chunk: {len(mic_chunk)} bytes"
                                 )
-                                result = transcriber.process_wav_chunk(wav_chunk)
+                                if session_wav_writer:
+                                    session_wav_writer.writeframes(mic_chunk)
+                                result = transcriber_local.process_wav_chunk(wav_chunk)
                                 if result:
                                     logger.info(
                                         f"✅ Transcription result (mic only): {result}"
@@ -858,7 +978,9 @@ def run_streaming_capture(
                                 logger.info(
                                     f"🔊 Processing system-only chunk: {len(system_chunk)} bytes"
                                 )
-                                result = transcriber.process_wav_chunk(wav_chunk)
+                                if session_wav_writer:
+                                    session_wav_writer.writeframes(system_chunk)
+                                result = transcriber_local.process_wav_chunk(wav_chunk)
                                 if result:
                                     logger.info(
                                         f"✅ Transcription result (system only): {result}"
@@ -897,7 +1019,9 @@ def run_streaming_capture(
 
                         # Procesar chunk
                         try:
-                            result = transcriber.process_wav_chunk(wav_chunk)
+                            if session_wav_writer:
+                                session_wav_writer.writeframes(pcm_chunk)
+                            result = transcriber_local.process_wav_chunk(wav_chunk)
                             if result:
                                 logger.debug(f"Transcription result: {result[:50]}...")
                             else:
@@ -909,16 +1033,47 @@ def run_streaming_capture(
                                 f"Error processing audio chunk: {e}", exc_info=True
                             )
 
-        # Iniciar thread de procesamiento
-        process_thread = threading.Thread(target=process_audio_stream, daemon=True)
-        process_thread.start()
+            # Log why the thread is ending
+            if stop_event.is_set():
+                logger.info("process_audio_stream ending: stop_event was set")
+            else:
+                logger.warning(
+                    f"process_audio_stream ending after {iteration} iterations "
+                    "(ffmpeg died or no more data)"
+                )
 
-        # Esperar hasta que se detenga
+        # Iniciar thread de procesamiento
+        if transcriber is not None:
+            process_thread = threading.Thread(
+                target=process_audio_stream, args=(transcriber,), daemon=True
+            )
+            process_thread.start()
+            logger.info("Audio processing thread started")
+        else:
+            process_thread = None
+            logger.warning("Transcriber is None, audio processing thread NOT started!")
+
+        interrupted = False
+
+        # Esperar hasta que se detenga (solo si el hilo se inició correctamente)
         try:
-            while process_thread.is_alive() and not stop_event.is_set():
+            while (
+                process_thread is not None
+                and process_thread.is_alive()
+                and not stop_event.is_set()
+            ):
                 time.sleep(0.5)
+
+            # Log why we exited the loop
+            if process_thread is None:
+                logger.warning("Main loop exited: process_thread was None")
+            elif not process_thread.is_alive():
+                logger.warning("Main loop exited: process_thread died")
+            elif stop_event.is_set():
+                logger.info("Main loop exited: stop_event was set")
         except KeyboardInterrupt:
             logger.info("Interrupted, stopping gracefully...")
+            interrupted = True
     except Exception as e:
         logger.error(f"Error in streaming capture: {e}", exc_info=True)
     finally:
@@ -933,31 +1088,148 @@ def run_streaming_capture(
             except Exception as e:
                 logger.error(f"Error stopping ScreenCaptureKit: {e}")
 
+        # Close session WAV writer.
+        try:
+            if "session_wav_writer" in locals() and session_wav_writer:
+                session_wav_writer.close()
+        except Exception:
+            logger.debug("Failed to close session WAV writer", exc_info=True)
+
         # Detener ffmpeg
-        if process and process.poll() is None:
-            process.terminate()
+        if process:
             try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                logger.warning("ffmpeg did not stop, killing...")
-                process.kill()
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("ffmpeg did not stop, killing...")
+                        process.kill()
+                        try:
+                            process.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            logger.warning("ffmpeg still running after kill()")
+            finally:
+                # Close pipes so daemon threads can exit
+                try:
+                    if process.stdout:
+                        process.stdout.close()
+                except Exception:
+                    logger.debug("Failed to close ffmpeg stdout", exc_info=True)
+                try:
+                    if process.stderr:
+                        process.stderr.close()
+                except Exception:
+                    logger.debug("Failed to close ffmpeg stderr", exc_info=True)
+
+        # Asegurar que el thread de stderr termine (no bloqueante)
+        try:
+            if "stderr_thread" in locals() and stderr_thread is not None:
+                stderr_thread.join(timeout=2.0)
+        except Exception:
+            logger.debug("Failed to join ffmpeg stderr thread", exc_info=True)
+
+        # Asegurar que el thread de procesamiento termine antes de exportar/resumir
+        try:
+            if "process_thread" in locals() and process_thread is not None:
+                process_thread.join(timeout=5.0)
+        except Exception:
+            logger.debug("Failed to join processing thread", exc_info=True)
 
         # Exportar en formatos adicionales si se especificó
-        export_formats_str = get_str_env(
-            "STREAMING_EXPORT_FORMATS", "", allow_empty=True
-        )
-        if export_formats_str:
-            export_formats = [
-                f.strip() for f in export_formats_str.split(",") if f.strip()
-            ]
-            if export_formats:
-                logger.info(
-                    f"Exporting transcript in formats: {', '.join(export_formats)}"
+        # Optional: apply real diarization post-run.
+        #
+        if (
+            speaker_mode == "pyannote"
+            and "session_wav_path" in locals()
+            and session_wav_path.exists()
+            and transcriber is not None
+        ):
+            try:
+                from local_transcriber.speaker.diarization import (
+                    assign_speakers_to_segments,
+                    diarize_wav,
                 )
+
+                # Check if file has enough audio before attempting diarization
                 try:
-                    transcriber.export_transcript(export_formats, output_dir)
-                except Exception as e:
-                    logger.error(f"Error exporting transcript: {e}", exc_info=True)
+                    import wave
+
+                    with wave.open(str(session_wav_path), "rb") as wav_check:
+                        sample_rate = wav_check.getframerate()
+                        n_frames = wav_check.getnframes()
+                        duration = n_frames / sample_rate if sample_rate > 0 else 0.0
+
+                    if duration < 2.0:
+                        logger.warning(
+                            f"Session audio too short ({duration:.2f}s) for pyannote diarization. "
+                            f"Need at least 2-3 seconds. Skipping diarization."
+                        )
+                    else:
+                        logger.info(
+                            f"Running pyannote diarization on session audio ({duration:.2f}s)..."
+                        )
+                        turns = diarize_wav(session_wav_path)
+                        # Update segments in-place for exports
+                        if hasattr(transcriber, "lock") and hasattr(
+                            transcriber, "segments"
+                        ):
+                            lock = getattr(transcriber, "lock", None)
+                            if lock:
+                                with lock:
+                                    transcriber.segments = assign_speakers_to_segments(  # type: ignore[attr-defined]
+                                        transcriber.segments, turns
+                                    )
+                            else:
+                                transcriber.segments = assign_speakers_to_segments(  # type: ignore[attr-defined]
+                                    transcriber.segments, turns
+                                )
+                        logger.info("Applied speaker labels from pyannote")
+                except Exception as check_error:
+                    # If duration check fails, try diarization anyway
+                    logger.debug(
+                        f"Could not check audio duration: {check_error}. Attempting diarization anyway..."
+                    )
+                    logger.info("Running pyannote diarization on session audio...")
+                    turns = diarize_wav(session_wav_path)
+                    # Update segments in-place for exports
+                    if hasattr(transcriber, "lock") and hasattr(
+                        transcriber, "segments"
+                    ):
+                        lock = getattr(transcriber, "lock", None)
+                        if lock:
+                            with lock:
+                                transcriber.segments = assign_speakers_to_segments(  # type: ignore[attr-defined]
+                                    transcriber.segments, turns
+                                )
+                        else:
+                            transcriber.segments = assign_speakers_to_segments(  # type: ignore[attr-defined]
+                                transcriber.segments, turns
+                            )
+                    logger.info("Applied speaker labels from pyannote")
+            except RuntimeError as e:
+                # RuntimeError from diarization.py includes helpful instructions
+                error_msg = str(e)
+                logger.error(f"pyannote diarization failed: {error_msg}")
+                # Only show full traceback if it's not a known issue (access denied, file too small, etc.)
+                if "Access denied" not in error_msg and "too small" not in error_msg:
+                    logger.debug("Full error details:", exc_info=True)
+                logger.warning(
+                    "Speaker diarization skipped. Transcription will continue without speaker labels."
+                )
+            except Exception as e:
+                logger.error(f"pyannote diarization failed: {e}", exc_info=True)
+                logger.warning(
+                    "Speaker diarization skipped. Transcription will continue without speaker labels."
+                )
+        if export_formats and transcriber is not None:
+            logger.info(f"Exporting transcript in formats: {', '.join(export_formats)}")
+            try:
+                transcriber.export_transcript(export_formats, output_dir)
+            except Exception as e:
+                logger.error(f"Error exporting transcript: {e}", exc_info=True)
+
+        logger.info("Post-run: export step completed")
 
         # Generar resumen si está habilitado
         summary_output = None
@@ -966,7 +1238,9 @@ def run_streaming_capture(
                 logger.info("Generating summary...")
                 full_transcript = transcriber.get_full_transcript()
                 if full_transcript.strip():
-                    summary_output = output_file.parent / f"{output_file.stem}_summary.json"
+                    summary_output = (
+                        output_file.parent / f"{output_file.stem}_summary.json"
+                    )
                     summary_data = generate_summary(
                         full_transcript, model=summary_model, output_path=summary_output
                     )
@@ -979,6 +1253,8 @@ def run_streaming_capture(
             except Exception as e:
                 logger.error(f"Error generating summary: {e}", exc_info=True)
 
+        logger.info("Post-run: summary step completed")
+
         # Enviar notificación si está habilitado
         notify_enabled = get_bool_env("STREAMING_NOTIFY", False)
         notify_platform = get_str_env("STREAMING_NOTIFY_PLATFORM", "telegram")
@@ -986,13 +1262,41 @@ def run_streaming_capture(
             try:
                 if notify_platform == "telegram":
                     from local_transcriber.notify.telegram import send_summary
+
                     send_summary(summary_output)
             except Exception as e:
                 logger.error(f"Error sending notification: {e}", exc_info=True)
 
-        # Mostrar métricas si están habilitadas
+        logger.info("Post-run: notify step completed")
+
+        # Mostrar métricas si están habilitadas (lock-timeout para evitar hangs)
         if metrics:
-            metrics.print_summary()
+            try:
+                metrics.print_summary(timeout_seconds=0.5)
+            except Exception:
+                logger.debug("Failed to print metrics", exc_info=True)
+
+        logger.info("Post-run: metrics step completed")
+
+        # Debug: list non-daemon threads that may keep process alive
+        try:
+            import threading as _threading
+
+            alive = _threading.enumerate()
+            non_daemon = [
+                t
+                for t in alive
+                if not t.daemon and t is not _threading.current_thread()
+            ]
+            if non_daemon:
+                logger.warning(
+                    "Non-daemon threads still alive at shutdown: %s",
+                    ", ".join(f"{t.name}({t.__class__.__name__})" for t in non_daemon),
+                )
+            else:
+                logger.info("No non-daemon threads alive at shutdown")
+        except Exception:
+            logger.debug("Failed to enumerate threads", exc_info=True)
 
         logger.info("Shutdown complete")
         logger.info(f"Full transcript saved to: {output_file}")

@@ -175,6 +175,7 @@ def export_to_markdown(
             for segment in segments:
                 start_time = segment.get("start", 0.0)
                 text = segment.get("text", "").strip()
+                speaker = segment.get("speaker")
 
                 if not text:
                     continue
@@ -183,7 +184,10 @@ def export_to_markdown(
                 timestamp = _format_timestamp_markdown(start_time)
 
                 # Escribir como sección con timestamp
-                f.write(f"## [{timestamp}] {text}\n\n")
+                if speaker:
+                    f.write(f"## [{timestamp}] [{speaker}] {text}\n\n")
+                else:
+                    f.write(f"## [{timestamp}] {text}\n\n")
 
         logger.info(f"Exported Markdown transcript to: {output_path}")
     except Exception as e:
