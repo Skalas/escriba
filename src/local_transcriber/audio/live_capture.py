@@ -898,7 +898,7 @@ def run_streaming_capture(
 
                         # Procesar chunk
                         try:
-                            logger.info(
+                            logger.debug(
                                 f"🎵 Processing COMBINED audio: System={len(system_chunk)} bytes, "
                                 f"Mic={len(mic_chunk)} bytes, Combined={len(combined_chunk)} bytes"
                             )
@@ -923,7 +923,7 @@ def run_streaming_capture(
                             and len(system_audio_buffer) == 0
                         ):
                             # Solo micrófono disponible, procesar solo eso
-                            logger.warning(
+                            logger.debug(
                                 "⚠️  No system audio available, processing microphone only"
                             )
                             mic_chunk = bytes(mic_audio_buffer[:chunk_size])
@@ -939,7 +939,7 @@ def run_streaming_capture(
                             )
 
                             try:
-                                logger.info(
+                                logger.debug(
                                     f"🎤 Processing microphone-only chunk: {len(mic_chunk)} bytes"
                                 )
                                 if session_wav_writer:
@@ -959,7 +959,7 @@ def run_streaming_capture(
                             and len(mic_audio_buffer) == 0
                         ):
                             # Solo sistema disponible, procesar solo eso
-                            logger.info(
+                            logger.debug(
                                 "🔊 Processing system audio only (no microphone)"
                             )
                             system_chunk = bytes(system_audio_buffer[:chunk_size])
@@ -975,7 +975,7 @@ def run_streaming_capture(
                             )
 
                             try:
-                                logger.info(
+                                logger.debug(
                                     f"🔊 Processing system-only chunk: {len(system_chunk)} bytes"
                                 )
                                 if session_wav_writer:
