@@ -13,6 +13,8 @@ import numpy as np
 from faster_whisper import WhisperModel
 
 from local_transcriber.transcribe.config import VADConfig
+from local_transcriber.transcribe.metrics import CaptureMetrics
+from local_transcriber.utils.env import get_bool_env, get_float_env
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ class StreamingTranscriber:
         vad_enabled: bool = True,
         realtime_output: bool = True,
         vad_config: Optional[VADConfig] = None,
+        metrics: Optional[CaptureMetrics] = None,
     ):
         """
         Inicializa el transcriber en streaming.
@@ -50,15 +53,28 @@ class StreamingTranscriber:
             vad_enabled: Habilitar Voice Activity Detection
             realtime_output: Mostrar transcripciones en consola en tiempo real
             vad_config: Configuración VAD. Si es None, se carga desde variables de entorno.
+            metrics: Instancia de CaptureMetrics para tracking de métricas (opcional)
         """
         self.model_size = model_size
         self.language = language
         self.output_file = output_file
         self.vad_enabled = vad_enabled
         self.realtime_output = realtime_output
+        self.metrics = metrics
 
         # Configurar VAD
         self.vad_config = vad_config or VADConfig.from_env()
+
+        # Speaker detection (opcional)
+        self.speaker_detection_enabled = get_bool_env("STREAMING_SPEAKER_DETECTION", False)
+        self.speaker_detector = None
+        if self.speaker_detection_enabled:
+            try:
+                from local_transcriber.speaker.detection import SpeakerDetector
+                self.speaker_detector = SpeakerDetector(threshold=get_float_env("SPEAKER_DETECTION_THRESHOLD", 0.3))
+            except ImportError:
+                logger.warning("Speaker detection requested but module not available")
+                self.speaker_detection_enabled = False
 
         # Detectar device y compute_type si es necesario
         if device == "auto":
@@ -154,6 +170,11 @@ class StreamingTranscriber:
                 else None,
             )
 
+            # Detectar speaker si está habilitado
+            speaker_tag = None
+            if self.speaker_detection_enabled and self.speaker_detector:
+                speaker_tag = self.speaker_detector.detect_change(audio_data)
+
             # Procesar segmentos
             texts = []
             for segment in segments:
@@ -165,6 +186,7 @@ class StreamingTranscriber:
                         text,
                         self.accumulated_audio_time + segment.start,
                         self.accumulated_audio_time + segment.end,
+                        speaker=speaker_tag,
                     )
 
             # Actualizar tiempo acumulado con la duración del chunk procesado
@@ -189,6 +211,12 @@ class StreamingTranscriber:
         Returns:
             Texto transcrito o None si no hay voz detectada
         """
+        # Registrar inicio de procesamiento para métricas
+        start_timestamp = None
+        if self.metrics:
+            start_timestamp = self.metrics.record_chunk_start()
+            self.metrics.record_audio_level(wav_data)
+
         try:
             # Intentar leer WAV usando wave module
             import wave
@@ -248,6 +276,11 @@ class StreamingTranscriber:
                         else None,
                     )
 
+                    # Detectar speaker si está habilitado
+                    speaker_tag = None
+                    if self.speaker_detection_enabled and self.speaker_detector:
+                        speaker_tag = self.speaker_detector.detect_change(wav_data)
+
                     # Procesar segmentos
                     texts = []
                     segment_count = 0
@@ -262,12 +295,15 @@ class StreamingTranscriber:
                                 text,
                                 self.accumulated_audio_time + segment.start,
                                 self.accumulated_audio_time + segment.end,
+                                speaker=speaker_tag,
                             )
 
                     # Actualizar tiempo acumulado con la duración del chunk procesado
                     if len(audio_float) > 0:
                         chunk_duration = len(audio_float) / sample_rate
                         self.accumulated_audio_time += chunk_duration
+                        if self.metrics:
+                            self.metrics.record_audio_duration(chunk_duration)
 
                     if segment_count == 0:
                         logger.debug(
@@ -282,15 +318,26 @@ class StreamingTranscriber:
                             f"Processed {segment_count} segments, {len(texts)} with text"
                         )
 
-                    return " ".join(texts) if texts else None
+                    result = " ".join(texts) if texts else None
+                    # Registrar métricas
+                    if self.metrics and start_timestamp:
+                        self.metrics.record_chunk_end(start_timestamp, had_transcription=(result is not None))
+                    return result
 
             except wave.Error as e:
                 # Si wave.open falla, intentar parsear manualmente
                 logger.debug(f"wave.open failed, parsing manually: {e}")
-                return self._process_wav_manual(wav_data)
+                result = self._process_wav_manual(wav_data)
+                if self.metrics and start_timestamp:
+                    self.metrics.record_chunk_end(start_timestamp, had_transcription=(result is not None))
+                return result
 
         except Exception as e:
             logger.error(f"Error processing WAV chunk: {e}", exc_info=True)
+            if self.metrics:
+                self.metrics.record_error()
+                if start_timestamp:
+                    self.metrics.record_chunk_end(start_timestamp, had_transcription=False)
             return None
 
     def _process_wav_manual(self, wav_data: bytes) -> Optional[str]:
@@ -386,7 +433,7 @@ class StreamingTranscriber:
             return None
 
     def _handle_transcription(
-        self, text: str, start_time: float, end_time: float
+        self, text: str, start_time: float, end_time: float, speaker: str | None = None
     ) -> None:
         """
         Maneja una transcripción parcial.
@@ -395,19 +442,24 @@ class StreamingTranscriber:
             text: Texto transcrito
             start_time: Tiempo de inicio relativo (segundos)
             end_time: Tiempo de fin relativo (segundos)
+            speaker: Etiqueta del speaker (opcional)
         """
         with self.lock:
             # Agregar a buffer
-            self.transcription_buffer.append(text)
+            if speaker:
+                self.transcription_buffer.append(f"[{speaker}] {text}")
+            else:
+                self.transcription_buffer.append(text)
 
             # Agregar a segmentos con timestamps
-            self.segments.append(
-                {
-                    "start": start_time,
-                    "end": end_time,
-                    "text": text,
-                }
-            )
+            segment = {
+                "start": start_time,
+                "end": end_time,
+                "text": text,
+            }
+            if speaker:
+                segment["speaker"] = speaker
+            self.segments.append(segment)
 
             # Calcular timestamp absoluto
             absolute_start = self.start_time + start_time

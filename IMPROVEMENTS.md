@@ -29,13 +29,13 @@ Análisis y roadmap de mejoras. Última actualización: 27 Enero 2026.
 
 ---
 
-### 2. Mejorar mezcla de audio sistema + micrófono
+### 2. ✅ Mejorar mezcla de audio sistema + micrófono [COMPLETADO]
 **Problema:** La mezcla actual es un promedio simple que puede perder volumen:
 ```python
 combined_array = ((system_array + mic_array) // 2).astype(np.int16)
 ```
 
-**Solución:** Usar normalización dinámica:
+**Solución implementada:** Usar normalización dinámica:
 ```python
 def mix_audio(system: np.ndarray, mic: np.ndarray, mic_boost: float = 1.2) -> np.ndarray:
     # Boost micrófono (usualmente más bajo que sistema)
@@ -52,7 +52,17 @@ def mix_audio(system: np.ndarray, mic: np.ndarray, mic_boost: float = 1.2) -> np
     return mixed.astype(np.int16)
 ```
 
-**Esfuerzo:** ~2 horas
+**Estado actual:**
+- ✅ Función `mix_audio()` implementada en `src/local_transcriber/audio/live_capture.py`
+- ✅ Normalización dinámica para evitar clipping
+- ✅ Boost configurable del micrófono vía variable de entorno `AUDIO_MIC_BOOST` (default: 1.2)
+- ✅ Manejo de arrays vacíos
+
+**Archivos modificados:**
+- `src/local_transcriber/audio/live_capture.py` - Función `mix_audio()` implementada
+- `.env.example` - Variable `AUDIO_MIC_BOOST` agregada
+
+**Esfuerzo:** ~2 horas ✅
 
 ---
 
@@ -220,14 +230,14 @@ local-transcriber live-stream --summarize --summary-model gemini
 
 ---
 
-### 7. ✅ Exportar a múltiples formatos [COMPLETADO - Parcial]
+### 7. ✅ Exportar a múltiples formatos [COMPLETADO]
 **Descripción:** Además de TXT, exportar a formatos útiles.
 
 **Implementado:**
 - ✅ **JSON** — estructurado con timestamps y metadata
 - ✅ **TXT** — formato simple con timestamps
-- ⏳ **SRT** — subtítulos para video (pendiente)
-- ⏳ **Markdown** — con headers, bullets, formato (pendiente)
+- ✅ **SRT** — subtítulos para video
+- ✅ **Markdown** — con headers, bullets, formato
 
 **Flags:**
 ```bash
@@ -256,17 +266,19 @@ local-transcriber live-stream --format txt,json
 ```
 
 **Archivos creados/modificados:**
-- `src/local_transcriber/transcribe/formats.py` (nuevo)
+- `src/local_transcriber/transcribe/formats.py` (nuevo) - Funciones `export_to_json()`, `export_to_txt()`, `export_to_srt()`, `export_to_markdown()`
 - `src/local_transcriber/transcribe/streaming.py` (agregado `export_transcript()`)
 - `src/local_transcriber/cli.py` (flag `--format`)
 - `src/local_transcriber/audio/live_capture.py` (integración de exportación)
 - `.env.example` (variable `STREAMING_EXPORT_FORMATS`)
 
-**Pendiente:**
-- SRT export (subtítulos)
-- Markdown export (formato con headers)
+**Formatos soportados:**
+- `txt` - Formato simple con timestamps
+- `json` - Estructurado con metadata completa
+- `srt` - Subtítulos para video (formato SRT estándar)
+- `markdown` - Formato Markdown con headers y timestamps
 
-**Esfuerzo:** ~3-4 horas (JSON/TXT completado, SRT/Markdown pendiente)
+**Esfuerzo:** ~3-4 horas ✅
 
 ---
 
@@ -318,28 +330,30 @@ Usa LLM para extraer action items y los convierte en issues con:
 
 ## 🐛 Robustez
 
-### 11. Reconexión automática del Swift CLI
+### 11. ✅ Reconexión automática del Swift CLI [COMPLETADO]
 **Problema:** Si el proceso Swift falla, la captura se detiene.
 
-**Solución:**
+**Solución implementada:**
+- ✅ Función `monitor_swift_cli()` en `src/local_transcriber/audio/live_capture.py`
+- ✅ Método `restart()` en `ScreenCaptureAudioCapture` class
+- ✅ Reintentos automáticos con exponential backoff (máximo 3 intentos)
+- ✅ Monitoreo cada 5 segundos del estado del proceso Swift
+- ✅ Limpieza de buffer de audio al reiniciar
+
+**Implementación:**
 ```python
-def _read_audio_stream(self):
-    max_retries = 3
-    retry_count = 0
-    
-    while not self.stop_event.is_set():
-        try:
-            # ... leer audio ...
-        except Exception as e:
-            retry_count += 1
-            if retry_count >= max_retries:
-                logger.error("Max retries reached, stopping")
-                break
-            logger.warning(f"Swift CLI failed, retrying ({retry_count}/{max_retries})")
-            self._restart_swift_process()
+def monitor_swift_cli():
+    """Monitorea el proceso Swift CLI y lo reinicia si falla."""
+    # Verificar cada 5 segundos si el proceso está vivo
+    # Si terminó inesperadamente, reiniciar con exponential backoff
+    # Resetear contador de reintentos en éxito
 ```
 
-**Esfuerzo:** ~2 horas
+**Archivos modificados:**
+- `src/local_transcriber/audio/live_capture.py` - Función `monitor_swift_cli()` implementada
+- `src/local_transcriber/audio/screen_capture.py` - Método `restart()` agregado a `ScreenCaptureAudioCapture`
+
+**Esfuerzo:** ~2 horas ✅
 
 ---
 
@@ -385,12 +399,12 @@ class CaptureMetrics:
 ### Quick wins (1-2 horas cada uno)
 - [x] ✅ Centralizar VAD config [COMPLETADO]
 - [x] ✅ Soporte GPU (MPS) [COMPLETADO]
-- [x] ✅ Exportar JSON estructurado [COMPLETADO - Parcial: JSON/TXT, pendiente SRT/Markdown]
+- [x] ✅ Exportar múltiples formatos [COMPLETADO - JSON, TXT, SRT, Markdown]
 
 ### Medium effort (~1 día cada uno)
-- [ ] Mejorar mezcla de audio
+- [x] ✅ Mejorar mezcla de audio [COMPLETADO]
 - [ ] Resumen automático con LLM
-- [ ] Reconexión automática Swift CLI
+- [x] ✅ Reconexión automática Swift CLI [COMPLETADO]
 - [ ] Tests básicos
 
 ### Larger effort (varios días)
@@ -457,10 +471,12 @@ local-transcriber live-stream --chunk-duration 30.0
 ### ✅ Completado (Enero 2026)
 
 1. **Centralizar configuración VAD** - Configuración centralizada con variables de entorno
-2. **Soporte GPU (MPS)** - Detección automática y uso de Apple Silicon GPU
-3. **Exportar JSON estructurado** - Exportación en formato JSON con metadata completa
-4. **Optimización de duración de chunks** - Cambio de 2.0s a 30.0s para mejorar calidad de transcripción
-5. **Gitignore para Swift** - Agregadas entradas para ignorar artefactos de compilación de Swift Package Manager
+2. **Mezcla de audio mejorada** - Normalización dinámica con boost configurable del micrófono
+3. **Soporte GPU (MPS)** - Detección automática y uso de Apple Silicon GPU
+4. **Exportar múltiples formatos** - Exportación en JSON, TXT, SRT y Markdown
+5. **Reconexión automática Swift CLI** - Monitoreo y reinicio automático del proceso Swift
+6. **Optimización de duración de chunks** - Cambio de 2.0s a 30.0s para mejorar calidad de transcripción
+7. **Gitignore para Swift** - Agregadas entradas para ignorar artefactos de compilación de Swift Package Manager
 
 ### 🔄 En Progreso
 
@@ -470,10 +486,9 @@ local-transcriber live-stream --chunk-duration 30.0
 
 Basado en el esfuerzo y valor, las siguientes mejoras son buenos candidatos:
 
-1. **Mejorar mezcla de audio** (2 horas) - Normalización dinámica para mejor calidad
-2. **Reconexión automática Swift CLI** (2 horas) - Mayor robustez
-3. **Completar formatos de exportación** (2-3 horas) - Agregar SRT y Markdown
-4. **Tests básicos** (1 día) - Asegurar calidad del código
+1. **Health checks y métricas** (3-4 horas) - Monitorear calidad de captura y transcripción
+2. **Tests básicos** (1 día) - Asegurar calidad del código
+3. **Resumen automático con LLM** (3-4 horas) - Feature muy útil para reuniones
 
 ### 🎯 Mejoras de Alto Valor
 

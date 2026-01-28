@@ -12,6 +12,8 @@ from pathlib import Path
 import numpy as np
 
 from local_transcriber.audio.device_detection import auto_detect_devices
+from local_transcriber.summarize import generate_summary
+from local_transcriber.transcribe.metrics import CaptureMetrics
 from local_transcriber.transcribe.streaming import StreamingTranscriber
 from local_transcriber.utils.env import (
     get_bool_env,
@@ -29,6 +31,15 @@ try:
 except ImportError:
     MPS_AVAILABLE = False
     StreamingTranscriberMPS = None
+
+# Intentar importar StreamingTranscriberMLX (requiere mlx-whisper)
+try:
+    from local_transcriber.transcribe.streaming_mlx import StreamingTranscriberMLX, MLX_AVAILABLE
+
+    MLX_WHISPER_AVAILABLE = MLX_AVAILABLE
+except ImportError:
+    MLX_WHISPER_AVAILABLE = False
+    StreamingTranscriberMLX = None
 
 # Intentar importar ScreenCaptureKit (CLI Swift)
 try:
@@ -402,12 +413,36 @@ def run_streaming_capture(
         "STREAMING_VAD_ENABLED", False
     )  # Deshabilitado por defecto para capturar todo el audio
     realtime_output = get_bool_env("STREAMING_REALTIME_OUTPUT", True)
+    summarize_enabled = get_bool_env("STREAMING_SUMMARIZE", False)
+    summary_model = get_str_env("STREAMING_SUMMARY_MODEL", "gemini")
 
     # Configurar archivo de salida
     output_file = combined_transcript or output_dir / "live_transcription.txt"
 
+    # Crear instancia de métricas si está habilitado
+    show_metrics = get_bool_env("STREAMING_SHOW_METRICS", False)
+    metrics = CaptureMetrics() if show_metrics else None
+
     # Inicializar transcriber según el backend
-    if backend == "openai-whisper" or backend == "mps":
+    if backend == "mlx-whisper":
+        if not MLX_WHISPER_AVAILABLE:
+            logger.warning(
+                "mlx-whisper backend requested but not available. "
+                "Falling back to faster-whisper. "
+                "Install: pip install mlx-whisper"
+            )
+            backend = "faster-whisper"
+        else:
+            logger.info("Using mlx-whisper backend (Apple Silicon GPU optimized)")
+            transcriber = StreamingTranscriberMLX(
+                model_size=model_size,
+                language=language,
+                output_file=output_file,
+                vad_enabled=vad_enabled,
+                realtime_output=realtime_output,
+                metrics=metrics,
+            )
+    elif backend == "openai-whisper" or backend == "mps":
         if not MPS_AVAILABLE:
             logger.warning(
                 "openai-whisper backend requested but not available. "
@@ -438,6 +473,7 @@ def run_streaming_capture(
             device=device,
             vad_enabled=vad_enabled,
             realtime_output=realtime_output,
+            metrics=metrics,
         )
 
     # Verificar si debemos usar ScreenCaptureKit para audio del sistema
@@ -922,6 +958,41 @@ def run_streaming_capture(
                     transcriber.export_transcript(export_formats, output_dir)
                 except Exception as e:
                     logger.error(f"Error exporting transcript: {e}", exc_info=True)
+
+        # Generar resumen si está habilitado
+        summary_output = None
+        if summarize_enabled and transcriber:
+            try:
+                logger.info("Generating summary...")
+                full_transcript = transcriber.get_full_transcript()
+                if full_transcript.strip():
+                    summary_output = output_file.parent / f"{output_file.stem}_summary.json"
+                    summary_data = generate_summary(
+                        full_transcript, model=summary_model, output_path=summary_output
+                    )
+                    if summary_data:
+                        logger.info(f"Summary generated and saved to: {summary_output}")
+                    else:
+                        logger.warning("Failed to generate summary")
+                else:
+                    logger.warning("No transcript content to summarize")
+            except Exception as e:
+                logger.error(f"Error generating summary: {e}", exc_info=True)
+
+        # Enviar notificación si está habilitado
+        notify_enabled = get_bool_env("STREAMING_NOTIFY", False)
+        notify_platform = get_str_env("STREAMING_NOTIFY_PLATFORM", "telegram")
+        if notify_enabled and summary_output and summary_output.exists():
+            try:
+                if notify_platform == "telegram":
+                    from local_transcriber.notify.telegram import send_summary
+                    send_summary(summary_output)
+            except Exception as e:
+                logger.error(f"Error sending notification: {e}", exc_info=True)
+
+        # Mostrar métricas si están habilitadas
+        if metrics:
+            metrics.print_summary()
 
         logger.info("Shutdown complete")
         logger.info(f"Full transcript saved to: {output_file}")
