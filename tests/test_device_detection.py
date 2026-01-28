@@ -125,15 +125,14 @@ def test_auto_detect_devices_with_screen_capture():
     with patch("local_transcriber.audio.device_detection.list_audio_devices") as mock_list:
         mock_list.return_value = mock_devices
 
-        # Mock ScreenCaptureKit availability
-        with patch(
-            "local_transcriber.audio.device_detection.SWIFT_CLI_AVAILABLE", True
-        ):
-            system_device, mic_device = auto_detect_devices()
+        # auto_detect_devices siempre retorna None para system_device
+        # porque usa ScreenCaptureKit (no necesita dispositivo físico)
+        system_device, mic_device = auto_detect_devices()
 
-            # system_device puede ser None si ScreenCaptureKit está disponible
-            # mic_device debería detectarse
-            assert mic_device is not None or mic_device is None  # Puede ser cualquiera
+        # system_device siempre es None (ScreenCaptureKit no requiere dispositivo)
+        assert system_device is None
+        # mic_device puede ser detectado o None dependiendo de los dispositivos disponibles
+        assert mic_device is None or isinstance(mic_device, str)
 
 
 def test_list_audio_devices_parsing_various_formats():
