@@ -5,11 +5,14 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 from faster_whisper import WhisperModel
+
+from local_transcriber.transcribe.config import VADConfig
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +30,11 @@ class StreamingTranscriber:
         model_size: str = "base",
         language: str = "es",
         output_file: Optional[Path] = None,
-        device: str = "cpu",
-        compute_type: str = "int8",
+        device: str = "auto",
+        compute_type: Optional[str] = None,
         vad_enabled: bool = True,
         realtime_output: bool = True,
+        vad_config: Optional[VADConfig] = None,
     ):
         """
         Inicializa el transcriber en streaming.
@@ -39,21 +43,40 @@ class StreamingTranscriber:
             model_size: Tamaño del modelo (tiny, base, small, medium, large)
             language: Idioma para transcripción (código ISO 639-1)
             output_file: Archivo donde escribir transcripciones en tiempo real
-            device: Dispositivo a usar (cpu, cuda)
-            compute_type: Tipo de computación (int8, int8_float16, float16, float32)
+            device: Dispositivo a usar (auto, cpu, cuda, mps). "auto" detecta automáticamente.
+            compute_type: Tipo de computación (int8, int8_float16, float16, float32).
+                Si es None, se determina automáticamente según el device.
             vad_enabled: Habilitar Voice Activity Detection
             realtime_output: Mostrar transcripciones en consola en tiempo real
+            vad_config: Configuración VAD. Si es None, se carga desde variables de entorno.
         """
         self.model_size = model_size
         self.language = language
         self.output_file = output_file
-        self.device = device
-        self.compute_type = compute_type
         self.vad_enabled = vad_enabled
         self.realtime_output = realtime_output
 
+        # Configurar VAD
+        self.vad_config = vad_config or VADConfig.from_env()
+
+        # Detectar device y compute_type si es necesario
+        if device == "auto":
+            device, compute_type = get_device_config()
+        elif compute_type is None:
+            # Si device no es auto pero compute_type no está especificado,
+            # usar valores por defecto según el device
+            if device == "mps":
+                compute_type = "float16"  # MPS no soporta int8
+            else:
+                compute_type = "int8"
+
+        self.device = device
+        self.compute_type = compute_type
+
         # Buffer para mantener contexto entre chunks
         self.transcription_buffer: list[str] = []
+        # Segmentos con timestamps para exportación estructurada
+        self.segments: list[dict[str, Any]] = []
         self.start_time = time.time()
 
         # Lock para thread-safety
@@ -102,8 +125,8 @@ class StreamingTranscriber:
                 beam_size=5,
                 vad_filter=self.vad_enabled,
                 vad_parameters=dict(
-                    min_silence_duration_ms=500,
-                    threshold=0.5,
+                    min_silence_duration_ms=self.vad_config.min_silence_duration_ms,
+                    threshold=self.vad_config.threshold,
                 )
                 if self.vad_enabled
                 else None,
@@ -189,8 +212,8 @@ class StreamingTranscriber:
                         beam_size=5,
                         vad_filter=self.vad_enabled,
                         vad_parameters=dict(
-                            min_silence_duration_ms=500,  # Reducido para ser menos agresivo
-                            threshold=0.2,  # Reducido aún más para detectar más voz (incluyendo audio de video)
+                            min_silence_duration_ms=self.vad_config.min_silence_duration_ms,
+                            threshold=self.vad_config.threshold,
                         )
                         if self.vad_enabled
                         else None,
@@ -286,8 +309,8 @@ class StreamingTranscriber:
                 beam_size=5,
                 vad_filter=self.vad_enabled,
                 vad_parameters=dict(
-                    min_silence_duration_ms=1000,  # Aumentado para ser menos agresivo
-                    threshold=0.3,  # Reducido para detectar más voz
+                    min_silence_duration_ms=self.vad_config.min_silence_duration_ms,
+                    threshold=self.vad_config.threshold,
                 )
                 if self.vad_enabled
                 else None,
@@ -342,6 +365,15 @@ class StreamingTranscriber:
             # Agregar a buffer
             self.transcription_buffer.append(text)
 
+            # Agregar a segmentos con timestamps
+            self.segments.append(
+                {
+                    "start": start_time,
+                    "end": end_time,
+                    "text": text,
+                }
+            )
+
             # Calcular timestamp absoluto
             absolute_start = self.start_time + start_time
             timestamp = time.strftime("%H:%M:%S", time.localtime(absolute_start))
@@ -380,4 +412,72 @@ class StreamingTranscriber:
         """Reinicia el buffer de transcripciones."""
         with self.lock:
             self.transcription_buffer.clear()
+            self.segments.clear()
             self.start_time = time.time()
+
+    def export_transcript(self, formats: list[str], output_dir: Path) -> None:
+        """
+        Exporta la transcripción completa en los formatos especificados.
+        
+        Args:
+            formats: Lista de formatos a exportar ('txt', 'json')
+            output_dir: Directorio donde guardar los archivos exportados
+        """
+        from local_transcriber.transcribe.formats import export_to_json, export_to_txt
+
+        with self.lock:
+            segments = self.segments.copy()
+
+        if not segments:
+            logger.warning("No segments to export")
+            return
+
+        # Metadata para JSON
+        metadata = {
+            "model": self.model_size,
+            "language": self.language,
+            "device": self.device,
+            "compute_type": self.compute_type,
+        }
+
+        # Generar nombre base del archivo
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = f"transcript_{timestamp_str}"
+
+        # Exportar en cada formato
+        for fmt in formats:
+            if fmt == "json":
+                output_path = output_dir / f"{base_name}.json"
+                export_to_json(segments, output_path, metadata)
+            elif fmt == "txt":
+                output_path = output_dir / f"{base_name}.txt"
+                export_to_txt(segments, output_path)
+            else:
+                logger.warning(f"Unknown format: {fmt}, skipping")
+
+
+def get_device_config() -> tuple[str, str]:
+    """
+    Detecta y retorna la configuración óptima de device y compute_type.
+    
+    Detecta automáticamente si MPS (Apple Silicon GPU) está disponible.
+    Si está disponible, usa MPS con float16. Si no, usa CPU con int8.
+    
+    Returns:
+        Tupla (device, compute_type)
+    """
+    # Intentar detectar MPS (Apple Silicon)
+    try:
+        import torch
+
+        if torch.backends.mps.is_available():
+            logger.info("MPS (Apple Silicon GPU) detected, using GPU acceleration")
+            return "mps", "float16"
+    except ImportError:
+        # torch no está disponible, usar CPU
+        pass
+    except Exception as e:
+        logger.debug(f"Error checking MPS availability: {e}")
+
+    logger.info("Using CPU (MPS not available)")
+    return "cpu", "int8"

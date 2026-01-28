@@ -1,0 +1,319 @@
+---
+description: Core coding standards and conventions for local-transcriber
+alwaysApply: true
+---
+
+# Local Transcriber - Project Standards
+
+## Project Overview
+
+This is a local audio transcription tool for macOS that captures system audio + microphone using ScreenCaptureKit (Swift CLI) and transcribes in real-time using faster-whisper. The project uses `uv` for Python package management, `direnv` and `.env` files for configuration, and has a Swift component for native audio capture.
+
+## Code Style
+
+### Type Hints
+
+Always use type hints with `from __future__ import annotations` at the top of files:
+
+```python
+from __future__ import annotations
+
+def process_audio(audio_data: bytes, sample_rate: int = 16000) -> str | None:
+    ...
+```
+
+Use `|` for union types (Python 3.10+), not `Union`. Use `Optional[T]` only when importing from `typing` is necessary.
+
+### Docstrings
+
+All public functions and classes must have docstrings following this format:
+
+```python
+def function_name(param1: str, param2: int) -> bool:
+    """
+    Brief description of what the function does.
+    
+    Longer description if needed, explaining behavior, edge cases, etc.
+    
+    Args:
+        param1: Description of param1
+        param2: Description of param2
+    
+    Returns:
+        Description of return value
+    
+    Raises:
+        ValueError: When param1 is invalid
+        FileNotFoundError: When file doesn't exist
+    """
+```
+
+### Logging
+
+Use the standard logging module with module-level loggers:
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Use appropriate levels:
+logger.debug("Detailed debugging info")
+logger.info("General information")
+logger.warning("Warning message")
+logger.error("Error occurred", exc_info=True)  # Include traceback
+```
+
+## Environment Variables
+
+### Pattern for Environment Variable Access
+
+Always use helper functions for environment variables with validation and defaults:
+
+```python
+def _get_str_env(name: str, default: str) -> str:
+    """Get environment variable as string with validation."""
+    value = os.getenv(name, default).strip()
+    if not value:
+        raise ValueError(f"{name} must not be empty")
+    return value
+
+def _get_int_env(name: str, default: int, min_value: int | None = None) -> int:
+    """Get environment variable as integer with validation."""
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
+    if min_value is not None and value < min_value:
+        raise ValueError(f"{name} must be >= {min_value}, got {value}")
+    return value
+
+def _get_bool_env(name: str, default: bool) -> bool:
+    """Get environment variable as boolean."""
+    raw = os.getenv(name, str(default)).strip().lower()
+    return raw in ("true", "1", "yes", "on")
+```
+
+### Environment Variable Naming
+
+- Use uppercase with underscores: `STREAMING_MODEL_SIZE`, `AUTO_DETECT_DEVICES`
+- Prefix streaming-related vars with `STREAMING_`: `STREAMING_CHUNK_DURATION`
+- Document all environment variables in `.env.example`
+
+## File Operations
+
+### Use pathlib.Path
+
+Always use `pathlib.Path` instead of `os.path`:
+
+```python
+from pathlib import Path
+
+# ✅ GOOD
+output_dir = Path("transcripts")
+file_path = output_dir / "transcription.txt"
+file_path.parent.mkdir(parents=True, exist_ok=True)
+
+# ❌ BAD
+import os
+file_path = os.path.join("transcripts", "transcription.txt")
+os.makedirs(os.path.dirname(file_path), exist_ok=True)
+```
+
+### File I/O
+
+Use context managers and handle encoding explicitly:
+
+```python
+# Writing
+with file_path.open("w", encoding="utf-8") as f:
+    f.write(content)
+    f.flush()  # For real-time writes
+
+# Reading
+with file_path.open("r", encoding="utf-8") as f:
+    content = f.read()
+```
+
+## Error Handling
+
+### Exception Handling Pattern
+
+Always include context and use `exc_info=True` for logging:
+
+```python
+try:
+    result = risky_operation()
+except SpecificError as e:
+    logger.error(f"Failed to do X: {e}", exc_info=True)
+    # Handle or re-raise
+    raise
+except Exception as e:
+    logger.error(f"Unexpected error in X: {e}", exc_info=True)
+    raise
+```
+
+### Graceful Shutdown
+
+For long-running processes, handle KeyboardInterrupt gracefully:
+
+```python
+try:
+    while running:
+        process_data()
+except KeyboardInterrupt:
+    logger.info("Interrupted, stopping gracefully...")
+finally:
+    cleanup_resources()
+```
+
+## Threading
+
+### Thread Safety
+
+Use locks for shared state and events for coordination:
+
+```python
+import threading
+
+class ThreadSafeClass:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+    
+    def safe_method(self):
+        with self.lock:
+            # Access shared state
+            pass
+```
+
+### Daemon Threads
+
+Use `daemon=True` for background threads that should exit with main:
+
+```python
+thread = threading.Thread(target=background_task, daemon=True)
+thread.start()
+```
+
+## Audio Processing
+
+### NumPy Arrays
+
+Use numpy for audio processing with proper dtype handling:
+
+```python
+import numpy as np
+
+# Convert bytes to numpy array
+audio_array = np.frombuffer(pcm_data, dtype=np.int16)
+
+# Normalize to float32
+audio_float = audio_array.astype(np.float32) / 32768.0
+
+# Convert back to int16
+audio_int16 = (audio_float * 32768.0).astype(np.int16)
+```
+
+### WAV Format
+
+When working with WAV files:
+- Header is typically 44 bytes
+- Parse header to get sample_rate, channels, bits_per_sample
+- Use `struct` module for binary parsing: `struct.unpack("<H", data[22:24])[0]`
+
+## Subprocess Management
+
+### Process Lifecycle
+
+Always properly manage subprocess lifecycle:
+
+```python
+process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+try:
+    # Use process
+    pass
+finally:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            logger.warning("Process did not stop, killing...")
+            process.kill()
+```
+
+## Project Structure
+
+### Module Organization
+
+- `cli.py`: Command-line interface (argparse)
+- `audio/`: Audio capture and device detection
+- `transcribe/`: Transcription engines (streaming, whisper)
+- `watch/`: File watching and batch processing
+
+### Import Organization
+
+```python
+from __future__ import annotations
+
+# Standard library
+import logging
+import os
+from pathlib import Path
+
+# Third-party
+import numpy as np
+from faster_whisper import WhisperModel
+
+# Local imports
+from local_transcriber.audio.device_detection import auto_detect_devices
+```
+
+## Swift Integration
+
+### Swift CLI Usage
+
+The Swift CLI for ScreenCaptureKit is located at:
+- Build path: `swift-audio-capture/.build/release/audio-capture`
+- Check availability before using: `SWIFT_CLI_AVAILABLE`
+- Handle permission requests gracefully
+
+### Error Handling for Swift CLI
+
+```python
+try:
+    from local_transcriber.audio.screen_capture import (
+        ScreenCaptureAudioCapture,
+        SWIFT_CLI_AVAILABLE,
+    )
+    if SWIFT_CLI_AVAILABLE:
+        # Use Swift CLI
+        pass
+except ImportError:
+    # Fallback to alternative method
+    pass
+```
+
+## Testing Considerations
+
+- Test with real audio devices when possible
+- Mock subprocess calls in unit tests
+- Test graceful shutdown scenarios
+- Test environment variable parsing edge cases
+
+## Dependencies
+
+- Use `uv` for package management: `uv pip install -e .`
+- Dependencies are defined in `pyproject.toml`
+- Always pin minimum versions: `>=1.0.0`
+- Document system dependencies (ffmpeg, Swift) in README
+
+## Configuration
+
+- Use `.env` files with `python-dotenv`: `load_dotenv()` at startup
+- Support `direnv` for automatic environment loading
+- Provide sensible defaults for all configuration options
+- Validate configuration values and provide clear error messages

@@ -381,9 +381,10 @@ def run_streaming_capture(
         mic_device = _get_str_env("MIC_DEVICE", "1")
     sample_rate = _get_int_env("SAMPLE_RATE", 16000, min_value=8000)
     channels = _get_int_env("CHANNELS", 1, min_value=1)
-    chunk_duration = _get_float_env("STREAMING_CHUNK_DURATION", 2.0, min_value=0.5)
+    chunk_duration = _get_float_env("STREAMING_CHUNK_DURATION", 30.0, min_value=0.5)
     model_size = _get_str_env("STREAMING_MODEL_SIZE", "base")
     language = _get_str_env("STREAMING_LANGUAGE", "es")
+    device = _get_str_env("STREAMING_DEVICE", "auto")
     vad_enabled = _get_bool_env("STREAMING_VAD_ENABLED", False)  # Deshabilitado por defecto para capturar todo el audio
     realtime_output = _get_bool_env("STREAMING_REALTIME_OUTPUT", True)
 
@@ -395,6 +396,7 @@ def run_streaming_capture(
         model_size=model_size,
         language=language,
         output_file=output_file,
+        device=device,
         vad_enabled=vad_enabled,
         realtime_output=realtime_output,
     )
@@ -739,6 +741,17 @@ def run_streaming_capture(
             except subprocess.TimeoutExpired:
                 logger.warning("ffmpeg did not stop, killing...")
                 process.kill()
+
+        # Exportar en formatos adicionales si se especificó
+        export_formats_str = os.getenv("STREAMING_EXPORT_FORMATS", "").strip()
+        if export_formats_str:
+            export_formats = [f.strip() for f in export_formats_str.split(",") if f.strip()]
+            if export_formats:
+                logger.info(f"Exporting transcript in formats: {', '.join(export_formats)}")
+                try:
+                    transcriber.export_transcript(export_formats, output_dir)
+                except Exception as e:
+                    logger.error(f"Error exporting transcript: {e}", exc_info=True)
 
         logger.info("Shutdown complete")
         logger.info(f"Full transcript saved to: {output_file}")

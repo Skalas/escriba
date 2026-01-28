@@ -70,7 +70,7 @@ def main() -> None:
         "--chunk-duration",
         type=float,
         default=None,
-        help="Duración de chunks en segundos (default: 2.0). Sobrescribe STREAMING_CHUNK_DURATION.",
+        help="Duración de chunks en segundos (default: 30.0). Sobrescribe STREAMING_CHUNK_DURATION.",
     )
     live_stream_parser.add_argument(
         "--language",
@@ -81,6 +81,17 @@ def main() -> None:
         "--no-realtime-output",
         action="store_true",
         help="No mostrar transcripciones en consola en tiempo real.",
+    )
+    live_stream_parser.add_argument(
+        "--device",
+        choices=["auto", "cpu", "mps"],
+        default=None,
+        help="Dispositivo a usar para transcripción (auto detecta MPS en Apple Silicon). Sobrescribe STREAMING_DEVICE.",
+    )
+    live_stream_parser.add_argument(
+        "--format",
+        default=None,
+        help="Formatos de exportación separados por comas (txt,json). Ejemplo: txt,json. Sobrescribe STREAMING_EXPORT_FORMATS.",
     )
 
     watch_parser = subparsers.add_parser("watch", help="Transcribe audios nuevos.")
@@ -124,6 +135,10 @@ def main() -> None:
             os.environ["STREAMING_LANGUAGE"] = args.language
         if args.no_realtime_output:
             os.environ["STREAMING_REALTIME_OUTPUT"] = "false"
+        if args.device:
+            os.environ["STREAMING_DEVICE"] = args.device
+        if args.format:
+            os.environ["STREAMING_EXPORT_FORMATS"] = args.format
 
         # Auto-detección de llamada si está habilitada
         if args.auto_start:

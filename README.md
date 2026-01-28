@@ -6,10 +6,13 @@ Transcriptor local que captura audio del sistema + micrófono (macOS) y procesa 
 
 - 🎙️ **Captura de audio del sistema y micrófono** usando ScreenCaptureKit (API nativa de macOS)
 - ⚡ **Transcripción en tiempo real** con latencia baja (2-5 segundos)
+- 🚀 **Aceleración GPU** con soporte automático para MPS (Apple Silicon)
 - 🔍 **Auto-detección de dispositivos** (similar a Notion AI)
 - 📞 **Detección automática de llamadas** (Zoom, Teams, Meet, etc.)
 - 🎧 **Soporte para AirPods** y otros micrófonos externos
 - 📁 **Monitoreo de carpetas** para transcripción automática de archivos nuevos
+- 📊 **Exportación múltiple** en formatos TXT y JSON estructurado
+- ⚙️ **Configuración VAD centralizada** para ajuste fino de detección de voz
 - 🔒 **100% local** - no envía datos a servidores externos
 
 ## Requisitos (macOS)
@@ -96,11 +99,17 @@ MIC_ONLY=false                   # true = solo micrófono, false = sistema + mic
 ### Configuración para Modo `live-stream` (Recomendado)
 
 ```bash
-STREAMING_CHUNK_DURATION=2.0      # Duración de chunks en segundos (0.5-5.0)
+STREAMING_CHUNK_DURATION=30.0      # Duración de chunks en segundos (0.5+)
 STREAMING_MODEL_SIZE=base         # tiny, base, small, medium, large
 STREAMING_LANGUAGE=es             # Código ISO 639-1 (es, en, fr, etc.)
+STREAMING_DEVICE=auto             # auto|cpu|mps - auto detecta MPS (Apple Silicon GPU)
 STREAMING_VAD_ENABLED=false       # Voice Activity Detection (true = solo voz, false = todo)
 STREAMING_REALTIME_OUTPUT=true    # Mostrar transcripciones en consola en tiempo real
+STREAMING_EXPORT_FORMATS=txt,json # Formatos de exportación separados por comas (txt,json)
+
+# VAD (Voice Activity Detection) configuration
+VAD_MIN_SILENCE_MS=500            # Duración mínima de silencio en milisegundos
+VAD_THRESHOLD=0.3                 # Umbral de sensibilidad (0.0-1.0), valores más bajos detectan más voz
 ```
 
 ### Configuración para Modo `live` (Legacy)
@@ -171,6 +180,8 @@ local-transcriber/
 
 3. **Transcripción**:
    - `streaming.py`: Usa `faster-whisper` para transcripción en tiempo real
+   - `config.py`: Configuración centralizada de VAD
+   - `formats.py`: Exportación de transcripciones (TXT, JSON)
    - `whisper.py`: Usa Whisper CLI para transcripción batch
 
 4. **Utilidades**:
@@ -266,8 +277,10 @@ local-transcriber live-stream \
   --output-dir transcripts \
   --combined transcripts/live.txt \
   --model-size base \
-  --chunk-duration 2.0 \
+  --chunk-duration 30.0 \
   --language es \
+  --device auto \
+  --format txt,json \
   --auto-start \
   --no-realtime-output
 ```
@@ -276,8 +289,10 @@ local-transcriber live-stream \
 - `--output-dir`: Directorio donde guardar transcripciones individuales
 - `--combined`: Archivo donde escribir transcripción combinada en tiempo real
 - `--model-size`: Tamaño del modelo (tiny, base, small, medium, large)
-- `--chunk-duration`: Duración de chunks en segundos (default: 2.0)
+- `--chunk-duration`: Duración de chunks en segundos (default: 30.0)
 - `--language`: Idioma (código ISO 639-1: es, en, fr, etc.)
+- `--device`: Dispositivo a usar (auto, cpu, mps). `auto` detecta MPS automáticamente en Apple Silicon
+- `--format`: Formatos de exportación separados por comas (txt, json). Se exportan al finalizar
 - `--auto-start`: Esperar a que se detecte una llamada antes de comenzar
 - `--no-realtime-output`: No mostrar transcripciones en consola
 
@@ -420,7 +435,13 @@ uv pip install -e .
 **Latencia alta**
 - Reduce `STREAMING_CHUNK_DURATION` a 1.0-1.5 segundos
 - Usa un modelo más pequeño (`tiny` o `base`)
+- Usa GPU con `--device auto` o `--device mps` (Apple Silicon)
 - Verifica que no haya otros procesos consumiendo CPU
+
+**GPU no se detecta (Apple Silicon)**
+- Verifica que `torch` esté instalado: `python -c "import torch; print(torch.backends.mps.is_available())"`
+- Usa `--device auto` para detección automática
+- Si no funciona, usa `--device cpu` como fallback
 
 **No se detecta audio del sistema**
 - Verifica permisos de Screen Recording
