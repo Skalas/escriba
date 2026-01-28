@@ -229,3 +229,4 @@ __marimo__/
 *.xcworkspace/
 DerivedData/
 transcripts/
+.DS_Store
