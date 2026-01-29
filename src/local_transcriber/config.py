@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from local_transcriber.transcribe.config import VADConfig
+from local_transcriber.transcribe.config import HallucinationConfig, VADConfig
 from local_transcriber.utils.env import (
     get_bool_env,
     get_float_env,
@@ -208,6 +208,7 @@ class AppConfig:
     audio: AudioConfig = field(default_factory=AudioConfig)
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
     vad: VADConfig = field(default_factory=VADConfig)
+    hallucination: HallucinationConfig = field(default_factory=HallucinationConfig)
 
     config_path: Path | None = None
 
@@ -244,6 +245,7 @@ class AppConfig:
         streaming_section = _get_section(toml_data, "streaming")
         vad_section = _get_section(toml_data, "vad")
         speaker_section = _get_section(toml_data, "speaker")
+        whisper_section = _get_section(toml_data, "whisper")
 
         # Audio
         sample_rate = _get_toml_int(audio_section, "sample_rate")
@@ -364,10 +366,39 @@ class AppConfig:
             else get_float_env("VAD_THRESHOLD", 0.3, min_value=0.0, max_value=1.0),
         )
 
+        # Whisper hallucination prevention
+        condition_on_previous = _get_toml_bool(
+            whisper_section, "condition_on_previous_text"
+        )
+        no_speech_thresh = _get_toml_float(whisper_section, "no_speech_threshold")
+        compression_thresh = _get_toml_float(
+            whisper_section, "compression_ratio_threshold"
+        )
+        logprob_thresh = _get_toml_float(whisper_section, "logprob_threshold")
+        hallucination_cfg = HallucinationConfig(
+            condition_on_previous_text=condition_on_previous
+            if condition_on_previous is not None
+            else get_bool_env("WHISPER_CONDITION_ON_PREVIOUS_TEXT", False),
+            no_speech_threshold=no_speech_thresh
+            if no_speech_thresh is not None
+            else get_float_env(
+                "WHISPER_NO_SPEECH_THRESHOLD", 0.6, min_value=0.0, max_value=1.0
+            ),
+            compression_ratio_threshold=compression_thresh
+            if compression_thresh is not None
+            else get_float_env(
+                "WHISPER_COMPRESSION_RATIO_THRESHOLD", 2.4, min_value=0.0
+            ),
+            logprob_threshold=logprob_thresh
+            if logprob_thresh is not None
+            else get_float_env("WHISPER_LOGPROB_THRESHOLD", -1.0, max_value=0.0),
+        )
+
         return cls(
             audio=audio_cfg,
             streaming=streaming_cfg,
             vad=vad_cfg,
+            hallucination=hallucination_cfg,
             config_path=resolved_path,
         )
 
@@ -407,5 +438,11 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
         "vad": {
             "min_silence_ms": cfg.vad.min_silence_duration_ms,
             "threshold": cfg.vad.threshold,
+        },
+        "whisper": {
+            "condition_on_previous_text": cfg.hallucination.condition_on_previous_text,
+            "no_speech_threshold": cfg.hallucination.no_speech_threshold,
+            "compression_ratio_threshold": cfg.hallucination.compression_ratio_threshold,
+            "logprob_threshold": cfg.hallucination.logprob_threshold,
         },
     }

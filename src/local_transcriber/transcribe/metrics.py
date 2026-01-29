@@ -47,7 +47,9 @@ class CaptureMetrics:
             self._chunk_start_times.append(timestamp)
         return timestamp
 
-    def record_chunk_end(self, start_timestamp: float, had_transcription: bool = False) -> None:
+    def record_chunk_end(
+        self, start_timestamp: float, had_transcription: bool = False
+    ) -> None:
         """
         Registra el fin del procesamiento de un chunk.
 
@@ -288,17 +290,27 @@ class CaptureMetrics:
         print("📊 Capture Metrics Summary")
         print("=" * 60)
         print(f"Chunks processed:        {summary['chunks_processed']}")
-        print(f"Chunks with transcription: {summary['chunks_with_transcription']} ({summary['transcription_chunks_percent']:.1f}%)")
-        print(f"Silent chunks:           {summary['chunks_silent']} ({summary['silent_chunks_percent']:.1f}%)")
-        print(f"Errors:                  {summary['errors']} ({summary['error_rate_percent']:.2f}%)")
+        print(
+            f"Chunks with transcription: {summary['chunks_with_transcription']} ({summary['transcription_chunks_percent']:.1f}%)"
+        )
+        print(
+            f"Silent chunks:           {summary['chunks_silent']} ({summary['silent_chunks_percent']:.1f}%)"
+        )
+        print(
+            f"Errors:                  {summary['errors']} ({summary['error_rate_percent']:.2f}%)"
+        )
         print("\nLatency:")
         print(f"  Average:               {summary['avg_latency_ms']:.1f} ms")
         print(f"  Min:                    {summary['min_latency_ms']:.1f} ms")
         print(f"  Max:                    {summary['max_latency_ms']:.1f} ms")
         print("\nAudio:")
         print(f"  Average level:         {summary['audio_level_db']:.1f} dB")
-        print(f"  Total duration:        {summary['total_audio_duration_seconds']:.1f} s")
-        print(f"  Transcription time:    {summary['total_transcription_time_seconds']:.1f} s")
+        print(
+            f"  Total duration:        {summary['total_audio_duration_seconds']:.1f} s"
+        )
+        print(
+            f"  Transcription time:    {summary['total_transcription_time_seconds']:.1f} s"
+        )
         print("=" * 60 + "\n")
 
     def reset(self) -> None:

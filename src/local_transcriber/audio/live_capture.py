@@ -479,6 +479,7 @@ def run_streaming_capture(
                 vad_enabled=vad_enabled,
                 realtime_output=realtime_output,
                 metrics=metrics,
+                hallucination_config=config.hallucination,
             )
     elif backend == "openai-whisper" or backend == "mps":
         if not MPS_AVAILABLE:
@@ -515,6 +516,7 @@ def run_streaming_capture(
             speaker_mode=speaker_mode,
             speaker_threshold=config.streaming.speaker.threshold,
             vad_config=config.vad,
+            hallucination_config=config.hallucination,
         )
 
     # Verificar si debemos usar ScreenCaptureKit para audio del sistema

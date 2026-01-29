@@ -12,7 +12,7 @@ from typing import Any, Optional
 import numpy as np
 from faster_whisper import WhisperModel
 
-from local_transcriber.transcribe.config import VADConfig
+from local_transcriber.transcribe.config import HallucinationConfig, VADConfig
 from local_transcriber.transcribe.metrics import CaptureMetrics
 from local_transcriber.utils.env import get_bool_env, get_float_env, get_str_env
 
@@ -37,6 +37,7 @@ class StreamingTranscriber:
         vad_enabled: bool = True,
         realtime_output: bool = True,
         vad_config: Optional[VADConfig] = None,
+        hallucination_config: Optional[HallucinationConfig] = None,
         metrics: Optional[CaptureMetrics] = None,
         speaker_mode: str | None = None,
         speaker_threshold: float | None = None,
@@ -69,6 +70,11 @@ class StreamingTranscriber:
 
         # Configurar VAD
         self.vad_config = vad_config or VADConfig.from_env()
+
+        # Configurar hallucination prevention
+        self.hallucination_config = (
+            hallucination_config or HallucinationConfig.from_env()
+        )
 
         # Speaker detection (opcional)
         # 'simple' = lightweight change detection per chunk (not real diarization)
@@ -183,6 +189,11 @@ class StreamingTranscriber:
                 )
                 if self.vad_enabled
                 else None,
+                # Hallucination prevention parameters
+                condition_on_previous_text=self.hallucination_config.condition_on_previous_text,
+                no_speech_threshold=self.hallucination_config.no_speech_threshold,
+                compression_ratio_threshold=self.hallucination_config.compression_ratio_threshold,
+                log_prob_threshold=self.hallucination_config.logprob_threshold,
             )
 
             # Detectar speaker si está habilitado
@@ -289,6 +300,11 @@ class StreamingTranscriber:
                         )
                         if self.vad_enabled
                         else None,
+                        # Hallucination prevention parameters
+                        condition_on_previous_text=self.hallucination_config.condition_on_previous_text,
+                        no_speech_threshold=self.hallucination_config.no_speech_threshold,
+                        compression_ratio_threshold=self.hallucination_config.compression_ratio_threshold,
+                        log_prob_threshold=self.hallucination_config.logprob_threshold,
                     )
 
                     # Detectar speaker si está habilitado
@@ -417,6 +433,11 @@ class StreamingTranscriber:
                 )
                 if self.vad_enabled
                 else None,
+                # Hallucination prevention parameters
+                condition_on_previous_text=self.hallucination_config.condition_on_previous_text,
+                no_speech_threshold=self.hallucination_config.no_speech_threshold,
+                compression_ratio_threshold=self.hallucination_config.compression_ratio_threshold,
+                log_prob_threshold=self.hallucination_config.logprob_threshold,
             )
 
             # Procesar segmentos

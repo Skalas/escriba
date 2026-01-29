@@ -2,7 +2,61 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from local_transcriber.utils.env import get_float_env, get_int_env
+from local_transcriber.utils.env import get_bool_env, get_float_env, get_int_env
+
+
+@dataclass
+class HallucinationConfig:
+    """
+    Configuration for Whisper hallucination prevention.
+
+    These parameters help prevent repetitive output (e.g., "los los los...")
+    that can occur during silence or low-quality audio.
+
+    Attributes:
+        condition_on_previous_text: If False, prevents repetition loops by not
+            using previous transcription as context. Default: False.
+        no_speech_threshold: Threshold for filtering silent segments.
+            Higher values filter more aggressively. Default: 0.6.
+        compression_ratio_threshold: Threshold for detecting repetitive patterns.
+            Segments with compression ratio above this are filtered. Default: 2.4.
+        logprob_threshold: Threshold for filtering low-confidence segments.
+            Segments with average log probability below this are filtered. Default: -1.0.
+    """
+
+    condition_on_previous_text: bool = False
+    no_speech_threshold: float = 0.6
+    compression_ratio_threshold: float = 2.4
+    logprob_threshold: float = -1.0
+
+    @classmethod
+    def from_env(cls) -> HallucinationConfig:
+        """
+        Create HallucinationConfig from environment variables.
+
+        Environment variables:
+            WHISPER_CONDITION_ON_PREVIOUS_TEXT: Use previous text as context (default: false)
+            WHISPER_NO_SPEECH_THRESHOLD: No-speech filter threshold (default: 0.6)
+            WHISPER_COMPRESSION_RATIO_THRESHOLD: Repetition filter threshold (default: 2.4)
+            WHISPER_LOGPROB_THRESHOLD: Low-confidence filter threshold (default: -1.0)
+
+        Returns:
+            HallucinationConfig instance with values from environment or defaults
+        """
+        return cls(
+            condition_on_previous_text=get_bool_env(
+                "WHISPER_CONDITION_ON_PREVIOUS_TEXT", False
+            ),
+            no_speech_threshold=get_float_env(
+                "WHISPER_NO_SPEECH_THRESHOLD", 0.6, min_value=0.0, max_value=1.0
+            ),
+            compression_ratio_threshold=get_float_env(
+                "WHISPER_COMPRESSION_RATIO_THRESHOLD", 2.4, min_value=0.0
+            ),
+            logprob_threshold=get_float_env(
+                "WHISPER_LOGPROB_THRESHOLD", -1.0, max_value=0.0
+            ),
+        )
 
 
 @dataclass

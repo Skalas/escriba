@@ -15,11 +15,11 @@ auto_detect_devices = true
 #mic_device = "1"
 
 [streaming]
-chunk_duration = 5.0
-model_size = "base"
-language = "es"
+chunk_duration = 30.0  # Try 30s for more context (vs 5s for lower latency)
+model_size = "medium"
+language = "auto"  # auto-detect language (supports mixed languages)
 device = "auto"
-backend = "faster-whisper" # faster-whisper | openai-whisper | mlx-whisper
+backend = "mlx-whisper" # faster-whisper | openai-whisper | mlx-whisper
 vad_enabled = false
 realtime_output = true
 export_formats = ["txt", "json"] # also supports: ["srt", "markdown"]
@@ -38,3 +38,11 @@ threshold = 0.3
 # - pyannote: real diarization via pyannote-audio (optional dependency)
 mode = "pyannote"
 threshold = 0.3
+
+[whisper]
+# Hallucination prevention settings
+# These help prevent repetitive output like "los los los..." during silence
+condition_on_previous_text = false  # false = prevents repetition loops (recommended)
+no_speech_threshold = 0.6  # Filter silent segments (0.0-1.0, higher = more aggressive)
+compression_ratio_threshold = 2.4  # Filter repetitive patterns (default 2.4)
+logprob_threshold = -1.0  # Filter low-confidence output (default -1.0)
