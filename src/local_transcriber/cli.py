@@ -111,7 +111,7 @@ def cmd_live_stream(
     chunk_duration: float | None = typer.Option(
         None,
         "--chunk-duration",
-        help="Duración de chunks en segundos (default: 30.0).",
+        help="Duración de chunks en segundos (default: 15.0).",
         min=0.5,
     ),
     language: str | None = typer.Option(
@@ -329,6 +329,15 @@ def daemon_stop_recording() -> None:
         print("Recording stopped.")
     else:
         raise typer.Exit(code=1)
+
+
+@app.command("app")
+def cmd_app(ctx: typer.Context) -> None:
+    """Launch the menu bar app with web dashboard."""
+    cfg = _get_cfg(ctx)
+    from local_transcriber.app.menubar import run_menubar_app
+
+    run_menubar_app(config=cfg)
 
 
 @app.command("watch-calendar")

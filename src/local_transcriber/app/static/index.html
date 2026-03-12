@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Transcriber</title>
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --card: #ffffff;
+    --text: #1d1d1f;
+    --text-secondary: #86868b;
+    --accent: #007aff;
+    --accent-hover: #0056b3;
+    --danger: #ff3b30;
+    --danger-hover: #d32f2f;
+    --success: #34c759;
+    --border: #d2d2d7;
+    --code-bg: #f0f0f2;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e;
+      --card: #2c2c2e;
+      --text: #f5f5f7;
+      --text-secondary: #98989d;
+      --border: #48484a;
+      --code-bg: #3a3a3c;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+  header h1 { font-size: 28px; font-weight: 700; }
+  #status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  #status-badge.idle { background: var(--code-bg); color: var(--text-secondary); }
+  #status-badge.recording { background: #ff3b3020; color: var(--danger); }
+  #status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+  }
+  #status-badge.recording #status-dot {
+    background: var(--danger);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .controls {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+  }
+  button:active { opacity: 0.7; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-start { background: var(--accent); color: white; }
+  .btn-start:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-stop { background: var(--danger); color: white; }
+  .btn-stop:hover:not(:disabled) { background: var(--danger-hover); }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  #transcript-box {
+    min-height: 200px;
+    max-height: 400px;
+    overflow-y: auto;
+    font-size: 15px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  #transcript-box:empty::before {
+    content: 'Transcript will appear here...';
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+  .segment {
+    padding: 4px 0;
+  }
+  .segment-time {
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    margin-right: 8px;
+  }
+
+  #notes-section { display: none; }
+  #notes-section.visible { display: block; }
+
+  #prompt-input {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 14px;
+    font-family: inherit;
+    background: var(--bg);
+    color: var(--text);
+    resize: vertical;
+    min-height: 60px;
+    margin-bottom: 12px;
+  }
+  #prompt-input::placeholder { color: var(--text-secondary); }
+  #prompt-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+  }
+
+  .btn-generate {
+    background: var(--success);
+    color: white;
+  }
+  .btn-generate:hover:not(:disabled) { background: #2db84d; }
+  .btn-generate.loading {
+    pointer-events: none;
+    opacity: 0.6;
+  }
+
+  #notes-output {
+    margin-top: 16px;
+    padding: 16px;
+    background: var(--code-bg);
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    display: none;
+  }
+  #notes-output.visible { display: block; }
+
+  .info-bar {
+    display: flex;
+    gap: 20px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+  }
+
+  #error-banner {
+    background: #ff3b3018;
+    color: var(--danger);
+    padding: 12px 16px;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    display: none;
+  }
+  #error-banner.visible { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Local Transcriber</h1>
+  <span id="status-badge" class="idle">
+    <span id="status-dot"></span>
+    <span id="status-text">Idle</span>
+  </span>
+</header>
+
+<div id="error-banner"></div>
+
+<div class="controls">
+  <button class="btn-start" id="btn-start" onclick="startRecording()">Start Recording</button>
+  <button class="btn-stop" id="btn-stop" onclick="stopRecording()" disabled>Stop Recording</button>
+</div>
+
+<div class="info-bar">
+  <span>Elapsed: <strong id="elapsed">--:--:--</strong></span>
+  <span>Segments: <strong id="seg-count">0</strong></span>
+</div>
+
+<div class="card">
+  <h2>Transcript</h2>
+  <div id="transcript-box"></div>
+</div>
+
+<div id="notes-section">
+  <div class="card">
+    <h2>Generate Notes</h2>
+    <textarea id="prompt-input" placeholder="e.g. Summarize the key decisions and action items..." rows="2"></textarea>
+    <button class="btn-generate" id="btn-notes" onclick="generateNotes()">Generate Notes</button>
+    <div id="notes-output"></div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let polling = null;
+
+async function api(path, opts) {
+  const r = await fetch(API + path, opts);
+  return r.json();
+}
+
+async function startRecording() {
+  hideError();
+  document.getElementById('btn-start').disabled = true;
+  const res = await api('/api/recording/start', { method: 'POST' });
+  if (!res.ok) {
+    showError(res.error || 'Failed to start');
+    document.getElementById('btn-start').disabled = false;
+    return;
+  }
+  document.getElementById('btn-stop').disabled = false;
+  startPolling();
+}
+
+async function stopRecording() {
+  document.getElementById('btn-stop').disabled = true;
+  await api('/api/recording/stop', { method: 'POST' });
+  document.getElementById('btn-start').disabled = false;
+  // Do one final poll to get the complete transcript
+  await pollStatus();
+  await pollTranscript();
+}
+
+async function generateNotes() {
+  const btn = document.getElementById('btn-notes');
+  const out = document.getElementById('notes-output');
+  const prompt = document.getElementById('prompt-input').value.trim();
+
+  btn.classList.add('loading');
+  btn.textContent = 'Generating...';
+  out.className = 'visible';
+  out.textContent = 'Thinking...';
+
+  try {
+    const res = await api('/api/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: prompt || null }),
+    });
+    out.textContent = res.ok ? res.notes : ('Error: ' + (res.error || 'Unknown'));
+  } catch (e) {
+    out.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.classList.remove('loading');
+    btn.textContent = 'Generate Notes';
+  }
+}
+
+function startPolling() {
+  if (polling) return;
+  polling = setInterval(async () => {
+    await pollStatus();
+    await pollTranscript();
+  }, 2000);
+}
+
+function stopPolling() {
+  if (polling) { clearInterval(polling); polling = null; }
+}
+
+async function pollStatus() {
+  try {
+    const s = await api('/api/status');
+    const badge = document.getElementById('status-badge');
+    const text = document.getElementById('status-text');
+    const elapsed = document.getElementById('elapsed');
+    const segCount = document.getElementById('seg-count');
+    const notesSection = document.getElementById('notes-section');
+
+    if (s.is_active) {
+      badge.className = 'recording';
+      text.textContent = 'Recording';
+      document.getElementById('btn-start').disabled = true;
+      document.getElementById('btn-stop').disabled = false;
+    } else {
+      badge.className = 'idle';
+      text.textContent = 'Idle';
+      document.getElementById('btn-start').disabled = false;
+      document.getElementById('btn-stop').disabled = true;
+      stopPolling();
+    }
+
+    elapsed.textContent = s.elapsed || '--:--:--';
+    segCount.textContent = s.segments_count || 0;
+
+    // Show notes section if there are segments
+    if ((s.segments_count || 0) > 0) {
+      notesSection.classList.add('visible');
+    }
+
+    if (s.error) { showError(s.error); }
+  } catch (e) { /* ignore polling errors */ }
+}
+
+async function pollTranscript() {
+  try {
+    const t = await api('/api/transcript');
+    const box = document.getElementById('transcript-box');
+    if (!t.segments || t.segments.length === 0) return;
+
+    box.innerHTML = t.segments.map(seg => {
+      const ts = formatTime(seg.start);
+      const speaker = seg.speaker ? `[${seg.speaker}] ` : '';
+      return `<div class="segment"><span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
+    }).join('');
+
+    box.scrollTop = box.scrollHeight;
+  } catch (e) { /* ignore */ }
+}
+
+function formatTime(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+function pad(n) { return n.toString().padStart(2, '0'); }
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function showError(msg) {
+  const b = document.getElementById('error-banner');
+  b.textContent = msg;
+  b.classList.add('visible');
+}
+function hideError() {
+  document.getElementById('error-banner').classList.remove('visible');
+}
+
+// Initial status check
+pollStatus().then(() => {
+  // If already recording, start polling
+  const badge = document.getElementById('status-badge');
+  if (badge.className === 'recording') { startPolling(); }
+});
+</script>
+</body>
+</html>

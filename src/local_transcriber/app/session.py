@@ -1,0 +1,293 @@
+"""Transcription session management for the menu bar app."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import struct
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class TranscriptionSession:
+    """Manages a single transcription session: capture + transcribe + notes."""
+
+    def __init__(self, config):
+        from local_transcriber.config import AppConfig
+
+        self.config: AppConfig = config
+        self.transcriber = None
+        self.screen_capture = None
+        self._audio_buffer = bytearray()
+        self._buffer_lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._process_thread = None
+        self.is_active = False
+        self.start_time: datetime | None = None
+        self.session_id: str | None = None
+        self.output_dir = Path("transcripts")
+        self.error: str | None = None
+
+    def start(self):
+        if self.is_active:
+            return
+
+        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.start_time = datetime.now()
+        self._stop_event.clear()
+        self._audio_buffer = bytearray()
+        self.error = None
+
+        # Create transcriber based on backend
+        backend = self.config.streaming.backend
+        model_size = self.config.streaming.model_size
+        language = self.config.streaming.language
+        logger.info(
+            "Session config: backend=%s, model=%s, language=%s",
+            backend, model_size, language,
+        )
+
+        try:
+            if backend == "mlx-whisper":
+                from local_transcriber.transcribe.streaming_mlx import (
+                    StreamingTranscriberMLX,
+                )
+
+                self.transcriber = StreamingTranscriberMLX(
+                    model_size=model_size,
+                    language=language,
+                    realtime_output=True,
+                )
+            else:
+                from local_transcriber.transcribe.streaming import StreamingTranscriber
+
+                self.transcriber = StreamingTranscriber(
+                    model_size=model_size,
+                    language=language,
+                    device=self.config.streaming.device,
+                    realtime_output=True,
+                )
+        except Exception as e:
+            self.error = f"Failed to load model: {e}"
+            logger.error("Failed to load model: %s", e, exc_info=True)
+            return
+
+        # Start screen capture
+        try:
+            from local_transcriber.audio.screen_capture import (
+                ScreenCaptureAudioCapture,
+            )
+
+            self.screen_capture = ScreenCaptureAudioCapture(
+                sample_rate=self.config.audio.sample_rate,
+                channels=self.config.audio.channels,
+                audio_callback=self._on_audio_data,
+            )
+            if not self.screen_capture.start():
+                self.error = "Failed to start audio capture. Check permissions."
+                return
+        except ImportError:
+            self.error = (
+                "Swift audio-capture CLI not available. "
+                "Build with: cd swift-audio-capture && swift build -c release"
+            )
+            logger.error(self.error)
+            return
+
+        # Start processing thread
+        self._process_thread = threading.Thread(
+            target=self._process_loop, daemon=True
+        )
+        self._process_thread.start()
+        self.is_active = True
+        logger.info("Session started: %s", self.session_id)
+
+    def stop(self):
+        if not self.is_active:
+            return
+
+        self.is_active = False
+        self._stop_event.set()
+
+        if self.screen_capture:
+            self.screen_capture.stop()
+
+        if self._process_thread:
+            self._process_thread.join(timeout=10)
+
+        # Process any remaining audio
+        self._flush_buffer()
+
+        # Export transcript
+        self._export()
+        logger.info("Session stopped: %s", self.session_id)
+
+    def _on_audio_data(self, data: bytes):
+        with self._buffer_lock:
+            self._audio_buffer.extend(data)
+
+    def _process_loop(self):
+        chunk_duration = self.config.streaming.chunk_duration
+        sample_rate = self.config.audio.sample_rate
+
+        while not self._stop_event.is_set():
+            self._stop_event.wait(chunk_duration)
+            self._flush_buffer()
+
+        # Final flush
+        self._flush_buffer()
+
+    def _flush_buffer(self):
+        """Take accumulated PCM from buffer, build WAV, and transcribe."""
+        sample_rate = self.config.audio.sample_rate
+        channels = self.config.audio.channels
+        # Need at least 0.5s of audio
+        min_bytes = int(sample_rate * channels * 2 * 0.5)
+
+        with self._buffer_lock:
+            if len(self._audio_buffer) < min_bytes:
+                return
+            pcm_data = bytes(self._audio_buffer)
+            self._audio_buffer = bytearray()
+
+        wav_data = _build_wav(pcm_data, sample_rate, channels)
+
+        if self.transcriber:
+            try:
+                self.transcriber.process_wav_chunk(wav_data)
+            except Exception as e:
+                logger.error("Error transcribing chunk: %s", e, exc_info=True)
+
+    def get_transcript(self) -> str:
+        if self.transcriber:
+            return self.transcriber.get_full_transcript()
+        return ""
+
+    def get_segments(self) -> list[dict[str, Any]]:
+        if not self.transcriber:
+            return []
+        with self.transcriber.lock:
+            return list(self.transcriber.segments)
+
+    def get_status(self) -> dict[str, Any]:
+        elapsed = ""
+        if self.start_time:
+            delta = datetime.now() - self.start_time
+            minutes, seconds = divmod(int(delta.total_seconds()), 60)
+            hours, minutes = divmod(minutes, 60)
+            elapsed = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        return {
+            "is_active": self.is_active,
+            "session_id": self.session_id,
+            "elapsed": elapsed,
+            "segments_count": len(self.get_segments()),
+            "error": self.error,
+        }
+
+    def _export(self):
+        if not self.transcriber:
+            return
+        formats = self.config.streaming.export_formats
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.transcriber.export_transcript(formats, self.output_dir)
+        except Exception as e:
+            logger.error("Error exporting transcript: %s", e, exc_info=True)
+
+    def generate_notes(
+        self, prompt: str | None = None, model: str | None = None
+    ) -> str | None:
+        transcript = self.get_transcript()
+        if not transcript:
+            return None
+
+        effective_model = model or self.config.streaming.summary_model
+
+        if prompt:
+            return _generate_custom_notes(transcript, prompt, effective_model)
+
+        from local_transcriber.summarize import generate_summary
+
+        result = generate_summary(transcript, model=effective_model)
+        if result:
+            return json.dumps(result, indent=2, ensure_ascii=False)
+        return None
+
+
+def _build_wav(pcm_data: bytes, sample_rate: int, channels: int) -> bytes:
+    """Build a WAV file from raw PCM int16 data."""
+    bits_per_sample = 16
+    data_size = len(pcm_data)
+    header = b"RIFF"
+    header += struct.pack("<I", 36 + data_size)
+    header += b"WAVE"
+    header += b"fmt "
+    header += struct.pack("<I", 16)
+    header += struct.pack("<H", 1)  # PCM
+    header += struct.pack("<H", channels)
+    header += struct.pack("<I", sample_rate)
+    header += struct.pack("<I", sample_rate * channels * bits_per_sample // 8)
+    header += struct.pack("<H", channels * bits_per_sample // 8)
+    header += struct.pack("<H", bits_per_sample)
+    header += b"data"
+    header += struct.pack("<I", data_size)
+    return header + pcm_data
+
+
+def _generate_custom_notes(
+    transcript: str, prompt: str, model: str = "gemini"
+) -> str | None:
+    """Generate notes from transcript with a custom user prompt."""
+    full_prompt = (
+        "Here is a transcript from a meeting/call:\n\n"
+        f"{transcript}\n\n"
+        "Based on the above transcript, please do the following:\n"
+        f"{prompt}\n\n"
+        "Respond in a clear, well-structured format."
+    )
+
+    try:
+        if model == "gemini":
+            return _call_gemini(full_prompt)
+        elif model == "claude":
+            return _call_claude(full_prompt)
+        else:
+            logger.error("Unsupported model for notes: %s", model)
+            return None
+    except Exception as e:
+        logger.error("Error generating notes: %s", e, exc_info=True)
+        return None
+
+
+def _call_gemini(prompt: str) -> str | None:
+    import google.generativeai as genai
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "Error: GEMINI_API_KEY not set"
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-pro")
+    response = model.generate_content(prompt)
+    return response.text
+
+
+def _call_claude(prompt: str) -> str | None:
+    from anthropic import Anthropic
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return "Error: ANTHROPIC_API_KEY not set"
+    client = Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text
