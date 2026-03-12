@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
 from functools import partial
@@ -49,6 +50,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/transcript":
             session_id = params.get("session_id", [None])[0]
             self._json_response(self._get_transcript(session_id))
+        elif path == "/api/config":
+            self._json_response(self._get_config())
         elif path == "/api/sessions":
             self._json_response(self._get_sessions())
         elif path.startswith("/api/sessions/"):
@@ -64,7 +67,9 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
-        if path == "/api/recording/start":
+        if path == "/api/config/reload":
+            self._json_response(self._reload_config())
+        elif path == "/api/recording/start":
             self._json_response(self._start_recording())
         elif path == "/api/recording/stop":
             self._json_response(self._stop_recording())
@@ -82,6 +87,16 @@ class _Handler(BaseHTTPRequestHandler):
             session_id = path.split("/api/sessions/")[1].rsplit("/notes", 1)[0]
             body = self._read_body()
             self._json_response(self._save_notes(session_id, body))
+        else:
+            self._json_response({"ok": False, "error": "Not found"}, status=404)
+
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+
+        if path == "/api/config":
+            body = self._read_body()
+            self._json_response(self._put_config(body))
         else:
             self._json_response({"ok": False, "error": "Not found"}, status=404)
 
@@ -267,6 +282,104 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error("Error generating session notes: %s", e, exc_info=True)
             return {"ok": False, "error": str(e)}
+
+    def _get_config(self) -> dict:
+        from local_transcriber.config import AppConfig, config_to_dict
+
+        config: AppConfig = self.app_state.get("config", AppConfig.load())
+        cfg_dict = config_to_dict(config)
+        env_keys = {
+            "GEMINI_API_KEY": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+            "ANTHROPIC_API_KEY": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
+            "HUGGINGFACE_TOKEN": bool(os.environ.get("HUGGINGFACE_TOKEN", "").strip()),
+        }
+        return {"ok": True, "config": cfg_dict, "env_keys": env_keys}
+
+    def _put_config(self, body: dict) -> dict:
+        session: TranscriptionSession | None = self.app_state.get("session")
+        if session and session.is_active:
+            return {"ok": False, "error": "Stop recording before changing settings"}
+
+        from local_transcriber.config import (
+            AppConfig,
+            config_to_dict,
+            resolve_config_path,
+            save_config_to_toml,
+        )
+
+        # Separate env keys from TOML config
+        env_updates = {}
+        env_key_names = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "HUGGINGFACE_TOKEN"]
+        for key in env_key_names:
+            if key in body and body[key].strip():
+                env_updates[key] = body[key].strip()
+
+        # Update .env file if needed
+        if env_updates:
+            self._update_env_file(env_updates)
+            # Also set in current process
+            for k, v in env_updates.items():
+                os.environ[k] = v
+
+        # Write TOML config
+        toml_data = {k: v for k, v in body.items() if k not in env_key_names}
+        if toml_data:
+            config_path = resolve_config_path()
+            if config_path is None:
+                config_path = Path("local-transcriber.toml")
+            save_config_to_toml(toml_data, config_path)
+
+        # Trigger reload
+        reload_fn = self.app_state.get("reload_config")
+        if reload_fn:
+            new_config = reload_fn()
+        else:
+            from dotenv import load_dotenv
+            load_dotenv(override=True)
+            new_config = AppConfig.load()
+            self.app_state["config"] = new_config
+
+        return {"ok": True, "config": config_to_dict(new_config)}
+
+    @staticmethod
+    def _update_env_file(updates: dict):
+        env_path = Path(".env")
+        lines = []
+        if env_path.exists():
+            lines = env_path.read_text().splitlines()
+
+        updated_keys = set()
+        new_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                key = stripped.split("=", 1)[0].strip()
+                if key in updates:
+                    new_lines.append(f"{key}={updates[key]}")
+                    updated_keys.add(key)
+                    continue
+            new_lines.append(line)
+
+        for key, value in updates.items():
+            if key not in updated_keys:
+                new_lines.append(f"{key}={value}")
+
+        env_path.write_text("\n".join(new_lines) + "\n")
+
+    def _reload_config(self) -> dict:
+        from local_transcriber.config import config_to_dict
+
+        reload_fn = self.app_state.get("reload_config")
+        if reload_fn:
+            new_config = reload_fn()
+            return {"ok": True, "config": config_to_dict(new_config)}
+
+        from local_transcriber.config import AppConfig
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+        new_config = AppConfig.load()
+        self.app_state["config"] = new_config
+        return {"ok": True, "config": config_to_dict(new_config)}
 
     def _save_notes(self, session_id: str, body: dict) -> dict:
         db = self._get_db()

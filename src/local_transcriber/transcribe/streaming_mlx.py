@@ -100,14 +100,25 @@ class StreamingTranscriberMLX:
         # Lock para thread-safety
         self.lock = threading.Lock()
 
-        # Resolve model repo path
-        self.model_repo = MLX_MODEL_REPOS.get(
+        # Resolve model repo path and cache locally to avoid HF network checks
+        repo_id = MLX_MODEL_REPOS.get(
             model_size, f"mlx-community/whisper-{model_size}"
         )
-        logger.info("Using MLX Whisper model: %s", self.model_repo)
+        self.model_path = self._resolve_model_path(repo_id)
+        logger.info("Using MLX Whisper model: %s (path: %s)", repo_id, self.model_path)
 
-        # Note: mlx-whisper loads the model lazily on first transcribe() call
-        # No explicit load_model needed
+    @staticmethod
+    def _resolve_model_path(repo_id: str) -> str:
+        """Resolve HF repo to a local path. Downloads on first use, then uses cache."""
+        from huggingface_hub import snapshot_download
+
+        try:
+            # Try local cache first (no network)
+            return snapshot_download(repo_id, local_files_only=True)
+        except Exception:
+            # Not cached yet — download once
+            logger.info("Downloading model %s (first time only)...", repo_id)
+            return snapshot_download(repo_id)
 
     def process_wav_chunk(self, wav_data: bytes) -> Optional[str]:
         """
@@ -161,7 +172,7 @@ class StreamingTranscriberMLX:
                 # API: mlx_whisper.transcribe(audio_path, path_or_hf_repo=model, ...)
                 result = mlx_whisper.transcribe(
                     tmp_path,
-                    path_or_hf_repo=self.model_repo,
+                    path_or_hf_repo=self.model_path,
                     language=self.language if self.language != "auto" else None,
                     # Hallucination prevention parameters
                     condition_on_previous_text=self.hallucination_config.condition_on_previous_text,

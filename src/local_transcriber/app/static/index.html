@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Local Transcriber</title>
+<title>Escriba</title>
 <style>
   :root {
     --bg: #f5f5f7;
@@ -59,7 +59,105 @@
     padding: 16px;
     border-bottom: 1px solid var(--border);
   }
-  .sidebar-header h1 { font-size: 20px; font-weight: 700; margin-bottom: 12px; }
+  .sidebar-header h1 { font-size: 20px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+  .btn-gear {
+    background: none;
+    border: none;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    color: var(--text-secondary);
+    transition: background 0.15s;
+  }
+  .btn-gear:hover { background: var(--border); }
+
+  /* Settings */
+  .settings-card { margin-bottom: 16px; }
+  .settings-card h3 { cursor: pointer; user-select: none; }
+  .settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+  .settings-row:last-child { border-bottom: none; }
+  .settings-label {
+    font-size: 13px;
+    font-weight: 500;
+    min-width: 120px;
+  }
+  .settings-input {
+    flex: 1;
+    max-width: 220px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .settings-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0,122,255,0.15);
+  }
+  .settings-toggle {
+    position: relative;
+    width: 44px;
+    height: 24px;
+  }
+  .settings-toggle input { opacity: 0; width: 0; height: 0; }
+  .settings-toggle .slider {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .settings-toggle .slider::before {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .settings-toggle input:checked + .slider { background: var(--accent); }
+  .settings-toggle input:checked + .slider::before { transform: translateX(20px); }
+  .settings-banner {
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+  .settings-banner.success { background: #34c75920; color: var(--success); }
+  .settings-banner.error { background: #ff3b3018; color: var(--danger); }
+  .settings-banner.warning { background: #ff990020; color: #ff9900; }
+  .env-status {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .env-set { background: #34c75920; color: var(--success); }
+  .env-unset { background: #ff3b3018; color: var(--danger); }
+  details.advanced-settings summary {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 8px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
   .sidebar-actions {
     display: flex;
     gap: 8px;
@@ -329,7 +427,7 @@
 <!-- Sidebar -->
 <div class="sidebar">
   <div class="sidebar-header">
-    <h1>Local Transcriber</h1>
+    <h1>Escriba <button class="btn-gear" onclick="showSettingsView()" title="Settings">&#9881;</button></h1>
     <div class="sidebar-actions">
       <button class="btn-start" id="btn-start" onclick="startRecording()">Start</button>
       <button class="btn-stop" id="btn-stop" onclick="stopRecording()" disabled>Stop</button>
@@ -415,6 +513,162 @@
     </div>
   </div>
 
+  <!-- Settings view -->
+  <div id="settings-view" style="display:none;">
+    <header>
+      <h2>Settings</h2>
+      <button class="btn-secondary" onclick="showEmptyView()">Close</button>
+    </header>
+    <div id="settings-banner" class="settings-banner" style="display:none;"></div>
+    <div class="content-area">
+      <div class="card settings-card">
+        <h3>Audio</h3>
+        <div class="settings-row">
+          <span class="settings-label">Audio Source</span>
+          <select class="settings-input" id="s-audio-source">
+            <option value="system">System Audio (browser, apps)</option>
+            <option value="mic">Microphone Only</option>
+            <option value="both">System + Mic (calls)</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Mic Boost</span>
+          <input type="number" class="settings-input" id="s-mic-boost" step="0.1" min="0.1" max="5.0">
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Sample Rate</span>
+          <select class="settings-input" id="s-sample-rate">
+            <option value="8000">8000</option>
+            <option value="16000">16000</option>
+            <option value="22050">22050</option>
+            <option value="44100">44100</option>
+            <option value="48000">48000</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card settings-card">
+        <h3>Transcription</h3>
+        <div class="settings-row">
+          <span class="settings-label">Model Size</span>
+          <select class="settings-input" id="s-model-size">
+            <option value="tiny">tiny</option>
+            <option value="base">base</option>
+            <option value="small">small</option>
+            <option value="medium">medium</option>
+            <option value="large">large</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Language</span>
+          <input type="text" class="settings-input" id="s-language" placeholder="es">
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Backend</span>
+          <select class="settings-input" id="s-backend">
+            <option value="faster-whisper">faster-whisper</option>
+            <option value="openai-whisper">openai-whisper</option>
+            <option value="mlx-whisper">mlx-whisper</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Chunk Duration (s)</span>
+          <input type="number" class="settings-input" id="s-chunk-duration" step="1" min="1" max="60">
+        </div>
+      </div>
+
+      <div class="card settings-card">
+        <h3>Speaker Detection</h3>
+        <div class="settings-row">
+          <span class="settings-label">Mode</span>
+          <select class="settings-input" id="s-speaker-mode">
+            <option value="none">none</option>
+            <option value="simple">simple</option>
+            <option value="pyannote">pyannote</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Threshold</span>
+          <input type="number" class="settings-input" id="s-speaker-threshold" step="0.05" min="0" max="1">
+        </div>
+      </div>
+
+      <div class="card settings-card">
+        <h3>AI Notes</h3>
+        <div class="settings-row">
+          <span class="settings-label">Summary Model</span>
+          <select class="settings-input" id="s-summary-model">
+            <option value="gemini">gemini</option>
+            <option value="claude">claude</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Gemini API Key</span>
+          <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:220px;">
+            <input type="password" class="settings-input" id="s-gemini-key" placeholder="Enter key..." style="max-width:none;flex:1;">
+            <span class="env-status" id="s-gemini-status">-</span>
+          </div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Anthropic API Key</span>
+          <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:220px;">
+            <input type="password" class="settings-input" id="s-anthropic-key" placeholder="Enter key..." style="max-width:none;flex:1;">
+            <span class="env-status" id="s-anthropic-status">-</span>
+          </div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">HuggingFace Token</span>
+          <div style="display:flex;align-items:center;gap:8px;flex:1;max-width:220px;">
+            <input type="password" class="settings-input" id="s-hf-token" placeholder="Enter token..." style="max-width:none;flex:1;">
+            <span class="env-status" id="s-hf-status">-</span>
+          </div>
+        </div>
+      </div>
+
+      <details class="advanced-settings">
+        <summary>Advanced</summary>
+        <div class="card settings-card" style="margin-top:8px;">
+          <div class="settings-row">
+            <span class="settings-label">VAD Enabled</span>
+            <label class="settings-toggle"><input type="checkbox" id="s-vad-enabled"><span class="slider"></span></label>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">VAD Threshold</span>
+            <input type="number" class="settings-input" id="s-vad-threshold" step="0.05" min="0" max="1">
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">VAD Min Silence (ms)</span>
+            <input type="number" class="settings-input" id="s-vad-silence" step="50" min="0">
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Condition on Previous</span>
+            <label class="settings-toggle"><input type="checkbox" id="s-condition-prev"><span class="slider"></span></label>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">No Speech Threshold</span>
+            <input type="number" class="settings-input" id="s-no-speech" step="0.05" min="0" max="1">
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Compression Ratio</span>
+            <input type="number" class="settings-input" id="s-compression" step="0.1" min="0">
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Logprob Threshold</span>
+            <input type="number" class="settings-input" id="s-logprob" step="0.1" max="0">
+          </div>
+        </div>
+      </details>
+
+      <div style="margin-top:16px;display:flex;gap:8px;">
+        <button class="btn-start" id="btn-save-settings" onclick="saveSettings()">Save Settings</button>
+        <button class="btn-secondary" onclick="showEmptyView()">Cancel</button>
+      </div>
+      <div id="settings-recording-warning" class="settings-banner warning" style="display:none;">
+        Stop recording to change settings
+      </div>
+    </div>
+  </div>
+
   <!-- Empty state -->
   <div id="empty-view">
     <div class="empty-state">
@@ -427,6 +681,8 @@
 <script>
 const API = '';
 let polling = null;
+let bgSync = null;
+let lastWasRecording = false;
 let selectedSessionId = null;
 let checkedSessions = new Set();
 let viewingHistory = false; // true when user clicked a past session
@@ -516,7 +772,6 @@ async function startRecording() {
   document.getElementById('btn-stop').disabled = false;
   viewingHistory = false;
   showLiveView();
-  startPolling();
 }
 
 async function stopRecording() {
@@ -529,10 +784,10 @@ async function stopRecording() {
 }
 
 // --- Polling ---
+// Fast poll: transcript updates during recording (2s)
 function startPolling() {
   if (polling) return;
   polling = setInterval(async () => {
-    await pollStatus();
     await pollTranscript();
   }, 2000);
 }
@@ -541,20 +796,33 @@ function stopPolling() {
   if (polling) { clearInterval(polling); polling = null; }
 }
 
-async function pollStatus() {
+// Background sync: always running, checks status + session list (3s)
+function startBgSync() {
+  if (bgSync) return;
+  bgSync = setInterval(syncStatus, 3000);
+}
+
+async function syncStatus() {
   try {
     const s = await api('/api/status');
     const badge = document.getElementById('status-badge');
     const text = document.getElementById('status-text');
+    const isRecording = !!s.is_active;
 
-    if (s.is_active) {
+    if (isRecording) {
       badge.className = 'recording';
       text.textContent = 'Recording';
       document.getElementById('btn-start').disabled = true;
       document.getElementById('btn-stop').disabled = false;
       document.getElementById('elapsed').textContent = s.elapsed || '--:--:--';
       document.getElementById('seg-count').textContent = s.segments_count || 0;
-      if (!viewingHistory) showLiveView();
+      // Auto-switch to live only on recording start transition
+      if (!lastWasRecording) showLiveView();
+      startPolling();
+
+      if ((s.segments_count || 0) > 0) {
+        document.getElementById('notes-section').classList.add('visible');
+      }
     } else {
       badge.className = 'idle';
       text.textContent = 'Idle';
@@ -563,8 +831,15 @@ async function pollStatus() {
       stopPolling();
     }
 
-    if ((s.segments_count || 0) > 0) {
-      document.getElementById('notes-section').classList.add('visible');
+    // Recording stopped — refresh session list
+    if (lastWasRecording && !isRecording) {
+      refreshSessionList();
+    }
+    lastWasRecording = isRecording;
+
+    // Update settings save button if settings view is open
+    if (document.getElementById('settings-view').style.display !== 'none') {
+      updateSettingsSaveState();
     }
 
     if (s.error) showError(s.error);
@@ -774,6 +1049,138 @@ async function generateNotes() {
   }
 }
 
+// --- Settings ---
+async function showSettingsView() {
+  document.getElementById('live-view').style.display = 'none';
+  document.getElementById('session-view').style.display = 'none';
+  document.getElementById('empty-view').style.display = 'none';
+  document.getElementById('settings-view').style.display = '';
+  hideSettingsBanner();
+  await loadSettings();
+}
+
+async function loadSettings() {
+  try {
+    const res = await api('/api/config');
+    if (!res.ok) return;
+    const c = res.config;
+    // Audio
+    document.getElementById('s-audio-source').value = c.audio.audio_source || 'system';
+    document.getElementById('s-mic-boost').value = c.audio.mic_boost;
+    document.getElementById('s-sample-rate').value = c.audio.sample_rate;
+    // Transcription
+    document.getElementById('s-model-size').value = c.streaming.model_size;
+    document.getElementById('s-language').value = c.streaming.language;
+    document.getElementById('s-backend').value = c.streaming.backend;
+    document.getElementById('s-chunk-duration').value = c.streaming.chunk_duration;
+    // Speaker
+    document.getElementById('s-speaker-mode').value = c.streaming.speaker.mode;
+    document.getElementById('s-speaker-threshold').value = c.streaming.speaker.threshold;
+    // AI Notes
+    document.getElementById('s-summary-model').value = c.streaming.summary_model;
+    // Advanced
+    document.getElementById('s-vad-enabled').checked = c.streaming.vad_enabled;
+    document.getElementById('s-vad-threshold').value = c.vad.threshold;
+    document.getElementById('s-vad-silence').value = c.vad.min_silence_ms;
+    document.getElementById('s-condition-prev').checked = c.whisper.condition_on_previous_text;
+    document.getElementById('s-no-speech').value = c.whisper.no_speech_threshold;
+    document.getElementById('s-compression').value = c.whisper.compression_ratio_threshold;
+    document.getElementById('s-logprob').value = c.whisper.logprob_threshold;
+    // Env key status
+    const ek = res.env_keys;
+    setEnvStatus('s-gemini-status', ek.GEMINI_API_KEY);
+    setEnvStatus('s-anthropic-status', ek.ANTHROPIC_API_KEY);
+    setEnvStatus('s-hf-status', ek.HUGGINGFACE_TOKEN);
+    // Clear password fields
+    document.getElementById('s-gemini-key').value = '';
+    document.getElementById('s-anthropic-key').value = '';
+    document.getElementById('s-hf-token').value = '';
+    // Check recording state
+    updateSettingsSaveState();
+  } catch (e) {
+    showSettingsBanner('Failed to load settings', 'error');
+  }
+}
+
+function setEnvStatus(id, isSet) {
+  const el = document.getElementById(id);
+  el.textContent = isSet ? 'SET' : 'NOT SET';
+  el.className = 'env-status ' + (isSet ? 'env-set' : 'env-unset');
+}
+
+function updateSettingsSaveState() {
+  const badge = document.getElementById('status-badge');
+  const isRecording = badge && badge.className === 'recording';
+  document.getElementById('btn-save-settings').disabled = isRecording;
+  document.getElementById('settings-recording-warning').style.display = isRecording ? '' : 'none';
+}
+
+async function saveSettings() {
+  hideSettingsBanner();
+  const body = {
+    audio: {
+      audio_source: document.getElementById('s-audio-source').value,
+      mic_boost: parseFloat(document.getElementById('s-mic-boost').value),
+      sample_rate: parseInt(document.getElementById('s-sample-rate').value),
+    },
+    streaming: {
+      model_size: document.getElementById('s-model-size').value,
+      language: document.getElementById('s-language').value,
+      backend: document.getElementById('s-backend').value,
+      chunk_duration: parseFloat(document.getElementById('s-chunk-duration').value),
+      vad_enabled: document.getElementById('s-vad-enabled').checked,
+      summary_model: document.getElementById('s-summary-model').value,
+    },
+    speaker: {
+      mode: document.getElementById('s-speaker-mode').value,
+      threshold: parseFloat(document.getElementById('s-speaker-threshold').value),
+    },
+    vad: {
+      min_silence_ms: parseInt(document.getElementById('s-vad-silence').value),
+      threshold: parseFloat(document.getElementById('s-vad-threshold').value),
+    },
+    whisper: {
+      condition_on_previous_text: document.getElementById('s-condition-prev').checked,
+      no_speech_threshold: parseFloat(document.getElementById('s-no-speech').value),
+      compression_ratio_threshold: parseFloat(document.getElementById('s-compression').value),
+      logprob_threshold: parseFloat(document.getElementById('s-logprob').value),
+    },
+  };
+  // Add env keys only if filled
+  const geminiKey = document.getElementById('s-gemini-key').value;
+  const anthropicKey = document.getElementById('s-anthropic-key').value;
+  const hfToken = document.getElementById('s-hf-token').value;
+  if (geminiKey) body.GEMINI_API_KEY = geminiKey;
+  if (anthropicKey) body.ANTHROPIC_API_KEY = anthropicKey;
+  if (hfToken) body.HUGGINGFACE_TOKEN = hfToken;
+
+  try {
+    const res = await api('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      showSettingsBanner('Settings saved and config reloaded', 'success');
+      await loadSettings();
+    } else {
+      showSettingsBanner(res.error || 'Failed to save', 'error');
+    }
+  } catch (e) {
+    showSettingsBanner('Error: ' + e.message, 'error');
+  }
+}
+
+function showSettingsBanner(msg, type) {
+  const b = document.getElementById('settings-banner');
+  b.textContent = msg;
+  b.className = 'settings-banner ' + type;
+  b.style.display = '';
+}
+function hideSettingsBanner() {
+  document.getElementById('settings-banner').style.display = 'none';
+}
+
 // --- View switching ---
 function backToLive() {
   viewingHistory = false;
@@ -783,12 +1190,13 @@ function showLiveView() {
   document.getElementById('live-view').style.display = '';
   document.getElementById('session-view').style.display = 'none';
   document.getElementById('empty-view').style.display = 'none';
+  document.getElementById('settings-view').style.display = 'none';
 }
 function showSessionView() {
   document.getElementById('live-view').style.display = 'none';
   document.getElementById('session-view').style.display = '';
   document.getElementById('empty-view').style.display = 'none';
-  // Show "Back to Live" button only if currently recording
+  document.getElementById('settings-view').style.display = 'none';
   const badge = document.getElementById('status-badge');
   document.getElementById('btn-back-to-live').style.display =
     badge.className === 'recording' ? '' : 'none';
@@ -797,6 +1205,7 @@ function showEmptyView() {
   document.getElementById('live-view').style.display = 'none';
   document.getElementById('session-view').style.display = 'none';
   document.getElementById('empty-view').style.display = '';
+  document.getElementById('settings-view').style.display = 'none';
 }
 
 // --- Helpers ---
@@ -841,11 +1250,13 @@ function hideError() {
   await refreshSessionList();
   const status = await api('/api/status');
   if (status.is_active) {
+    lastWasRecording = true;
     showLiveView();
     startPolling();
   } else {
     showEmptyView();
   }
+  startBgSync();
 })();
 </script>
 </body>

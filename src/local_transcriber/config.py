@@ -213,6 +213,7 @@ class AudioConfig:
     sample_rate: int = 16000
     channels: int = 1
     mic_only: bool = False
+    audio_source: str = "system"  # "system" | "mic" | "both"
     mic_boost: float = 1.2
     auto_detect_devices: bool = True
     system_device: str = "0"
@@ -276,15 +277,24 @@ class AppConfig:
         sample_rate = _get_toml_int(audio_section, "sample_rate")
         channels = _get_toml_int(audio_section, "channels")
         mic_only = _get_toml_bool(audio_section, "mic_only")
+        audio_source = _get_toml_str(audio_section, "audio_source")
         mic_boost = _get_toml_float(audio_section, "mic_boost")
         auto_detect = _get_toml_bool(audio_section, "auto_detect_devices")
         system_device = _get_toml_str(audio_section, "system_device")
         mic_device = _get_toml_str(audio_section, "mic_device")
 
+        # Resolve audio_source: prefer explicit setting, fall back to mic_only compat
+        resolved_mic_only = _resolve(mic_only, lambda: get_bool_env("MIC_ONLY", False))
+        if audio_source is None:
+            resolved_audio_source = "mic" if resolved_mic_only else "system"
+        else:
+            resolved_audio_source = audio_source
+
         audio_cfg = AudioConfig(
             sample_rate=_resolve(sample_rate, lambda: get_int_env("SAMPLE_RATE", 16000, min_value=8000)),
             channels=_resolve(channels, lambda: get_int_env("CHANNELS", 1, min_value=1)),
-            mic_only=_resolve(mic_only, lambda: get_bool_env("MIC_ONLY", False)),
+            mic_only=resolved_mic_only,
+            audio_source=resolved_audio_source,
             mic_boost=_resolve(mic_boost, lambda: get_float_env("AUDIO_MIC_BOOST", 1.2, min_value=0.1, max_value=5.0)),
             auto_detect_devices=_resolve(auto_detect, lambda: get_bool_env("AUTO_DETECT_DEVICES", True)),
             system_device=_resolve(system_device, lambda: get_str_env("SYSTEM_DEVICE", "0")),
@@ -372,6 +382,16 @@ class AppConfig:
         )
 
 
+def save_config_to_toml(config_dict: dict[str, Any], path: Path) -> None:
+    """Write a config dict to a TOML file."""
+    import tomli_w
+
+    # Remove non-TOML keys
+    writable = {k: v for k, v in config_dict.items() if k != "config_path"}
+    path.write_bytes(tomli_w.dumps(writable).encode("utf-8"))
+    logger.info("Saved config to %s", path)
+
+
 def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
     """
     Convert config to a JSON-serializable dict (for --print-config).
@@ -382,6 +402,7 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
             "sample_rate": cfg.audio.sample_rate,
             "channels": cfg.audio.channels,
             "mic_only": cfg.audio.mic_only,
+            "audio_source": cfg.audio.audio_source,
             "mic_boost": cfg.audio.mic_boost,
             "auto_detect_devices": cfg.audio.auto_detect_devices,
             "system_device": cfg.audio.system_device,

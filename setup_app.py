@@ -10,8 +10,8 @@ import plistlib
 import stat
 from pathlib import Path
 
-APP_NAME = "Local Transcriber"
-BUNDLE_ID = "com.localtranscriber.app"
+APP_NAME = "Escriba"
+BUNDLE_ID = "com.escriba.app"
 VERSION = "0.1.0"
 
 PROJECT_DIR = Path(__file__).parent.resolve()
@@ -50,10 +50,10 @@ def build():
         "CFBundlePackageType": "APPL",
         "LSUIElement": True,
         "NSMicrophoneUsageDescription": (
-            "Local Transcriber needs microphone access to capture and transcribe audio."
+            "Escriba needs microphone access to capture and transcribe audio."
         ),
         "NSScreenCaptureUsageDescription": (
-            "Local Transcriber needs screen recording permission to capture system audio."
+            "Escriba needs screen recording permission to capture system audio."
         ),
     }
     with open(CONTENTS / "Info.plist", "wb") as f:

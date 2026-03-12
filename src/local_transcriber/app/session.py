@@ -27,6 +27,8 @@ class TranscriptionSession:
         self.screen_capture = None
         self._mic_stream = None
         self._audio_buffer = bytearray()
+        self._system_buffer = bytearray()
+        self._mic_buffer = bytearray()
         self._buffer_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._process_thread = None
@@ -46,6 +48,8 @@ class TranscriptionSession:
         self.start_time = datetime.now()
         self._stop_event.clear()
         self._audio_buffer = bytearray()
+        self._system_buffer = bytearray()
+        self._mic_buffer = bytearray()
         self._last_segment_count = 0
         self.error = None
 
@@ -93,15 +97,12 @@ class TranscriptionSession:
             logger.error("Failed to load model: %s", e, exc_info=True)
             return
 
-        # Start audio capture
-        if self.config.audio.mic_only:
-            try:
-                self._start_mic_capture()
-            except Exception as e:
-                self.error = f"Failed to start microphone capture: {e}"
-                logger.error(self.error, exc_info=True)
-                return
-        else:
+        # Start audio capture based on audio_source mode
+        audio_source = self.config.audio.audio_source
+        logger.info("Audio source: %s", audio_source)
+
+        # Start system audio (for "system" and "both" modes)
+        if audio_source in ("system", "both"):
             try:
                 from local_transcriber.audio.screen_capture import (
                     ScreenCaptureAudioCapture,
@@ -110,7 +111,7 @@ class TranscriptionSession:
                 self.screen_capture = ScreenCaptureAudioCapture(
                     sample_rate=self.config.audio.sample_rate,
                     channels=self.config.audio.channels,
-                    audio_callback=self._on_audio_data,
+                    audio_callback=self._on_system_audio if audio_source == "both" else self._on_audio_data,
                 )
                 if not self.screen_capture.start():
                     self.error = "Failed to start audio capture. Check permissions."
@@ -121,6 +122,15 @@ class TranscriptionSession:
                     "Build with: cd swift-audio-capture && swift build -c release"
                 )
                 logger.error(self.error)
+                return
+
+        # Start mic capture (for "mic" and "both" modes)
+        if audio_source in ("mic", "both"):
+            try:
+                self._start_mic_capture(mix_mode=audio_source == "both")
+            except Exception as e:
+                self.error = f"Failed to start microphone capture: {e}"
+                logger.error(self.error, exc_info=True)
                 return
 
         # Start processing thread
@@ -162,19 +172,20 @@ class TranscriptionSession:
 
         logger.info("Session stopped: %s", self.session_id)
 
-    def _start_mic_capture(self):
+    def _start_mic_capture(self, mix_mode: bool = False):
         """Start capturing audio from the microphone via sounddevice."""
         import numpy as np
         import sounddevice as sd
 
         sample_rate = self.config.audio.sample_rate
         channels = self.config.audio.channels
+        callback_fn = self._on_mic_audio if mix_mode else self._on_audio_data
 
         def mic_callback(indata, frames, time_info, status):
             if status:
                 logger.debug("Mic status: %s", status)
             pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
-            self._on_audio_data(pcm)
+            callback_fn(pcm)
 
         self._mic_stream = sd.InputStream(
             samplerate=sample_rate,
@@ -183,11 +194,48 @@ class TranscriptionSession:
             callback=mic_callback,
         )
         self._mic_stream.start()
-        logger.info("Started microphone capture (sample_rate=%s)", sample_rate)
+        logger.info("Started microphone capture (sample_rate=%s, mix_mode=%s)", sample_rate, mix_mode)
 
     def _on_audio_data(self, data: bytes):
         with self._buffer_lock:
             self._audio_buffer.extend(data)
+
+    def _on_system_audio(self, data: bytes):
+        with self._buffer_lock:
+            self._system_buffer.extend(data)
+
+    def _on_mic_audio(self, data: bytes):
+        with self._buffer_lock:
+            self._mic_buffer.extend(data)
+
+    def _mix_buffers(self) -> bytes:
+        """Mix system and mic PCM buffers into one. Must be called under _buffer_lock."""
+        import numpy as np
+
+        sys_bytes = bytes(self._system_buffer)
+        mic_bytes = bytes(self._mic_buffer)
+
+        if not sys_bytes and not mic_bytes:
+            return b""
+        if not sys_bytes:
+            return mic_bytes
+        if not mic_bytes:
+            return sys_bytes
+
+        sys_samples = np.frombuffer(sys_bytes, dtype=np.int16).astype(np.float32)
+        mic_samples = np.frombuffer(mic_bytes, dtype=np.int16).astype(np.float32)
+
+        # Pad shorter buffer with silence
+        max_len = max(len(sys_samples), len(mic_samples))
+        if len(sys_samples) < max_len:
+            sys_samples = np.pad(sys_samples, (0, max_len - len(sys_samples)))
+        if len(mic_samples) < max_len:
+            mic_samples = np.pad(mic_samples, (0, max_len - len(mic_samples)))
+
+        mic_boost = self.config.audio.mic_boost
+        mixed = sys_samples + mic_samples * mic_boost
+        mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
+        return mixed.tobytes()
 
     def _process_loop(self):
         chunk_duration = self.config.streaming.chunk_duration
@@ -208,10 +256,16 @@ class TranscriptionSession:
         min_bytes = int(sample_rate * channels * 2 * 0.5)
 
         with self._buffer_lock:
-            if len(self._audio_buffer) < min_bytes:
+            if self.config.audio.audio_source == "both":
+                pcm_data = self._mix_buffers()
+                self._system_buffer = bytearray()
+                self._mic_buffer = bytearray()
+            else:
+                pcm_data = bytes(self._audio_buffer)
+                self._audio_buffer = bytearray()
+
+            if len(pcm_data) < min_bytes:
                 return
-            pcm_data = bytes(self._audio_buffer)
-            self._audio_buffer = bytearray()
 
         wav_data = _build_wav(pcm_data, sample_rate, channels)
 

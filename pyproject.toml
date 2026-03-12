@@ -16,6 +16,8 @@ dependencies = [
   "pyannote-audio>=4.0.3",
   "rumps>=0.4.0",
   "google-generativeai>=0.8.0",
+  "tomli_w>=1.0.0",
+  "pywebview>=5.0",
 ]
 
 [project.optional-dependencies]

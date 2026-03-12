@@ -521,7 +521,7 @@ def run_streaming_capture(
         )
 
     # Verificar si debemos usar Swift CLI para audio del sistema
-    use_screen_capture = SCREENCAPTUREKIT_AVAILABLE and not config.audio.mic_only
+    use_screen_capture = SCREENCAPTUREKIT_AVAILABLE and config.audio.audio_source in ("system", "both")
 
     # Por defecto usamos ScreenCaptureKit (mismo que Notion): captura sistema fiable.
     # Core Audio Taps en algunos macOS devuelve silencio; usar USE_CORE_AUDIO_TAPS=1 para probarlo.
