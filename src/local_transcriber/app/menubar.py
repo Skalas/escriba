@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import logging
-import multiprocessing
+import os
+import plistlib
+import stat
+import subprocess
+from pathlib import Path
 
 import rumps
 
@@ -14,13 +18,82 @@ from local_transcriber.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
+# Persistent location for the dashboard viewer .app
+_DASHBOARD_APP_DIR = Path.home() / "Library" / "Application Support" / "Escriba"
+_DASHBOARD_APP = _DASHBOARD_APP_DIR / "Escriba.app"
 
-def _run_webview(url: str, title: str):
-    """Open a native WebKit window (runs in a child process)."""
-    import webview
 
-    webview.create_window(title, url, width=1060, height=720)
-    webview.start()
+def _ensure_dashboard_app(icon_path: Path | None = None) -> Path:
+    """Create (or update) a tiny .app bundle used to open the dashboard.
+
+    macOS Cmd+Tab reads the app name from the bundle's Info.plist,
+    so this is the only reliable way to show "Escriba" instead of "Python".
+    """
+    contents = _DASHBOARD_APP / "Contents"
+    macos = contents / "MacOS"
+    resources = contents / "Resources"
+
+    # Only rebuild if missing
+    if not (macos / "open-dashboard").exists():
+        macos.mkdir(parents=True, exist_ok=True)
+        resources.mkdir(parents=True, exist_ok=True)
+
+        # Info.plist — this is what Cmd+Tab reads
+        plist = {
+            "CFBundleName": "Escriba",
+            "CFBundleDisplayName": "Escriba",
+            "CFBundleIdentifier": "com.escriba.dashboard",
+            "CFBundleVersion": "1.0",
+            "CFBundleExecutable": "open-dashboard",
+            "CFBundlePackageType": "APPL",
+            "NSHighResolutionCapable": True,
+        }
+        if icon_path and icon_path.exists():
+            (resources / "Escriba.icns").write_bytes(icon_path.read_bytes())
+            plist["CFBundleIconFile"] = "Escriba"
+
+        with open(contents / "Info.plist", "wb") as f:
+            plistlib.dump(plist, f)
+
+        # Launcher script — finds uv and runs the webview
+        # Resolve project dir so the script works from any cwd
+        project_dir = Path(__file__).resolve().parent.parent.parent.parent
+        launcher = macos / "open-dashboard"
+        launcher.write_text(f"""#!/usr/bin/env bash
+export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+cd "{project_dir}"
+UV=$(command -v uv 2>/dev/null)
+if [ -z "$UV" ]; then
+    echo "uv not found" >&2
+    exit 1
+fi
+exec "$UV" run python -c "
+import webview, sys
+url = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:{PORT}'
+webview.create_window('Escriba', url, width=1060, height=720)
+webview.start()
+" "$@"
+""")
+        launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        logger.info("Created dashboard app at %s", _DASHBOARD_APP)
+
+    return _DASHBOARD_APP
+
+
+def _find_icon() -> Path | None:
+    """Find the Escriba.icns icon file."""
+    # Check resources dir (source tree)
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    icon = project_root / "resources" / "Escriba.icns"
+    if icon.exists():
+        return icon
+    # Check inside .app bundle
+    import sys
+    if getattr(sys, "frozen", False):
+        bundle_icon = Path(sys.executable).parent.parent / "Resources" / "Escriba.icns"
+        if bundle_icon.exists():
+            return bundle_icon
+    return None
 
 
 def _notify(title: str, subtitle: str, message: str):
@@ -94,11 +167,10 @@ class TranscriberMenuBar(rumps.App):
     def open_dashboard(self, _):
         url = f"http://127.0.0.1:{PORT}"
         try:
-            ctx = multiprocessing.get_context("spawn")
-            p = ctx.Process(target=_run_webview, args=(url, "Escriba"), daemon=True)
-            p.start()
+            app_bundle = _ensure_dashboard_app(icon_path=_find_icon())
+            subprocess.Popen(["open", "-a", str(app_bundle), "--args", url])
         except Exception:
-            logger.warning("pywebview unavailable, falling back to browser")
+            logger.warning("Dashboard app launch failed, falling back to browser", exc_info=True)
             import webbrowser
             webbrowser.open(url)
 
@@ -128,6 +200,13 @@ def run_menubar_app(config: AppConfig | None = None):
     logger.info(
         "Config: backend=%s, model=%s", config.streaming.backend, config.streaming.model_size
     )
+
+    # Pre-build dashboard app at startup (so first "Open Dashboard" is instant)
+    try:
+        _ensure_dashboard_app(icon_path=_find_icon())
+    except Exception:
+        logger.debug("Could not pre-build dashboard app", exc_info=True)
+
     app = TranscriberMenuBar(config)
     app.server = start_server(app.app_state)
     logger.info("Dashboard at http://127.0.0.1:%s", PORT)

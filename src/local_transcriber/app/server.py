@@ -321,13 +321,17 @@ class _Handler(BaseHTTPRequestHandler):
             for k, v in env_updates.items():
                 os.environ[k] = v
 
-        # Write TOML config
+        # Write TOML config — use the path the current config was loaded from
         toml_data = {k: v for k, v in body.items() if k not in env_key_names}
         if toml_data:
-            config_path = resolve_config_path()
-            if config_path is None:
-                config_path = Path("local-transcriber.toml")
+            current_config: AppConfig = self.app_state.get("config")
+            config_path = (
+                current_config.config_path
+                if current_config and current_config.config_path
+                else resolve_config_path() or Path("local-transcriber.toml")
+            )
             save_config_to_toml(toml_data, config_path)
+            logger.info("Settings saved to %s", config_path)
 
         # Trigger reload
         reload_fn = self.app_state.get("reload_config")

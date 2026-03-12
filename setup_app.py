@@ -39,6 +39,13 @@ def build():
     for f in static_src.iterdir():
         (static_dst / f.name).write_bytes(f.read_bytes())
 
+    # Copy icon
+    icon_src = PROJECT_DIR / "resources" / "Escriba.icns"
+    if icon_src.exists():
+        (RESOURCES_DIR / "Escriba.icns").write_bytes(icon_src.read_bytes())
+    else:
+        print(f"Warning: icon not found at {icon_src}, run: uv run python scripts/generate_icon.py")
+
     # Write Info.plist
     plist = {
         "CFBundleName": APP_NAME,
@@ -47,6 +54,7 @@ def build():
         "CFBundleVersion": VERSION,
         "CFBundleShortVersionString": VERSION,
         "CFBundleExecutable": "launcher",
+        "CFBundleIconFile": "Escriba",
         "CFBundlePackageType": "APPL",
         "LSUIElement": True,
         "NSMicrophoneUsageDescription": (
@@ -66,10 +74,10 @@ def build():
         raise RuntimeError("uv not found on PATH")
 
     # Write launcher script
-    log_file = Path.home() / "Library" / "Logs" / "local-transcriber" / "app.log"
+    log_file = Path.home() / "Library" / "Logs" / "escriba" / "app.log"
     launcher = MACOS_DIR / "launcher"
     launcher.write_text(f"""#!/usr/bin/env bash
-# Local Transcriber launcher — runs the app via uv from the project directory.
+# Escriba launcher — runs the app via uv from the project directory.
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 LOG_DIR="$(dirname "{log_file}")"
 mkdir -p "$LOG_DIR"
