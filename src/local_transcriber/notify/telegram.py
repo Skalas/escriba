@@ -48,7 +48,7 @@ def send_telegram_message(
         logger.error("requests not installed. Install with: pip install requests")
         return False
     except Exception as e:
-        logger.error(f"Error sending Telegram message: {e}", exc_info=True)
+        logger.error("Error sending Telegram message: %s", e, exc_info=True)
         return False
 
 
@@ -94,5 +94,5 @@ def send_summary(summary_path: Path, chat_id: str | None = None) -> bool:
         return send_telegram_message(message, chat_id=chat_id)
 
     except Exception as e:
-        logger.error(f"Error sending summary to Telegram: {e}", exc_info=True)
+        logger.error("Error sending summary to Telegram: %s", e, exc_info=True)
         return False

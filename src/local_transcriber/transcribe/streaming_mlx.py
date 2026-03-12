@@ -104,7 +104,7 @@ class StreamingTranscriberMLX:
         self.model_repo = MLX_MODEL_REPOS.get(
             model_size, f"mlx-community/whisper-{model_size}"
         )
-        logger.info(f"Using MLX Whisper model: {self.model_repo}")
+        logger.info("Using MLX Whisper model: %s", self.model_repo)
 
         # Note: mlx-whisper loads the model lazily on first transcribe() call
         # No explicit load_model needed
@@ -129,7 +129,7 @@ class StreamingTranscriberMLX:
             import wave
 
             if len(wav_data) < 44:
-                logger.warning(f"WAV chunk too small: {len(wav_data)} bytes")
+                logger.warning("WAV chunk too small: %s bytes", len(wav_data))
                 if self.metrics and start_timestamp:
                     self.metrics.record_chunk_end(
                         start_timestamp, had_transcription=False
@@ -187,7 +187,7 @@ class StreamingTranscriberMLX:
                                 self.accumulated_audio_time + end,
                             )
                         elif text:
-                            logger.debug(f"Filtered repetitive text: {text[:50]}...")
+                            logger.debug("Filtered repetitive text: %s...", text[:50])
 
                 # Update accumulated time
                 if chunk_duration > 0:
@@ -215,7 +215,7 @@ class StreamingTranscriberMLX:
                     pass
 
         except Exception as e:
-            logger.error(f"Error processing WAV chunk: {e}", exc_info=True)
+            logger.error("Error processing WAV chunk: %s", e, exc_info=True)
             if self.metrics:
                 self.metrics.record_error()
                 if start_timestamp:
@@ -291,7 +291,7 @@ class StreamingTranscriberMLX:
             absolute_start = self.start_time + start_time
             timestamp = time.strftime("%H:%M:%S", time.localtime(absolute_start))
 
-            logger.info(f"Transcription: [{timestamp}] {text}")
+            logger.info("Transcription: [%s] %s", timestamp, text)
             if self.realtime_output:
                 print(f"[{timestamp}] {text}", flush=True)
 
@@ -309,7 +309,7 @@ class StreamingTranscriberMLX:
                 f.write(f"[{timestamp}] {text}\n")
                 f.flush()
         except Exception as e:
-            logger.error(f"Error writing to file: {e}", exc_info=True)
+            logger.error("Error writing to file: %s", e, exc_info=True)
 
     def get_full_transcript(self) -> str:
         """Obtiene la transcripción completa hasta el momento."""

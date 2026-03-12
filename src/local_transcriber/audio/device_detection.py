@@ -37,7 +37,7 @@ def list_audio_devices() -> dict[str, list[dict[str, str]]]:
         logger.debug("Full ffmpeg stderr output:")
         for i, line in enumerate(result.stderr.split("\n")[:50]):
             if line.strip():
-                logger.debug(f"  Line {i}: {line}")
+                logger.debug("  Line %s: %s", i, line)
 
         for line in result.stderr.split("\n"):
             line_lower = line.lower()
@@ -45,7 +45,7 @@ def list_audio_devices() -> dict[str, list[dict[str, str]]]:
             # Detectar sección de audio (más flexible)
             if "audio devices" in line_lower and "avfoundation" in line_lower:
                 current_section = "inputs"
-                logger.debug(f"Found audio devices section: {line}")
+                logger.debug("Found audio devices section: %s", line)
                 continue
             elif "video devices" in line_lower and "avfoundation" in line_lower:
                 current_section = None  # No procesamos video
@@ -106,11 +106,11 @@ def list_audio_devices() -> dict[str, list[dict[str, str]]]:
                             "type": device_type,
                         }
                     )
-                    logger.info(f"Found device: [{index}] {name} (type: {device_type})")
+                    logger.info("Found device: [%s] %s (type: %s)", index, name, device_type)
                 else:
-                    logger.debug(f"Excluding device: {name}")
+                    logger.debug("Excluding device: %s", name)
 
-        logger.info(f"Detected {len(devices['inputs'])} audio input devices")
+        logger.info("Detected %s audio input devices", len(devices['inputs']))
         if devices["inputs"]:
             logger.info("Available devices:")
             for device in devices["inputs"]:
@@ -119,7 +119,7 @@ def list_audio_devices() -> dict[str, list[dict[str, str]]]:
                 )
         return devices
     except Exception as e:
-        logger.error(f"Error listing audio devices: {e}", exc_info=True)
+        logger.error("Error listing audio devices: %s", e, exc_info=True)
         # Retornar estructura vacía si falla
         return {"inputs": [], "outputs": []}
 
@@ -188,7 +188,7 @@ def find_microphone_device() -> Optional[str]:
     """
     devices = list_audio_devices()
 
-    logger.info(f"Searching for microphone among {len(devices['inputs'])} devices...")
+    logger.info("Searching for microphone among %s devices...", len(devices['inputs']))
     for device in devices["inputs"]:
         logger.debug(
             f"  Checking device: [{device['index']}] {device['name']} (type: {device['type']})"

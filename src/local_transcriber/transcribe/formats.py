@@ -47,9 +47,9 @@ def export_to_json(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
-        logger.info(f"Exported JSON transcript to: {output_path}")
+        logger.info("Exported JSON transcript to: %s", output_path)
     except Exception as e:
-        logger.error(f"Error exporting JSON: {e}", exc_info=True)
+        logger.error("Error exporting JSON: %s", e, exc_info=True)
         raise
 
 
@@ -77,9 +77,9 @@ def export_to_txt(
                 millis = int((start_time % 1) * 1000)
                 timestamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}"
                 f.write(f"[{timestamp}] {text}\n")
-        logger.info(f"Exported TXT transcript to: {output_path}")
+        logger.info("Exported TXT transcript to: %s", output_path)
     except Exception as e:
-        logger.error(f"Error exporting TXT: {e}", exc_info=True)
+        logger.error("Error exporting TXT: %s", e, exc_info=True)
         raise
 
 
@@ -132,9 +132,9 @@ def export_to_srt(
                 f.write(f"{text}\n")
                 f.write("\n")
 
-        logger.info(f"Exported SRT transcript to: {output_path}")
+        logger.info("Exported SRT transcript to: %s", output_path)
     except Exception as e:
-        logger.error(f"Error exporting SRT: {e}", exc_info=True)
+        logger.error("Error exporting SRT: %s", e, exc_info=True)
         raise
 
 
@@ -189,7 +189,7 @@ def export_to_markdown(
                 else:
                     f.write(f"## [{timestamp}] {text}\n\n")
 
-        logger.info(f"Exported Markdown transcript to: {output_path}")
+        logger.info("Exported Markdown transcript to: %s", output_path)
     except Exception as e:
-        logger.error(f"Error exporting Markdown: {e}", exc_info=True)
+        logger.error("Error exporting Markdown: %s", e, exc_info=True)
         raise

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import struct
 import subprocess
@@ -96,7 +97,7 @@ def run_live_capture(
         detected_system, detected_mic = auto_detect_devices()
         system_device = detected_system or config.audio.system_device
         mic_device = detected_mic or config.audio.mic_device
-        logger.info(f"Using devices - System: {system_device}, Mic: {mic_device}")
+        logger.info("Using devices - System: %s, Mic: %s", system_device, mic_device)
     else:
         system_device = config.audio.system_device
         mic_device = config.audio.mic_device
@@ -281,7 +282,7 @@ def _move_completed_segments(
 
             time.sleep(0.5)
         except Exception as e:
-            logger.error(f"Error moving segments: {e}", exc_info=True)
+            logger.error("Error moving segments: %s", e, exc_info=True)
             time.sleep(1.0)
 
     # Al detenerse, mueve el último segmento pendiente si existe
@@ -294,7 +295,7 @@ def _move_completed_segments(
 
     for file_path in final_files:
         if file_path not in processed:
-            logger.info(f"Attempting to move final segment: {file_path.name}")
+            logger.info("Attempting to move final segment: %s", file_path.name)
             # Espera a que el archivo se estabilice (ffmpeg puede estar cerrando)
             moved = False
             for attempt in range(10):
@@ -314,7 +315,7 @@ def _move_completed_segments(
                             f"File still changing: {size1} -> {size2}, waiting..."
                         )
                 except FileNotFoundError:
-                    logger.warning(f"File disappeared: {file_path.name}")
+                    logger.warning("File disappeared: %s", file_path.name)
                     break
                 except Exception as e:
                     logger.error(
@@ -323,7 +324,7 @@ def _move_completed_segments(
                     break
 
             if not moved:
-                logger.warning(f"Could not stabilize final segment: {file_path.name}")
+                logger.warning("Could not stabilize final segment: %s", file_path.name)
 
 
 def _move_file(source: Path, dest_dir: Path) -> None:
@@ -331,9 +332,9 @@ def _move_file(source: Path, dest_dir: Path) -> None:
     try:
         dest = dest_dir / source.name
         shutil.move(str(source), str(dest))
-        logger.info(f"Moved completed segment: {source.name} -> {dest}")
+        logger.info("Moved completed segment: %s -> %s", source.name, dest)
     except Exception as e:
-        logger.error(f"Failed to move {source}: {e}", exc_info=True)
+        logger.error("Failed to move %s: %s", source, e, exc_info=True)
 
 
 def _format_device(device: str) -> str:
@@ -419,7 +420,7 @@ def run_streaming_capture(
         detected_system, detected_mic = auto_detect_devices()
         system_device = detected_system or config.audio.system_device
         mic_device = detected_mic or config.audio.mic_device
-        logger.info(f"Using devices - System: {system_device}, Mic: {mic_device}")
+        logger.info("Using devices - System: %s, Mic: %s", system_device, mic_device)
 
         # ScreenCaptureKit captura el audio del sistema directamente
         # No necesitamos un dispositivo virtual
@@ -519,8 +520,15 @@ def run_streaming_capture(
             hallucination_config=config.hallucination,
         )
 
-    # Verificar si debemos usar ScreenCaptureKit para audio del sistema
+    # Verificar si debemos usar Swift CLI para audio del sistema
     use_screen_capture = SCREENCAPTUREKIT_AVAILABLE and not config.audio.mic_only
+
+    # Por defecto usamos ScreenCaptureKit (mismo que Notion): captura sistema fiable.
+    # Core Audio Taps en algunos macOS devuelve silencio; usar USE_CORE_AUDIO_TAPS=1 para probarlo.
+    use_screen_capture_kit = not (
+        overrides.get("use_core_audio_taps") is True
+        or get_bool_env("USE_CORE_AUDIO_TAPS", False)
+    )
 
     if use_screen_capture:
         # Verificar permisos de Screen Recording
@@ -538,7 +546,7 @@ def run_streaming_capture(
         )
         raise RuntimeError("No microphone device available")
 
-    logger.info(f"Using microphone device: {mic_device}")
+    logger.info("Using microphone device: %s", mic_device)
 
     # Construir comando ffmpeg para streaming (solo micrófono)
     ffmpeg_cmd = _build_streaming_ffmpeg_command(
@@ -548,7 +556,7 @@ def run_streaming_capture(
         channels=channels,
         chunk_duration=chunk_duration,
     )
-    logger.info(f"ffmpeg command: {' '.join(ffmpeg_cmd)}")
+    logger.info("ffmpeg command: %s", ' '.join(ffmpeg_cmd))
 
     stop_event = threading.Event()
     process = None
@@ -557,17 +565,18 @@ def run_streaming_capture(
 
     try:
         logger.info("Starting streaming capture...")
-        logger.info(f"Chunk duration: {chunk_duration}s")
-        logger.info(f"Model: {model_size}, Language: {language}")
-        logger.info(f"Output file: {output_file}")
+        logger.info("Chunk duration: %ss", chunk_duration)
+        logger.info("Model: %s, Language: %s", model_size, language)
+        logger.info("Output file: %s", output_file)
 
         if use_screen_capture:
             logger.info(
-                "Using Swift CLI (ScreenCaptureKit) for system audio + ffmpeg for microphone"
+                "Using Swift CLI (%s) for system audio + ffmpeg for microphone",
+                "ScreenCaptureKit" if use_screen_capture_kit else "Core Audio Taps",
             )
         else:
             logger.info("Using ffmpeg for microphone only")
-            logger.info(f"ffmpeg command: {' '.join(ffmpeg_cmd)}")
+            logger.info("ffmpeg command: %s", ' '.join(ffmpeg_cmd))
 
         # Buffer para combinar audio del sistema + micrófono
         combined_audio_buffer = bytearray()
@@ -593,6 +602,7 @@ def run_streaming_capture(
                     sample_rate=sample_rate,
                     channels=channels,
                     audio_callback=system_audio_callback,
+                    use_screen_capture=use_screen_capture_kit,
                 )
 
                 if screen_capture.start():
@@ -607,7 +617,7 @@ def run_streaming_capture(
                     )
                     screen_capture = None
             except Exception as e:
-                logger.error(f"Error starting ScreenCaptureKit: {e}", exc_info=True)
+                logger.error("Error starting ScreenCaptureKit: %s", e, exc_info=True)
                 screen_capture = None
 
         # Thread para monitorear y reconectar Swift CLI si falla
@@ -713,9 +723,9 @@ def run_streaming_capture(
                             or "warning" in line_str.lower()
                             or "failed" in line_str.lower()
                         ):
-                            logger.warning(f"ffmpeg: {line_str}")
+                            logger.warning("ffmpeg: %s", line_str)
                         else:
-                            logger.debug(f"ffmpeg: {line_str}")
+                            logger.debug("ffmpeg: %s", line_str)
 
         stderr_thread = threading.Thread(target=read_stderr, daemon=True)
         stderr_thread.start()
@@ -804,6 +814,9 @@ def run_streaming_capture(
 
         # Buffer para acumular datos PCM (solo micrófono cuando no hay ScreenCaptureKit)
         pcm_buffer = bytearray()
+        warned_no_system_audio = [False]
+        logged_system_audio_ok = [False]
+        system_amplitude_log_count = [0]
 
         # Thread para leer y procesar chunks
         def process_audio_stream(transcriber_local: Any) -> None:
@@ -825,7 +838,7 @@ def run_streaming_capture(
                         f"ffmpeg process died unexpectedly after {iteration} iterations. "
                         f"Exit code: {poll_result}"
                     )
-                    logger.error(f"ffmpeg command was: {' '.join(ffmpeg_cmd)}")
+                    logger.error("ffmpeg command was: %s", ' '.join(ffmpeg_cmd))
                     if stderr_tail:
                         logger.error(
                             "ffmpeg stderr (recent):\n%s", "\n".join(stderr_tail)
@@ -838,9 +851,9 @@ def run_streaming_capture(
                                 stderr_text = stderr_data.decode(
                                     "utf-8", errors="ignore"
                                 )
-                                logger.error(f"ffmpeg stderr output:\n{stderr_text}")
+                                logger.error("ffmpeg stderr output:\n%s", stderr_text)
                         except Exception as e:
-                            logger.error(f"Could not read ffmpeg stderr: {e}")
+                            logger.error("Could not read ffmpeg stderr: %s", e)
                     break
 
                 # Leer datos PCM del micrófono (sin header WAV, solo datos PCM)
@@ -869,6 +882,11 @@ def run_streaming_capture(
                         len(system_audio_buffer) >= chunk_size
                         and len(mic_audio_buffer) >= chunk_size
                     ):
+                        if not logged_system_audio_ok[0]:
+                            logger.info(
+                                "System audio (Core Audio Taps) + mic: mixing and recording"
+                            )
+                            logged_system_audio_ok[0] = True
                         # Extraer chunks del mismo tamaño
                         system_chunk = bytes(system_audio_buffer[:chunk_size])
                         mic_chunk = bytes(mic_audio_buffer[:chunk_size])
@@ -881,6 +899,21 @@ def run_streaming_capture(
                         # Convertir a numpy arrays para mezclar
                         system_array = np.frombuffer(system_chunk, dtype=np.int16)
                         mic_array = np.frombuffer(mic_chunk, dtype=np.int16)
+
+                        # Diagnóstico: si el sistema es todo ceros, el WAV suena solo a mic
+                        if system_amplitude_log_count[0] < 5:
+                            sys_max = int(np.abs(system_array).max())
+                            logger.info(
+                                "System chunk amplitude (max abs): %d (0 = silence from tap)",
+                                sys_max,
+                            )
+                            if sys_max == 0 and system_amplitude_log_count[0] == 0:
+                                logger.warning(
+                                    "System audio is silence. Check permissions: "
+                                    "System Settings > Privacy & Security > Screen & System Audio Recording — "
+                                    "add your terminal app (Terminal, iTerm, Cursor) and enable it. Restart the terminal after granting."
+                                )
+                            system_amplitude_log_count[0] += 1
 
                         # Mezclar con normalización dinámica
                         mic_boost = get_float_env(
@@ -908,7 +941,7 @@ def run_streaming_capture(
                                 session_wav_writer.writeframes(combined_chunk)
                             result = transcriber_local.process_wav_chunk(wav_chunk)
                             if result:
-                                logger.info(f"✅ Transcription (combined): {result}")
+                                logger.info("✅ Transcription (combined): %s", result)
                             else:
                                 logger.debug(
                                     "No transcription result (silence or VAD filtered)"
@@ -924,7 +957,13 @@ def run_streaming_capture(
                             len(mic_audio_buffer) >= chunk_size
                             and len(system_audio_buffer) == 0
                         ):
-                            # Solo micrófono disponible, procesar solo eso
+                            # Solo micrófono disponible: Core Audio Taps no está enviando audio del sistema
+                            if not warned_no_system_audio[0]:
+                                logger.warning(
+                                    "No system audio from Swift CLI (Core Audio Taps). "
+                                    "Recording mic only. Check Audio Capture permission and that audio is playing."
+                                )
+                                warned_no_system_audio[0] = True
                             logger.debug(
                                 "⚠️  No system audio available, processing microphone only"
                             )
@@ -1025,7 +1064,7 @@ def run_streaming_capture(
                                 session_wav_writer.writeframes(pcm_chunk)
                             result = transcriber_local.process_wav_chunk(wav_chunk)
                             if result:
-                                logger.debug(f"Transcription result: {result[:50]}...")
+                                logger.debug("Transcription result: %s...", result[:50])
                             else:
                                 logger.debug(
                                     "No transcription result (silence or VAD filtered)"
@@ -1077,7 +1116,7 @@ def run_streaming_capture(
             logger.info("Interrupted, stopping gracefully...")
             interrupted = True
     except Exception as e:
-        logger.error(f"Error in streaming capture: {e}", exc_info=True)
+        logger.error("Error in streaming capture: %s", e, exc_info=True)
     finally:
         logger.info("Stopping capture...")
         stop_event.set()
@@ -1088,7 +1127,7 @@ def run_streaming_capture(
                 screen_capture.stop()
                 logger.info("ScreenCaptureKit stopped")
             except Exception as e:
-                logger.error(f"Error stopping ScreenCaptureKit: {e}")
+                logger.error("Error stopping ScreenCaptureKit: %s", e)
 
         # Close session WAV writer.
         try:
@@ -1141,12 +1180,19 @@ def run_streaming_capture(
         # Exportar en formatos adicionales si se especificó
         # Optional: apply real diarization post-run.
         #
-        if (
+        run_pyannote = (
             speaker_mode == "pyannote"
             and "session_wav_path" in locals()
             and session_wav_path.exists()
             and transcriber is not None
-        ):
+        )
+        if speaker_mode == "pyannote" and transcriber is not None and not run_pyannote:
+            logger.warning(
+                "Skipping pyannote diarization: no session WAV file "
+                "(session_wav_path missing or file not created). "
+                "Speaker labels will not be applied."
+            )
+        if run_pyannote:
             try:
                 from local_transcriber.speaker.diarization import (
                     assign_speakers_to_segments,
@@ -1212,7 +1258,7 @@ def run_streaming_capture(
             except RuntimeError as e:
                 # RuntimeError from diarization.py includes helpful instructions
                 error_msg = str(e)
-                logger.error(f"pyannote diarization failed: {error_msg}")
+                logger.error("pyannote diarization failed: %s", error_msg)
                 # Only show full traceback if it's not a known issue (access denied, file too small, etc.)
                 if "Access denied" not in error_msg and "too small" not in error_msg:
                     logger.debug("Full error details:", exc_info=True)
@@ -1220,16 +1266,16 @@ def run_streaming_capture(
                     "Speaker diarization skipped. Transcription will continue without speaker labels."
                 )
             except Exception as e:
-                logger.error(f"pyannote diarization failed: {e}", exc_info=True)
+                logger.error("pyannote diarization failed: %s", e, exc_info=True)
                 logger.warning(
                     "Speaker diarization skipped. Transcription will continue without speaker labels."
                 )
         if export_formats and transcriber is not None:
-            logger.info(f"Exporting transcript in formats: {', '.join(export_formats)}")
+            logger.info("Exporting transcript in formats: %s", ', '.join(export_formats))
             try:
                 transcriber.export_transcript(export_formats, output_dir)
             except Exception as e:
-                logger.error(f"Error exporting transcript: {e}", exc_info=True)
+                logger.error("Error exporting transcript: %s", e, exc_info=True)
 
         logger.info("Post-run: export step completed")
 
@@ -1247,13 +1293,13 @@ def run_streaming_capture(
                         full_transcript, model=summary_model, output_path=summary_output
                     )
                     if summary_data:
-                        logger.info(f"Summary generated and saved to: {summary_output}")
+                        logger.info("Summary generated and saved to: %s", summary_output)
                     else:
                         logger.warning("Failed to generate summary")
                 else:
                     logger.warning("No transcript content to summarize")
             except Exception as e:
-                logger.error(f"Error generating summary: {e}", exc_info=True)
+                logger.error("Error generating summary: %s", e, exc_info=True)
 
         logger.info("Post-run: summary step completed")
 
@@ -1267,7 +1313,7 @@ def run_streaming_capture(
 
                     send_summary(summary_output)
             except Exception as e:
-                logger.error(f"Error sending notification: {e}", exc_info=True)
+                logger.error("Error sending notification: %s", e, exc_info=True)
 
         logger.info("Post-run: notify step completed")
 
@@ -1301,7 +1347,7 @@ def run_streaming_capture(
             logger.debug("Failed to enumerate threads", exc_info=True)
 
         logger.info("Shutdown complete")
-        logger.info(f"Full transcript saved to: {output_file}")
+        logger.info("Full transcript saved to: %s", output_file)
 
 
 def _create_wav_chunk(

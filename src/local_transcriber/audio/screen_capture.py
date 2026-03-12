@@ -1,12 +1,12 @@
 """
-Captura de audio del sistema usando ScreenCaptureKit (CLI Swift).
+Captura de audio del sistema usando Core Audio Taps (CLI Swift).
 
-Similar a Notion AI, usa ScreenCaptureKit para capturar el audio del sistema
-sin necesidad de dispositivos virtuales como BlackHole.
+Usa la API Core Audio Taps (macOS 14.2+) para capturar el audio del sistema
+sin necesidad del permiso de Screen Recording; solo requiere Audio Capture.
 
 Requiere:
-- macOS 13.0+ (ScreenCaptureKit)
-- Permisos de Screen Recording
+- macOS 14.2+ (Core Audio Taps)
+- Permisos de Audio Capture (Screen & System Audio Recording)
 - CLI Swift compilado: swift-audio-capture/.build/release/audio-capture
 """
 
@@ -57,7 +57,7 @@ if not SWIFT_CLI_AVAILABLE:
 
 class ScreenCaptureAudioCapture:
     """
-    Captura audio del sistema usando el CLI Swift de ScreenCaptureKit.
+    Captura audio del sistema usando el CLI Swift (Core Audio Taps).
     """
 
     def __init__(
@@ -65,6 +65,7 @@ class ScreenCaptureAudioCapture:
         sample_rate: int = 16000,
         channels: int = 1,
         audio_callback: Optional[Callable[[bytes], None]] = None,
+        use_screen_capture: bool = False,
     ):
         if not SWIFT_CLI_AVAILABLE:
             raise ImportError(
@@ -75,6 +76,7 @@ class ScreenCaptureAudioCapture:
         self.sample_rate = sample_rate
         self.channels = channels
         self.audio_callback = audio_callback
+        self.use_screen_capture = use_screen_capture
         self.process: Optional[subprocess.Popen] = None
         self.read_thread: Optional[threading.Thread] = None
         self.is_capturing = False
@@ -93,20 +95,30 @@ class ScreenCaptureAudioCapture:
             logger.error("Swift CLI not found")
             return False
 
+        self.stop_event.clear()
+
         try:
-            # Iniciar proceso Swift
+            # Iniciar proceso Swift (--use-screen-capture = ScreenCaptureKit, captura sistema fiable)
+            cmd = [
+                str(self.swift_cli_path),
+                "--sample-rate",
+                str(self.sample_rate),
+                "--channels",
+                str(self.channels),
+            ]
+            if self.use_screen_capture:
+                cmd.append("--use-screen-capture")
             self.process = subprocess.Popen(
-                [
-                    str(self.swift_cli_path),
-                    "--sample-rate",
-                    str(self.sample_rate),
-                    "--channels",
-                    str(self.channels),
-                ],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0,  # Sin buffering
             )
+
+            # Marcar como capturando ANTES de iniciar el thread para evitar que
+            # _read_audio_stream salga del bucle por _is_capturing() == False
+            with self._lock:
+                self.is_capturing = True
 
             # Iniciar thread para leer PCM desde stdout
             self.read_thread = threading.Thread(
@@ -114,14 +126,12 @@ class ScreenCaptureAudioCapture:
             )
             self.read_thread.start()
 
-            with self._lock:
-                self.is_capturing = True
             logger.info("✓ Started system audio capture with Swift CLI")
 
             return True
 
         except Exception as e:
-            logger.error(f"Error starting screen capture: {e}", exc_info=True)
+            logger.error("Error starting screen capture: %s", e, exc_info=True)
             return False
 
     def _read_audio_stream(self):
@@ -148,7 +158,7 @@ class ScreenCaptureAudioCapture:
                     # Proceso terminó - obtener código de salida
                     exit_code = self.process.returncode
                     logger.warning(
-                        f"Swift CLI process ended unexpectedly (exit code: {exit_code})"
+                        "Swift CLI process ended unexpectedly (exit code: %s)", exit_code
                     )
                     # Leer stderr para diagnóstico
                     if self.process.stderr:
@@ -156,7 +166,7 @@ class ScreenCaptureAudioCapture:
                             stderr_output = self.process.stderr.read()
                             if stderr_output:
                                 logger.warning(
-                                    f"Swift CLI stderr: {stderr_output.decode('utf-8', errors='ignore')}"
+                                    "Swift CLI stderr: %s", stderr_output.decode('utf-8', errors='ignore')
                                 )
                         except Exception:
                             pass
@@ -167,13 +177,13 @@ class ScreenCaptureAudioCapture:
                     consecutive_empty_reads += 1
                     if consecutive_empty_reads >= max_empty_reads:
                         logger.debug(
-                            f"No audio data for {consecutive_empty_reads} reads, Swift CLI may be starting up"
+                            "No audio data for %s reads, Swift CLI may be starting up", consecutive_empty_reads
                         )
                         consecutive_empty_reads = 0  # Reset to avoid log spam
                     if self.stop_event.is_set():
                         break
                     # Esperar un poco si no hay datos
-                    threading.Event().wait(0.01)
+                    self.stop_event.wait(0.01)
                     continue
 
                 consecutive_empty_reads = 0  # Reset on successful read
@@ -183,7 +193,7 @@ class ScreenCaptureAudioCapture:
                     self.audio_callback(chunk)
 
         except Exception as e:
-            logger.error(f"Error reading audio stream: {e}", exc_info=True)
+            logger.error("Error reading audio stream: %s", e, exc_info=True)
         finally:
             logger.info("Audio reading thread stopped")
             with self._lock:
@@ -204,7 +214,7 @@ class ScreenCaptureAudioCapture:
         if self._is_capturing():
             self.stop()
             # Esperar un poco antes de reiniciar
-            threading.Event().wait(1.0)
+            self.stop_event.wait(1.0)
 
         # Reiniciar
         return self.start()
@@ -229,7 +239,7 @@ class ScreenCaptureAudioCapture:
                     self.process.kill()
                     self.process.wait()
             except Exception as e:
-                logger.debug(f"Error stopping Swift CLI: {e}")
+                logger.debug("Error stopping Swift CLI: %s", e)
 
         # Esperar thread de lectura
         if self.read_thread and self.read_thread != threading.current_thread():
@@ -251,7 +261,7 @@ class ScreenCaptureAudioCapture:
 
 
 def check_screen_recording_permission() -> bool:
-    """Verifica si hay permisos de Screen Recording usando el CLI Swift."""
+    """Verifica si hay permisos de Audio Capture usando el CLI Swift."""
     if not SWIFT_CLI_AVAILABLE:
         return False
 
@@ -274,11 +284,11 @@ def check_screen_recording_permission() -> bool:
 
 
 def request_screen_recording_permission():
-    """Muestra mensaje para solicitar permisos."""
+    """Muestra mensaje para solicitar permisos de Audio Capture."""
     logger.info(
-        "Screen Recording permission required.\n"
+        "Audio Capture permission required.\n"
         "Please grant permission in:\n"
-        "  System Settings > Privacy & Security > Screen Recording\n"
+        "  System Settings > Privacy & Security > Screen & System Audio Recording\n"
         "  Add your terminal app (Terminal, iTerm, etc.)\n\n"
         "You can test permissions by running:\n"
         f"  {_find_swift_cli()} --list"

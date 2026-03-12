@@ -95,13 +95,13 @@ class StreamingTranscriberMPS:
         self.lock = threading.Lock()
 
         # Cargar modelo
-        logger.info(f"Loading Whisper model: {model_size} (device={self.device})")
+        logger.info("Loading Whisper model: %s (device=%s)", model_size, self.device)
         try:
             # Intentar cargar modelo con manejo de SSL
             download_root = os.getenv("WHISPER_CACHE_DIR")
             if download_root:
                 download_root = Path(download_root)
-                logger.info(f"Using custom cache directory: {download_root}")
+                logger.info("Using custom cache directory: %s", download_root)
 
             self.model = whisper.load_model(
                 model_size, device=self.device, download_root=download_root
@@ -135,7 +135,7 @@ class StreamingTranscriberMPS:
                     "     local-transcriber live-stream --backend faster-whisper"
                 )
             else:
-                logger.error(f"Failed to load Whisper model: {e}")
+                logger.error("Failed to load Whisper model: %s", e)
             raise
 
     def process_wav_chunk(self, wav_data: bytes) -> Optional[str]:
@@ -155,7 +155,7 @@ class StreamingTranscriberMPS:
 
             # Verificar que sea un WAV válido
             if len(wav_data) < 44:
-                logger.warning(f"WAV chunk too small: {len(wav_data)} bytes")
+                logger.warning("WAV chunk too small: %s bytes", len(wav_data))
                 return None
 
             # Verificar header básico
@@ -179,7 +179,7 @@ class StreamingTranscriberMPS:
                     elif sample_width == 4:  # 32-bit
                         audio_array = np.frombuffer(frames, dtype=np.int32)
                     else:
-                        logger.warning(f"Unsupported sample width: {sample_width}")
+                        logger.warning("Unsupported sample width: %s", sample_width)
                         return None
 
                     # Convertir a mono si es estéreo
@@ -242,11 +242,11 @@ class StreamingTranscriberMPS:
                     return " ".join(texts) if texts else None
 
             except wave.Error as e:
-                logger.debug(f"wave.open failed: {e}")
+                logger.debug("wave.open failed: %s", e)
                 return None
 
         except Exception as e:
-            logger.error(f"Error processing WAV chunk: {e}", exc_info=True)
+            logger.error("Error processing WAV chunk: %s", e, exc_info=True)
             return None
 
     def _handle_transcription(
@@ -278,7 +278,7 @@ class StreamingTranscriberMPS:
             timestamp = time.strftime("%H:%M:%S", time.localtime(absolute_start))
 
             # Mostrar en tiempo real
-            logger.info(f"Transcription: [{timestamp}] {text}")
+            logger.info("Transcription: [%s] %s", timestamp, text)
             if self.realtime_output:
                 print(f"[{timestamp}] {text}", flush=True)
 
@@ -298,9 +298,9 @@ class StreamingTranscriberMPS:
             with self.output_file.open("a", encoding="utf-8") as f:
                 f.write(f"[{timestamp}] {text}\n")
                 f.flush()  # Asegurar que se escribe inmediatamente
-            logger.debug(f"Written to file: {self.output_file}")
+            logger.debug("Written to file: %s", self.output_file)
         except Exception as e:
-            logger.error(f"Error writing to file: {e}", exc_info=True)
+            logger.error("Error writing to file: %s", e, exc_info=True)
 
     def get_full_transcript(self) -> str:
         """Obtiene la transcripción completa hasta el momento."""
@@ -364,4 +364,4 @@ class StreamingTranscriberMPS:
                 output_path = output_dir / f"{base_name}.md"
                 export_to_markdown(segments, output_path)
             else:
-                logger.warning(f"Unknown format: {fmt}, skipping")
+                logger.warning("Unknown format: %s, skipping", fmt)

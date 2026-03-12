@@ -114,7 +114,7 @@ class CaptureMetrics:
                 self.audio_level_sum += db
                 self.audio_level_samples += 1
         except Exception as e:
-            logger.debug(f"Error calculating audio level: {e}")
+            logger.debug("Error calculating audio level: %s", e)
 
     def record_transcription_time(self, duration: float) -> None:
         """

@@ -81,14 +81,14 @@ def diarize_wav(
                     f"Pyannote requires at least 2-3 seconds of audio for reliable diarization."
                 )
             logger.debug(
-                f"Audio file duration: {duration:.2f} seconds, sample rate: {sample_rate} Hz"
+                "Audio file duration: %.2f seconds, sample rate: %s Hz", duration, sample_rate
             )
     except wave.Error as e:
         logger.warning(
-            f"Could not read WAV file to check duration: {e}. Proceeding anyway..."
+            "Could not read WAV file to check duration: %s. Proceeding anyway...", e
         )
     except Exception as e:
-        logger.debug(f"Error checking audio duration: {e}. Proceeding anyway...")
+        logger.debug("Error checking audio duration: %s. Proceeding anyway...", e)
 
     token = (huggingface_token or os.getenv("HUGGINGFACE_TOKEN", "")).strip()
     if not token:
@@ -249,7 +249,7 @@ def diarize_wav(
         error_type = type(exc).__name__
         error_msg = str(exc)
         logger.error(
-            f"pyannote diarization failed: {error_type}: {error_msg}", exc_info=True
+            "pyannote diarization failed: %s: %s", error_type, error_msg, exc_info=True
         )
         raise RuntimeError(
             f"pyannote diarization failed: {error_type}: {error_msg}\n"

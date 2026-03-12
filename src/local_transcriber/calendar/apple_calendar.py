@@ -52,7 +52,7 @@ def get_upcoming_events(minutes_ahead: int = 5) -> list[dict[str, str]]:
         )
 
         if result.returncode != 0:
-            logger.debug(f"osascript error: {result.stderr}")
+            logger.debug("osascript error: %s", result.stderr)
             return []
 
         # Parsear resultado (formato puede variar)
@@ -65,7 +65,7 @@ def get_upcoming_events(minutes_ahead: int = 5) -> list[dict[str, str]]:
         logger.warning("Timeout reading calendar events")
         return []
     except Exception as e:
-        logger.error(f"Error reading calendar events: {e}", exc_info=True)
+        logger.error("Error reading calendar events: %s", e, exc_info=True)
         return []
 
 
@@ -112,7 +112,7 @@ def watch_calendar(
                         callback(event)
                 time.sleep(check_interval)
             except Exception as e:
-                logger.error(f"Error in calendar watch loop: {e}", exc_info=True)
+                logger.error("Error in calendar watch loop: %s", e, exc_info=True)
                 time.sleep(check_interval)
 
     thread = threading.Thread(target=watch_loop, daemon=True)

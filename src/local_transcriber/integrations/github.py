@@ -31,7 +31,7 @@ def extract_action_items(transcript: str, model: str = "gemini") -> list[dict[st
         return []
 
     except Exception as e:
-        logger.error(f"Error extracting action items: {e}", exc_info=True)
+        logger.error("Error extracting action items: %s", e, exc_info=True)
         return []
 
 
@@ -72,7 +72,7 @@ def create_github_issue(
             labels=labels or [],
         )
 
-        logger.info(f"Created GitHub issue: {issue.html_url}")
+        logger.info("Created GitHub issue: %s", issue.html_url)
         return {
             "number": issue.number,
             "title": issue.title,
@@ -83,7 +83,7 @@ def create_github_issue(
         logger.error("PyGithub not installed. Install with: pip install PyGithub")
         return None
     except Exception as e:
-        logger.error(f"Error creating GitHub issue: {e}", exc_info=True)
+        logger.error("Error creating GitHub issue: %s", e, exc_info=True)
         return None
 
 
@@ -110,7 +110,7 @@ def create_issues_from_transcript(
         with transcript_path.open("r", encoding="utf-8") as f:
             transcript = f.read()
     except Exception as e:
-        logger.error(f"Error reading transcript: {e}", exc_info=True)
+        logger.error("Error reading transcript: %s", e, exc_info=True)
         return []
 
     # Extraer action items

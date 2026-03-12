@@ -14,8 +14,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from local_transcriber.audio.live_capture import run_streaming_capture
-from local_transcriber.transcribe.streaming import StreamingTranscriber
-from local_transcriber.utils.env import get_bool_env, get_str_env
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +33,6 @@ class DaemonServer:
             model_size: Tamaño del modelo a cargar
         """
         self.model_size = model_size
-        self.model: Optional[StreamingTranscriber] = None
         self.socket_path = DAEMON_SOCKET_PATH
         self.server_socket: Optional[socket.socket] = None
         self.running = False
@@ -51,21 +48,6 @@ class DaemonServer:
             logger.warning("Daemon already running")
             return False
 
-        # Cargar modelo
-        logger.info(f"Loading Whisper model: {self.model_size}")
-        try:
-            self.model = StreamingTranscriber(
-                model_size=self.model_size,
-                language=get_str_env("STREAMING_LANGUAGE", "es"),
-                device=get_str_env("STREAMING_DEVICE", "auto"),
-                vad_enabled=get_bool_env("STREAMING_VAD_ENABLED", False),
-                realtime_output=False,  # Daemon no muestra output en tiempo real
-            )
-            logger.info("Model loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}", exc_info=True)
-            return False
-
         # Crear socket Unix
         try:
             # Eliminar socket anterior si existe
@@ -75,7 +57,7 @@ class DaemonServer:
             self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.server_socket.bind(str(self.socket_path))
             self.server_socket.listen(5)
-            logger.info(f"Daemon socket listening on: {self.socket_path}")
+            logger.info("Daemon socket listening on: %s", self.socket_path)
 
             # Guardar PID
             with DAEMON_PID_FILE.open("w") as f:
@@ -92,12 +74,12 @@ class DaemonServer:
 
             return True
         except Exception as e:
-            logger.error(f"Failed to start daemon: {e}", exc_info=True)
+            logger.error("Failed to start daemon: %s", e, exc_info=True)
             return False
 
     def _signal_handler(self, signum, frame):
         """Maneja señales para shutdown graceful."""
-        logger.info(f"Received signal {signum}, shutting down...")
+        logger.info("Received signal %s, shutting down...", signum)
         self.stop()
 
     def _accept_connections(self):
@@ -122,7 +104,7 @@ class DaemonServer:
 
             except Exception as e:
                 if self.running:
-                    logger.error(f"Error accepting connection: {e}", exc_info=True)
+                    logger.error("Error accepting connection: %s", e, exc_info=True)
                 break
 
     def _handle_client(self, client_socket: socket.socket):
@@ -145,7 +127,7 @@ class DaemonServer:
             client_socket.sendall(response_json)
 
         except Exception as e:
-            logger.error(f"Error handling client: {e}", exc_info=True)
+            logger.error("Error handling client: %s", e, exc_info=True)
             error_response = {"success": False, "error": str(e)}
             try:
                 client_socket.sendall(json.dumps(error_response).encode("utf-8"))
@@ -182,8 +164,8 @@ class DaemonServer:
             "success": True,
             "status": {
                 "running": self.running,
-                "model_loaded": self.model is not None,
-                "model_size": self.model_size if self.model else None,
+                "model_loaded": False,
+                "model_size": self.model_size,
                 "recording": self.current_recording is not None
                 and self.current_recording.is_alive(),
             },
@@ -204,7 +186,7 @@ class DaemonServer:
                 combined_path = Path(combined) if combined else None
                 run_streaming_capture(output_dir, combined_path)
             except Exception as e:
-                logger.error(f"Error in recording thread: {e}", exc_info=True)
+                logger.error("Error in recording thread: %s", e, exc_info=True)
 
         self.current_recording = threading.Thread(target=recording_thread, daemon=True)
         self.current_recording.start()

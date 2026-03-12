@@ -25,7 +25,7 @@ def _build_command(input_path: Path, output_dir: Path) -> list[str]:
     template = os.getenv(
         "WHISPER_CMD",
         "whisper --model small --language es --output_format txt "
-        "--output_dir {output_dir} {input}",
+        '--output_dir "{output_dir}" "{input}"',
     )
     rendered = template.replace("{input}", str(input_path)).replace(
         "{output_dir}", str(output_dir)

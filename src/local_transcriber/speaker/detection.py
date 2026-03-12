@@ -77,7 +77,7 @@ class SpeakerDetector:
 
             return features
         except Exception as e:
-            logger.debug(f"Error extracting audio features: {e}")
+            logger.debug("Error extracting audio features: %s", e)
             return {}
 
     def _spectral_centroid(self, audio: np.ndarray) -> float:

@@ -48,13 +48,13 @@ def _is_meeting_app_running() -> bool:
             for process_name in process_names:
                 if process_name.lower() in processes:
                     logger.debug(
-                        f"Found meeting app: {app_name} (process: {process_name})"
+                        "Found meeting app: %s (process: %s)", app_name, process_name
                     )
                     return True
 
         return False
     except Exception as e:
-        logger.error(f"Error checking meeting apps: {e}", exc_info=True)
+        logger.error("Error checking meeting apps: %s", e, exc_info=True)
         return False
 
 
@@ -75,7 +75,7 @@ def detect_active_call() -> tuple[bool, Optional[str]]:
                 timeout=1,
             )
             if result.returncode == 0:
-                logger.info(f"Detected active call in: {app_name}")
+                logger.info("Detected active call in: %s", app_name)
                 return True, app_name
         except Exception:
             continue
@@ -104,7 +104,7 @@ def wait_for_call_start(
         is_active, app_name = detect_active_call()
 
         if is_active:
-            logger.info(f"Call detected in: {app_name}")
+            logger.info("Call detected in: %s", app_name)
             return app_name
 
         if timeout and (time.time() - start_time) > timeout:

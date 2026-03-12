@@ -32,7 +32,7 @@ def generate_summary(
     elif model.lower() == "claude":
         return _generate_summary_claude(transcript, output_path)
     else:
-        logger.error(f"Unsupported model: {model}. Supported: gemini, claude")
+        logger.error("Unsupported model: %s. Supported: gemini, claude", model)
         return None
 
 
@@ -108,16 +108,16 @@ Responde SOLO con el JSON, sin texto adicional."""
             output_path.parent.mkdir(parents=True, exist_ok=True)
             with output_path.open("w", encoding="utf-8") as f:
                 json.dump(summary_data, f, indent=2, ensure_ascii=False)
-            logger.info(f"Summary saved to: {output_path}")
+            logger.info("Summary saved to: %s", output_path)
 
         return summary_data
 
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse Gemini response as JSON: {e}")
-        logger.debug(f"Response text: {response_text[:500]}")
+        logger.error("Failed to parse Gemini response as JSON: %s", e)
+        logger.debug("Response text: %s", response_text[:500])
         return None
     except Exception as e:
-        logger.error(f"Error generating summary with Gemini: {e}", exc_info=True)
+        logger.error("Error generating summary with Gemini: %s", e, exc_info=True)
         return None
 
 
@@ -197,14 +197,14 @@ Responde SOLO con el JSON, sin texto adicional."""
             output_path.parent.mkdir(parents=True, exist_ok=True)
             with output_path.open("w", encoding="utf-8") as f:
                 json.dump(summary_data, f, indent=2, ensure_ascii=False)
-            logger.info(f"Summary saved to: {output_path}")
+            logger.info("Summary saved to: %s", output_path)
 
         return summary_data
 
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse Claude response as JSON: {e}")
-        logger.debug(f"Response text: {response_text[:500]}")
+        logger.error("Failed to parse Claude response as JSON: %s", e)
+        logger.debug("Response text: %s", response_text[:500])
         return None
     except Exception as e:
-        logger.error(f"Error generating summary with Claude: {e}", exc_info=True)
+        logger.error("Error generating summary with Claude: %s", e, exc_info=True)
         return None

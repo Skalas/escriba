@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 import threading
 import time
 from datetime import datetime
@@ -143,7 +142,7 @@ class StreamingTranscriber:
 
         # Cargar modelo
         logger.info(
-            f"Loading Whisper model: {model_size} (device={device}, compute_type={compute_type})"
+            "Loading Whisper model: %s (device=%s, compute_type=%s)", model_size, device, compute_type
         )
         self.model = WhisperModel(
             model_size,
@@ -151,6 +150,61 @@ class StreamingTranscriber:
             compute_type=compute_type,
         )
         logger.info("Model loaded successfully")
+
+    def _transcribe_audio(
+        self,
+        audio_float: np.ndarray,
+        sample_rate: int,
+        raw_audio_for_speaker: bytes | None = None,
+    ) -> str | None:
+        """
+        Core transcription: run model, process segments, update timestamps.
+
+        Args:
+            audio_float: Normalised float32 audio array.
+            sample_rate: Sample rate of the audio.
+            raw_audio_for_speaker: Raw bytes passed to speaker detector (optional).
+
+        Returns:
+            Joined text or None.
+        """
+        segments, info = self.model.transcribe(
+            audio_float,
+            language=self.language if self.language != "auto" else None,
+            beam_size=5,
+            vad_filter=self.vad_enabled,
+            vad_parameters=dict(
+                min_silence_duration_ms=self.vad_config.min_silence_duration_ms,
+                threshold=self.vad_config.threshold,
+            )
+            if self.vad_enabled
+            else None,
+            condition_on_previous_text=self.hallucination_config.condition_on_previous_text,
+            no_speech_threshold=self.hallucination_config.no_speech_threshold,
+            compression_ratio_threshold=self.hallucination_config.compression_ratio_threshold,
+            log_prob_threshold=self.hallucination_config.logprob_threshold,
+        )
+
+        speaker_tag = None
+        if self.speaker_detection_enabled and self.speaker_detector and raw_audio_for_speaker:
+            speaker_tag = self.speaker_detector.detect_change(raw_audio_for_speaker)
+
+        texts = []
+        for segment in segments:
+            text = segment.text.strip()
+            if text:
+                texts.append(text)
+                self._handle_transcription(
+                    text,
+                    self.accumulated_audio_time + segment.start,
+                    self.accumulated_audio_time + segment.end,
+                    speaker=speaker_tag,
+                )
+
+        if len(audio_float) > 0:
+            self.accumulated_audio_time += len(audio_float) / sample_rate
+
+        return " ".join(texts) if texts else None
 
     def process_chunk(
         self, audio_data: bytes, sample_rate: int = 16000
@@ -166,65 +220,16 @@ class StreamingTranscriber:
             Texto transcrito o None si no hay voz detectada
         """
         try:
-            # Convertir bytes a numpy array
-            # WAV header tiene 44 bytes, luego viene el audio PCM
             if len(audio_data) < 44:
                 return None
 
-            # Leer audio PCM (skip WAV header)
             audio_array = np.frombuffer(audio_data[44:], dtype=np.int16)
-
-            # Convertir a float32 normalizado
             audio_float = audio_array.astype(np.float32) / 32768.0
 
-            # Transcribir con faster-whisper
-            segments, info = self.model.transcribe(
-                audio_float,
-                language=self.language if self.language != "auto" else None,
-                beam_size=5,
-                vad_filter=self.vad_enabled,
-                vad_parameters=dict(
-                    min_silence_duration_ms=self.vad_config.min_silence_duration_ms,
-                    threshold=self.vad_config.threshold,
-                )
-                if self.vad_enabled
-                else None,
-                # Hallucination prevention parameters
-                condition_on_previous_text=self.hallucination_config.condition_on_previous_text,
-                no_speech_threshold=self.hallucination_config.no_speech_threshold,
-                compression_ratio_threshold=self.hallucination_config.compression_ratio_threshold,
-                log_prob_threshold=self.hallucination_config.logprob_threshold,
-            )
-
-            # Detectar speaker si está habilitado
-            speaker_tag = None
-            if self.speaker_detection_enabled and self.speaker_detector:
-                speaker_tag = self.speaker_detector.detect_change(audio_data)
-
-            # Procesar segmentos
-            texts = []
-            for segment in segments:
-                text = segment.text.strip()
-                if text:
-                    texts.append(text)
-                    # Sumar tiempo acumulado a los tiempos relativos del segmento
-                    self._handle_transcription(
-                        text,
-                        self.accumulated_audio_time + segment.start,
-                        self.accumulated_audio_time + segment.end,
-                        speaker=speaker_tag,
-                    )
-
-            # Actualizar tiempo acumulado con la duración del chunk procesado
-            # Calcular duración del chunk desde el audio
-            if len(audio_float) > 0:
-                chunk_duration = len(audio_float) / sample_rate
-                self.accumulated_audio_time += chunk_duration
-
-            return " ".join(texts) if texts else None
+            return self._transcribe_audio(audio_float, sample_rate, raw_audio_for_speaker=audio_data)
 
         except Exception as e:
-            logger.error(f"Error processing audio chunk: {e}", exc_info=True)
+            logger.error("Error processing audio chunk: %s", e, exc_info=True)
             return None
 
     def process_wav_chunk(self, wav_data: bytes) -> Optional[str]:
@@ -252,7 +257,7 @@ class StreamingTranscriber:
 
             # Verificar que sea un WAV válido
             if len(wav_data) < 44:
-                logger.warning(f"WAV chunk too small: {len(wav_data)} bytes")
+                logger.warning("WAV chunk too small: %s bytes", len(wav_data))
                 return None
 
             # Verificar header básico
@@ -270,87 +275,27 @@ class StreamingTranscriber:
                     if len(frames) == 0:
                         return None
 
-                    # Convertir a numpy array
-                    if sample_width == 2:  # 16-bit
+                    if sample_width == 2:
                         audio_array = np.frombuffer(frames, dtype=np.int16)
-                    elif sample_width == 4:  # 32-bit
+                    elif sample_width == 4:
                         audio_array = np.frombuffer(frames, dtype=np.int32)
                     else:
-                        logger.warning(f"Unsupported sample width: {sample_width}")
+                        logger.warning("Unsupported sample width: %s", sample_width)
                         return None
 
-                    # Convertir a mono si es estéreo
                     if n_channels == 2:
                         audio_array = (
                             audio_array.reshape(-1, 2).mean(axis=1).astype(np.int16)
                         )
 
-                    # Convertir a float32 normalizado
                     audio_float = audio_array.astype(np.float32) / 32768.0
 
-                    # Transcribir
-                    segments, info = self.model.transcribe(
-                        audio_float,
-                        language=self.language if self.language != "auto" else None,
-                        beam_size=5,
-                        vad_filter=self.vad_enabled,
-                        vad_parameters=dict(
-                            min_silence_duration_ms=self.vad_config.min_silence_duration_ms,
-                            threshold=self.vad_config.threshold,
-                        )
-                        if self.vad_enabled
-                        else None,
-                        # Hallucination prevention parameters
-                        condition_on_previous_text=self.hallucination_config.condition_on_previous_text,
-                        no_speech_threshold=self.hallucination_config.no_speech_threshold,
-                        compression_ratio_threshold=self.hallucination_config.compression_ratio_threshold,
-                        log_prob_threshold=self.hallucination_config.logprob_threshold,
-                    )
+                    # Record audio duration for metrics before _transcribe_audio increments accumulated_audio_time
+                    if len(audio_float) > 0 and self.metrics:
+                        self.metrics.record_audio_duration(len(audio_float) / sample_rate)
 
-                    # Detectar speaker si está habilitado
-                    speaker_tag = None
-                    if self.speaker_detection_enabled and self.speaker_detector:
-                        speaker_tag = self.speaker_detector.detect_change(wav_data)
+                    result = self._transcribe_audio(audio_float, sample_rate, raw_audio_for_speaker=wav_data)
 
-                    # Procesar segmentos
-                    texts = []
-                    segment_count = 0
-                    for segment in segments:
-                        segment_count += 1
-                        text = segment.text.strip()
-                        if text:
-                            texts.append(text)
-                            logger.info(f"Found transcription segment: {text[:50]}")
-                            # Sumar tiempo acumulado a los tiempos relativos del segmento
-                            self._handle_transcription(
-                                text,
-                                self.accumulated_audio_time + segment.start,
-                                self.accumulated_audio_time + segment.end,
-                                speaker=speaker_tag,
-                            )
-
-                    # Actualizar tiempo acumulado con la duración del chunk procesado
-                    if len(audio_float) > 0:
-                        chunk_duration = len(audio_float) / sample_rate
-                        self.accumulated_audio_time += chunk_duration
-                        if self.metrics:
-                            self.metrics.record_audio_duration(chunk_duration)
-
-                    if segment_count == 0:
-                        logger.debug(
-                            "No segments found in audio chunk (may be silence or VAD filtered)"
-                        )
-                    elif not texts:
-                        logger.debug(
-                            f"Found {segment_count} segments but all were empty"
-                        )
-                    else:
-                        logger.debug(
-                            f"Processed {segment_count} segments, {len(texts)} with text"
-                        )
-
-                    result = " ".join(texts) if texts else None
-                    # Registrar métricas
                     if self.metrics and start_timestamp:
                         self.metrics.record_chunk_end(
                             start_timestamp, had_transcription=(result is not None)
@@ -359,7 +304,7 @@ class StreamingTranscriber:
 
             except wave.Error as e:
                 # Si wave.open falla, intentar parsear manualmente
-                logger.debug(f"wave.open failed, parsing manually: {e}")
+                logger.debug("wave.open failed, parsing manually: %s", e)
                 result = self._process_wav_manual(wav_data)
                 if self.metrics and start_timestamp:
                     self.metrics.record_chunk_end(
@@ -368,7 +313,7 @@ class StreamingTranscriber:
                 return result
 
         except Exception as e:
-            logger.error(f"Error processing WAV chunk: {e}", exc_info=True)
+            logger.error("Error processing WAV chunk: %s", e, exc_info=True)
             if self.metrics:
                 self.metrics.record_error()
                 if start_timestamp:
@@ -385,93 +330,34 @@ class StreamingTranscriber:
             if len(wav_data) < 44:
                 return None
 
-            # Parsear header
-            # bytes 22-23: número de canales
-            # bytes 24-27: sample rate
-            # bytes 34-35: bits per sample
-            # bytes 40-43: data chunk size
             n_channels = struct.unpack("<H", wav_data[22:24])[0]
             sample_rate = struct.unpack("<I", wav_data[24:28])[0]
             bits_per_sample = struct.unpack("<H", wav_data[34:36])[0]
             data_size = struct.unpack("<I", wav_data[40:44])[0]
 
-            # Extraer datos PCM (después del header de 44 bytes)
             if len(wav_data) < 44 + data_size:
                 return None
 
             pcm_data = wav_data[44 : 44 + data_size]
             bytes_per_sample = bits_per_sample // 8
 
-            # Convertir a numpy array
-            if bytes_per_sample == 2:  # 16-bit
+            if bytes_per_sample == 2:
                 audio_array = np.frombuffer(pcm_data, dtype=np.int16)
-            elif bytes_per_sample == 4:  # 32-bit
+            elif bytes_per_sample == 4:
                 audio_array = np.frombuffer(pcm_data, dtype=np.int32)
             else:
-                logger.warning(f"Unsupported bytes per sample: {bytes_per_sample}")
+                logger.warning("Unsupported bytes per sample: %s", bytes_per_sample)
                 return None
 
-            # Convertir a mono si es estéreo
             if n_channels == 2:
                 audio_array = audio_array.reshape(-1, 2).mean(axis=1).astype(np.int16)
 
-            # Convertir a float32 normalizado
             audio_float = audio_array.astype(np.float32) / 32768.0
 
-            # Transcribir
-            logger.debug(
-                f"Transcribing audio chunk (manual): {len(audio_float)} samples, VAD={self.vad_enabled}"
-            )
-            segments, info = self.model.transcribe(
-                audio_float,
-                language=self.language if self.language != "auto" else None,
-                beam_size=5,
-                vad_filter=self.vad_enabled,
-                vad_parameters=dict(
-                    min_silence_duration_ms=self.vad_config.min_silence_duration_ms,
-                    threshold=self.vad_config.threshold,
-                )
-                if self.vad_enabled
-                else None,
-                # Hallucination prevention parameters
-                condition_on_previous_text=self.hallucination_config.condition_on_previous_text,
-                no_speech_threshold=self.hallucination_config.no_speech_threshold,
-                compression_ratio_threshold=self.hallucination_config.compression_ratio_threshold,
-                log_prob_threshold=self.hallucination_config.logprob_threshold,
-            )
-
-            # Procesar segmentos
-            texts = []
-            segment_count = 0
-            for segment in segments:
-                segment_count += 1
-                text = segment.text.strip()
-                if text:
-                    texts.append(text)
-                    logger.info(f"Found transcription segment (manual): {text[:50]}")
-                    self._handle_transcription(
-                        text,
-                        segment.start,
-                        segment.end,
-                    )
-
-            if segment_count == 0:
-                logger.debug(
-                    "No segments found in audio chunk (manual) (may be silence or VAD filtered)"
-                )
-            elif not texts:
-                logger.debug(
-                    f"Found {segment_count} segments (manual) but all were empty"
-                )
-            else:
-                logger.debug(
-                    f"Processed {segment_count} segments (manual), {len(texts)} with text"
-                )
-
-            return " ".join(texts) if texts else None
+            return self._transcribe_audio(audio_float, sample_rate, raw_audio_for_speaker=wav_data)
 
         except Exception as e:
-            logger.error(f"Error in manual WAV parsing: {e}", exc_info=True)
+            logger.error("Error in manual WAV parsing: %s", e, exc_info=True)
             return None
 
     def _handle_transcription(
@@ -508,7 +394,7 @@ class StreamingTranscriber:
             timestamp = time.strftime("%H:%M:%S", time.localtime(absolute_start))
 
             # Mostrar en tiempo real
-            logger.info(f"Transcription: [{timestamp}] {text}")
+            logger.info("Transcription: [%s] %s", timestamp, text)
             if self.realtime_output:
                 print(f"[{timestamp}] {text}", flush=True)
 
@@ -528,9 +414,9 @@ class StreamingTranscriber:
             with self.output_file.open("a", encoding="utf-8") as f:
                 f.write(f"[{timestamp}] {text}\n")
                 f.flush()  # Asegurar que se escribe inmediatamente
-            logger.debug(f"Written to file: {self.output_file}")
+            logger.debug("Written to file: %s", self.output_file)
         except Exception as e:
-            logger.error(f"Error writing to file: {e}", exc_info=True)
+            logger.error("Error writing to file: %s", e, exc_info=True)
 
     def get_full_transcript(self) -> str:
         """Obtiene la transcripción completa hasta el momento."""
@@ -594,7 +480,7 @@ class StreamingTranscriber:
                 output_path = output_dir / f"{base_name}.md"
                 export_to_markdown(segments, output_path)
             else:
-                logger.warning(f"Unknown format: {fmt}, skipping")
+                logger.warning("Unknown format: %s, skipping", fmt)
 
 
 def get_device_config() -> tuple[str, str]:

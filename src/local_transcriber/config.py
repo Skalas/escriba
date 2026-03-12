@@ -71,6 +71,26 @@ def resolve_config_path(cli_path: Path | None = None) -> Path | None:
     if default_path.exists():
         return default_path
 
+    # Fallback: search upward from cwd for local-transcriber.toml (e.g. run from swift-audio-capture/)
+    try:
+        cwd = Path.cwd()
+        for parent in [cwd, *cwd.parents]:
+            candidate = parent / "local-transcriber.toml"
+            if candidate.is_file():
+                return candidate
+    except (IndexError, OSError):
+        pass
+
+    # Fallback: package location (editable install: src/local_transcriber/config.py -> project root)
+    try:
+        _config_file = Path(__file__).resolve()
+        project_root = _config_file.parent.parent.parent
+        project_toml = project_root / "local-transcriber.toml"
+        if project_toml.is_file():
+            return project_toml
+    except (IndexError, OSError):
+        pass
+
     return None
 
 
@@ -167,9 +187,9 @@ class StreamingConfig:
     """
 
     # NOTE: chunk_duration controls how much audio is buffered before processing.
-    # For real-time streaming, 2-3 seconds is optimal for low latency.
-    # Higher values (e.g., 30s) cause significant delay before first transcription.
-    chunk_duration: float = 3.0
+    # 15s is a good balance between context (accuracy) and latency.
+    # Lower values (e.g., 5s) reduce latency; higher values (e.g., 30s) improve accuracy.
+    chunk_duration: float = 15.0
     model_size: str = "base"
     language: str = "es"
     device: str = "auto"
@@ -197,6 +217,11 @@ class AudioConfig:
     auto_detect_devices: bool = True
     system_device: str = "0"
     mic_device: str = "1"
+
+
+def _resolve(toml_value, env_fallback_fn):
+    """Return toml_value if set, otherwise call env_fallback_fn()."""
+    return toml_value if toml_value is not None else env_fallback_fn()
 
 
 @dataclass(frozen=True)
@@ -257,27 +282,13 @@ class AppConfig:
         mic_device = _get_toml_str(audio_section, "mic_device")
 
         audio_cfg = AudioConfig(
-            sample_rate=sample_rate
-            if sample_rate is not None
-            else get_int_env("SAMPLE_RATE", 16000, min_value=8000),
-            channels=channels
-            if channels is not None
-            else get_int_env("CHANNELS", 1, min_value=1),
-            mic_only=mic_only
-            if mic_only is not None
-            else get_bool_env("MIC_ONLY", False),
-            mic_boost=mic_boost
-            if mic_boost is not None
-            else get_float_env("AUDIO_MIC_BOOST", 1.2, min_value=0.1, max_value=5.0),
-            auto_detect_devices=auto_detect
-            if auto_detect is not None
-            else get_bool_env("AUTO_DETECT_DEVICES", True),
-            system_device=system_device
-            if system_device is not None
-            else get_str_env("SYSTEM_DEVICE", "0"),
-            mic_device=mic_device
-            if mic_device is not None
-            else get_str_env("MIC_DEVICE", "1"),
+            sample_rate=_resolve(sample_rate, lambda: get_int_env("SAMPLE_RATE", 16000, min_value=8000)),
+            channels=_resolve(channels, lambda: get_int_env("CHANNELS", 1, min_value=1)),
+            mic_only=_resolve(mic_only, lambda: get_bool_env("MIC_ONLY", False)),
+            mic_boost=_resolve(mic_boost, lambda: get_float_env("AUDIO_MIC_BOOST", 1.2, min_value=0.1, max_value=5.0)),
+            auto_detect_devices=_resolve(auto_detect, lambda: get_bool_env("AUTO_DETECT_DEVICES", True)),
+            system_device=_resolve(system_device, lambda: get_str_env("SYSTEM_DEVICE", "0")),
+            mic_device=_resolve(mic_device, lambda: get_str_env("MIC_DEVICE", "1")),
         )
 
         # Streaming
@@ -298,38 +309,18 @@ class AppConfig:
         speaker_threshold = _get_toml_float(speaker_section, "threshold")
 
         speaker_cfg = SpeakerConfig(
-            mode=speaker_mode
-            if speaker_mode is not None
-            else get_str_env("STREAMING_SPEAKER_MODE", "none"),
-            threshold=speaker_threshold
-            if speaker_threshold is not None
-            else get_float_env(
-                "SPEAKER_DETECTION_THRESHOLD", 0.3, min_value=0.0, max_value=1.0
-            ),
+            mode=_resolve(speaker_mode, lambda: get_str_env("STREAMING_SPEAKER_MODE", "none")),
+            threshold=_resolve(speaker_threshold, lambda: get_float_env("SPEAKER_DETECTION_THRESHOLD", 0.3, min_value=0.0, max_value=1.0)),
         )
 
         streaming_cfg = StreamingConfig(
-            chunk_duration=chunk_duration
-            if chunk_duration is not None
-            else get_float_env("STREAMING_CHUNK_DURATION", 30.0, min_value=0.5),
-            model_size=model_size
-            if model_size is not None
-            else get_str_env("STREAMING_MODEL_SIZE", "base"),
-            language=language
-            if language is not None
-            else get_str_env("STREAMING_LANGUAGE", "es"),
-            device=device
-            if device is not None
-            else get_str_env("STREAMING_DEVICE", "auto"),
-            backend=backend
-            if backend is not None
-            else get_str_env("STREAMING_BACKEND", "faster-whisper"),
-            vad_enabled=vad_enabled
-            if vad_enabled is not None
-            else get_bool_env("STREAMING_VAD_ENABLED", False),
-            realtime_output=realtime_output
-            if realtime_output is not None
-            else get_bool_env("STREAMING_REALTIME_OUTPUT", True),
+            chunk_duration=_resolve(chunk_duration, lambda: get_float_env("STREAMING_CHUNK_DURATION", 15.0, min_value=0.5)),
+            model_size=_resolve(model_size, lambda: get_str_env("STREAMING_MODEL_SIZE", "base")),
+            language=_resolve(language, lambda: get_str_env("STREAMING_LANGUAGE", "es")),
+            device=_resolve(device, lambda: get_str_env("STREAMING_DEVICE", "auto")),
+            backend=_resolve(backend, lambda: get_str_env("STREAMING_BACKEND", "faster-whisper")),
+            vad_enabled=_resolve(vad_enabled, lambda: get_bool_env("STREAMING_VAD_ENABLED", False)),
+            realtime_output=_resolve(realtime_output, lambda: get_bool_env("STREAMING_REALTIME_OUTPUT", True)),
             export_formats=export_formats
             if export_formats is not None
             else (
@@ -342,15 +333,9 @@ class AppConfig:
                 ]
                 or ["txt", "json"]
             ),
-            show_metrics=show_metrics
-            if show_metrics is not None
-            else get_bool_env("STREAMING_SHOW_METRICS", False),
-            summarize=summarize
-            if summarize is not None
-            else get_bool_env("STREAMING_SUMMARIZE", False),
-            summary_model=summary_model
-            if summary_model is not None
-            else get_str_env("STREAMING_SUMMARY_MODEL", "gemini"),
+            show_metrics=_resolve(show_metrics, lambda: get_bool_env("STREAMING_SHOW_METRICS", False)),
+            summarize=_resolve(summarize, lambda: get_bool_env("STREAMING_SUMMARIZE", False)),
+            summary_model=_resolve(summary_model, lambda: get_str_env("STREAMING_SUMMARY_MODEL", "gemini")),
             speaker=speaker_cfg,
         )
 
@@ -358,12 +343,8 @@ class AppConfig:
         vad_min_silence = _get_toml_int(vad_section, "min_silence_ms")
         vad_threshold = _get_toml_float(vad_section, "threshold")
         vad_cfg = VADConfig(
-            min_silence_duration_ms=vad_min_silence
-            if vad_min_silence is not None
-            else get_int_env("VAD_MIN_SILENCE_MS", 500, min_value=0),
-            threshold=vad_threshold
-            if vad_threshold is not None
-            else get_float_env("VAD_THRESHOLD", 0.3, min_value=0.0, max_value=1.0),
+            min_silence_duration_ms=_resolve(vad_min_silence, lambda: get_int_env("VAD_MIN_SILENCE_MS", 500, min_value=0)),
+            threshold=_resolve(vad_threshold, lambda: get_float_env("VAD_THRESHOLD", 0.3, min_value=0.0, max_value=1.0)),
         )
 
         # Whisper hallucination prevention
@@ -376,22 +357,10 @@ class AppConfig:
         )
         logprob_thresh = _get_toml_float(whisper_section, "logprob_threshold")
         hallucination_cfg = HallucinationConfig(
-            condition_on_previous_text=condition_on_previous
-            if condition_on_previous is not None
-            else get_bool_env("WHISPER_CONDITION_ON_PREVIOUS_TEXT", False),
-            no_speech_threshold=no_speech_thresh
-            if no_speech_thresh is not None
-            else get_float_env(
-                "WHISPER_NO_SPEECH_THRESHOLD", 0.6, min_value=0.0, max_value=1.0
-            ),
-            compression_ratio_threshold=compression_thresh
-            if compression_thresh is not None
-            else get_float_env(
-                "WHISPER_COMPRESSION_RATIO_THRESHOLD", 2.4, min_value=0.0
-            ),
-            logprob_threshold=logprob_thresh
-            if logprob_thresh is not None
-            else get_float_env("WHISPER_LOGPROB_THRESHOLD", -1.0, max_value=0.0),
+            condition_on_previous_text=_resolve(condition_on_previous, lambda: get_bool_env("WHISPER_CONDITION_ON_PREVIOUS_TEXT", False)),
+            no_speech_threshold=_resolve(no_speech_thresh, lambda: get_float_env("WHISPER_NO_SPEECH_THRESHOLD", 0.6, min_value=0.0, max_value=1.0)),
+            compression_ratio_threshold=_resolve(compression_thresh, lambda: get_float_env("WHISPER_COMPRESSION_RATIO_THRESHOLD", 2.4, min_value=0.0)),
+            logprob_threshold=_resolve(logprob_thresh, lambda: get_float_env("WHISPER_LOGPROB_THRESHOLD", -1.0, max_value=0.0)),
         )
 
         return cls(
