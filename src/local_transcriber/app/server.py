@@ -324,10 +324,10 @@ class _Handler(BaseHTTPRequestHandler):
         # Write TOML config — use the path the current config was loaded from
         toml_data = {k: v for k, v in body.items() if k not in env_key_names}
         if toml_data:
-            current_config: AppConfig = self.app_state.get("config")
+            current_config = self.app_state.get("config")
             config_path = (
                 current_config.config_path
-                if current_config and current_config.config_path
+                if isinstance(current_config, AppConfig) and current_config.config_path
                 else resolve_config_path() or Path("local-transcriber.toml")
             )
             save_config_to_toml(toml_data, config_path)

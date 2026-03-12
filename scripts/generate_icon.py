@@ -86,7 +86,8 @@ def generate_icon_png(size: int, output_path: Path):
     )
     dest = Quartz.CGImageDestinationCreateWithURL(url, "public.png", 1, None)
     Quartz.CGImageDestinationAddImage(dest, image, None)
-    Quartz.CGImageDestinationFinalize(dest)
+    if not Quartz.CGImageDestinationFinalize(dest):
+        raise RuntimeError(f"Failed to write PNG image: {output_path}")
 
 
 def create_icns(output_path: Path):
