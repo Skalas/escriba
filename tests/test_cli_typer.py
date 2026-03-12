@@ -5,11 +5,11 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from local_transcriber.cli import app
+from escriba.cli import app
 
 
 def test_print_config_outputs_json(tmp_path: Path) -> None:
-    cfg_path = tmp_path / "local-transcriber.toml"
+    cfg_path = tmp_path / "escriba.toml"
     cfg_path.write_text(
         """
 [streaming]

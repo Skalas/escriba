@@ -1,0 +1,216 @@
+"""macOS menu bar app for Escriba."""
+
+from __future__ import annotations
+
+import logging
+import os
+import plistlib
+import stat
+import subprocess
+from pathlib import Path
+
+import rumps
+
+from escriba.app.database import Database
+from escriba.app.server import PORT, start_server
+from escriba.app.session import TranscriptionSession
+from escriba.config import AppConfig
+
+logger = logging.getLogger(__name__)
+
+# Persistent location for the dashboard viewer .app
+_DASHBOARD_APP_DIR = Path.home() / "Library" / "Application Support" / "Escriba"
+_DASHBOARD_APP = _DASHBOARD_APP_DIR / "Escriba.app"
+
+
+def _ensure_dashboard_app(icon_path: Path | None = None) -> Path:
+    """Create (or update) a tiny .app bundle used to open the dashboard.
+
+    macOS Cmd+Tab reads the app name from the bundle's Info.plist,
+    so this is the only reliable way to show "Escriba" instead of "Python".
+    """
+    contents = _DASHBOARD_APP / "Contents"
+    macos = contents / "MacOS"
+    resources = contents / "Resources"
+
+    # Only rebuild if missing
+    if not (macos / "open-dashboard").exists():
+        macos.mkdir(parents=True, exist_ok=True)
+        resources.mkdir(parents=True, exist_ok=True)
+
+        # Info.plist — this is what Cmd+Tab reads
+        plist = {
+            "CFBundleName": "Escriba",
+            "CFBundleDisplayName": "Escriba",
+            "CFBundleIdentifier": "com.escriba.dashboard",
+            "CFBundleVersion": "1.0",
+            "CFBundleExecutable": "open-dashboard",
+            "CFBundlePackageType": "APPL",
+            "NSHighResolutionCapable": True,
+        }
+        if icon_path and icon_path.exists():
+            (resources / "Escriba.icns").write_bytes(icon_path.read_bytes())
+            plist["CFBundleIconFile"] = "Escriba"
+
+        with open(contents / "Info.plist", "wb") as f:
+            plistlib.dump(plist, f)
+
+        # Launcher script — finds uv and runs the webview
+        # NOTE: project_dir is baked in at build time; if the project moves,
+        # delete ~/Library/Application Support/Escriba/Escriba.app to rebuild.
+        project_dir = Path(__file__).resolve().parent.parent.parent.parent
+        launcher = macos / "open-dashboard"
+        launcher.write_text(f"""#!/usr/bin/env bash
+export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+cd "{project_dir}"
+UV=$(command -v uv 2>/dev/null)
+if [ -z "$UV" ]; then
+    echo "uv not found" >&2
+    exit 1
+fi
+exec "$UV" run python -c "
+import webview, sys
+url = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:{PORT}'
+webview.create_window('Escriba', url, width=1060, height=720)
+webview.start()
+" "$@"
+""")
+        launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        logger.info("Created dashboard app at %s", _DASHBOARD_APP)
+
+    return _DASHBOARD_APP
+
+
+def _find_icon() -> Path | None:
+    """Find the Escriba.icns icon file."""
+    # Check resources dir (source tree)
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    icon = project_root / "resources" / "Escriba.icns"
+    if icon.exists():
+        return icon
+    # Check inside .app bundle
+    import sys
+    if getattr(sys, "frozen", False):
+        bundle_icon = Path(sys.executable).parent.parent / "Resources" / "Escriba.icns"
+        if bundle_icon.exists():
+            return bundle_icon
+    return None
+
+
+def _notify(title: str, subtitle: str, message: str):
+    """Send a notification, silently ignoring errors (e.g. missing Info.plist)."""
+    try:
+        rumps.notification(title, subtitle, message)
+    except RuntimeError:
+        logger.debug("Notification failed (missing Info.plist), skipping")
+
+
+class TranscriberMenuBar(rumps.App):
+    """Menu bar app that controls transcription sessions."""
+
+    def __init__(self, config: AppConfig):
+        super().__init__("\u3030", quit_button=None)
+        self.config = config
+        self.db = Database()
+        self.app_state: dict = {"config": config, "session": None, "db": self.db}
+        self.server = None
+
+        self.app_state["reload_config"] = self._do_reload
+
+        self.menu = [
+            rumps.MenuItem("Start Recording", callback=self.toggle_recording),
+            None,
+            rumps.MenuItem("Open Dashboard", callback=self.open_dashboard),
+            rumps.MenuItem("Reload Config", callback=self.reload_config),
+            None,
+            rumps.MenuItem("Quit", callback=self.quit_app),
+        ]
+
+    def _do_reload(self):
+        from dotenv import load_dotenv
+
+        load_dotenv(override=True)
+        new_config = AppConfig.load()
+        self.config = new_config
+        self.app_state["config"] = new_config
+        logger.info(
+            "Config reloaded: backend=%s, model=%s",
+            new_config.streaming.backend,
+            new_config.streaming.model_size,
+        )
+        _notify("Escriba", "Config reloaded", f"model={new_config.streaming.model_size}")
+        return new_config
+
+    def reload_config(self, _):
+        self._do_reload()
+
+    def toggle_recording(self, sender):
+        session: TranscriptionSession | None = self.app_state.get("session")
+
+        if session and session.is_active:
+            session.stop()
+            sender.title = "Start Recording"
+            self.title = "\u3030"
+            _notify("Escriba", "Recording stopped", "Transcript saved.")
+        else:
+            session = TranscriptionSession(self.config, database=self.db)
+            session.start()
+            self.app_state["session"] = session
+
+            if session.error:
+                _notify("Escriba", "Error", session.error)
+                return
+
+            sender.title = "Stop Recording"
+            self.title = "\u3030\u25cf"
+            _notify("Escriba", "Recording started", "Capturing system audio...")
+
+    def open_dashboard(self, _):
+        url = f"http://127.0.0.1:{PORT}"
+        try:
+            app_bundle = _ensure_dashboard_app(icon_path=_find_icon())
+            if not app_bundle.exists():
+                raise FileNotFoundError(f"Dashboard app not found: {app_bundle}")
+            subprocess.Popen(["open", "-a", str(app_bundle), "--args", url])
+        except Exception:
+            logger.warning("Dashboard app launch failed, falling back to browser", exc_info=True)
+            import webbrowser
+            webbrowser.open(url)
+
+    def quit_app(self, _):
+        session: TranscriptionSession | None = self.app_state.get("session")
+        if session and session.is_active:
+            session.stop()
+        if self.server:
+            self.server.shutdown()
+        self.db.close()
+        rumps.quit_application()
+
+
+def run_menubar_app(config: AppConfig | None = None):
+    """Launch the menu bar app."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    if config is None:
+        config = AppConfig.load()
+
+    logger.info(
+        "Config: backend=%s, model=%s", config.streaming.backend, config.streaming.model_size
+    )
+
+    # Pre-build dashboard app at startup (so first "Open Dashboard" is instant)
+    try:
+        _ensure_dashboard_app(icon_path=_find_icon())
+    except Exception:
+        logger.warning("Could not pre-build dashboard app", exc_info=True)
+
+    app = TranscriberMenuBar(config)
+    app.server = start_server(app.app_state)
+    logger.info("Dashboard at http://127.0.0.1:%s", PORT)
+    app.run()

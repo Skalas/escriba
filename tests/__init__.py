@@ -1,1 +1,1 @@
-"""Tests for local-transcriber."""
+"""Tests for Escriba."""

@@ -106,7 +106,7 @@ CoreAudioTapHandle CoreAudioTapStart(CoreAudioTapSamplesCallback callback,
 
         NSUUID *tapUUID = [NSUUID UUID];
         tapDesc.UUID = tapUUID;
-        tapDesc.name = [NSString stringWithFormat:@"local-transcriber-tap-%@", [tapUUID UUIDString]];
+        tapDesc.name = [NSString stringWithFormat:@"escriba-tap-%@", [tapUUID UUIDString]];
         /* Public tap: on some macOS versions private tap receives no audio; public can fix it. */
         tapDesc.privateTap = NO;
         tapDesc.muteBehavior = CATapUnmuted;
@@ -140,9 +140,9 @@ CoreAudioTapHandle CoreAudioTapStart(CoreAudioTapSamplesCallback callback,
                 [NSString stringWithUTF8String:kAudioSubTapDriftCompensationKey]: @YES
             }
         ];
-        NSString *aggUID = [NSString stringWithFormat:@"com.local-transcriber.aggregate.%@", [[NSUUID UUID] UUIDString]];
+        NSString *aggUID = [NSString stringWithFormat:@"com.escriba.aggregate.%@", [[NSUUID UUID] UUIDString]];
         NSDictionary *aggProps = @{
-            [NSString stringWithUTF8String:kAudioAggregateDeviceNameKey]: @"LocalTranscriberAggregate",
+            [NSString stringWithUTF8String:kAudioAggregateDeviceNameKey]: @"EscribaAggregate",
             [NSString stringWithUTF8String:kAudioAggregateDeviceUIDKey]: aggUID,
             [NSString stringWithUTF8String:kAudioAggregateDeviceTapListKey]: tapList,
             [NSString stringWithUTF8String:kAudioAggregateDeviceTapAutoStartKey]: @NO,

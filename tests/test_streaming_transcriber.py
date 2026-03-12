@@ -10,9 +10,9 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from local_transcriber.transcribe.config import VADConfig
-from local_transcriber.transcribe.metrics import CaptureMetrics
-from local_transcriber.transcribe.streaming import StreamingTranscriber
+from escriba.transcribe.config import VADConfig
+from escriba.transcribe.metrics import CaptureMetrics
+from escriba.transcribe.streaming import StreamingTranscriber
 
 
 def _create_test_wav(audio_data: bytes, sample_rate: int = 16000) -> bytes:
@@ -63,7 +63,7 @@ def mock_whisper_model():
 
 def test_streaming_transcriber_init():
     """Test initialization of StreamingTranscriber."""
-    with patch("local_transcriber.transcribe.streaming.WhisperModel") as mock_whisper:
+    with patch("escriba.transcribe.streaming.WhisperModel") as mock_whisper:
         mock_model = MagicMock()
         mock_whisper.return_value = mock_model
 
@@ -81,7 +81,7 @@ def test_streaming_transcriber_init():
 
 def test_streaming_transcriber_with_metrics():
     """Test StreamingTranscriber with metrics enabled."""
-    with patch("local_transcriber.transcribe.streaming.WhisperModel") as mock_whisper:
+    with patch("escriba.transcribe.streaming.WhisperModel") as mock_whisper:
         mock_model = MagicMock()
         mock_whisper.return_value = mock_model
 
@@ -97,7 +97,7 @@ def test_streaming_transcriber_with_metrics():
 
 def test_process_wav_chunk_with_transcription(mock_whisper_model):
     """Test processing a WAV chunk that produces transcription."""
-    with patch("local_transcriber.transcribe.streaming.WhisperModel") as mock_whisper:
+    with patch("escriba.transcribe.streaming.WhisperModel") as mock_whisper:
         mock_whisper.return_value = mock_whisper_model
 
         # Crear audio de prueba (1 segundo de silencio)
@@ -119,7 +119,7 @@ def test_process_wav_chunk_with_transcription(mock_whisper_model):
 
 def test_process_wav_chunk_silence(mock_whisper_model):
     """Test processing a WAV chunk with silence (no transcription)."""
-    with patch("local_transcriber.transcribe.streaming.WhisperModel") as mock_whisper:
+    with patch("escriba.transcribe.streaming.WhisperModel") as mock_whisper:
         mock_whisper.return_value = mock_whisper_model
 
         # Configurar mock para retornar segmentos vacíos (silencio)
@@ -142,7 +142,7 @@ def test_process_wav_chunk_silence(mock_whisper_model):
 
 def test_process_wav_chunk_invalid_header():
     """Test processing a WAV chunk with invalid header."""
-    with patch("local_transcriber.transcribe.streaming.WhisperModel") as mock_whisper:
+    with patch("escriba.transcribe.streaming.WhisperModel") as mock_whisper:
         mock_model = MagicMock()
         mock_whisper.return_value = mock_model
 
@@ -159,7 +159,7 @@ def test_process_wav_chunk_invalid_header():
 
 def test_process_wav_chunk_too_small():
     """Test processing a WAV chunk that's too small."""
-    with patch("local_transcriber.transcribe.streaming.WhisperModel") as mock_whisper:
+    with patch("escriba.transcribe.streaming.WhisperModel") as mock_whisper:
         mock_model = MagicMock()
         mock_whisper.return_value = mock_model
 
@@ -176,7 +176,7 @@ def test_process_wav_chunk_too_small():
 
 def test_process_wav_chunk_with_metrics(mock_whisper_model):
     """Test processing a WAV chunk with metrics tracking."""
-    with patch("local_transcriber.transcribe.streaming.WhisperModel") as mock_whisper:
+    with patch("escriba.transcribe.streaming.WhisperModel") as mock_whisper:
         mock_whisper.return_value = mock_whisper_model
 
         metrics = CaptureMetrics()
@@ -204,7 +204,7 @@ def test_process_wav_chunk_with_metrics(mock_whisper_model):
 
 def test_streaming_transcriber_vad_config():
     """Test StreamingTranscriber with custom VAD config."""
-    with patch("local_transcriber.transcribe.streaming.WhisperModel") as mock_whisper:
+    with patch("escriba.transcribe.streaming.WhisperModel") as mock_whisper:
         mock_model = MagicMock()
         mock_whisper.return_value = mock_model
 
@@ -220,7 +220,7 @@ def test_streaming_transcriber_vad_config():
 
 def test_streaming_transcriber_output_file():
     """Test StreamingTranscriber with output file."""
-    with patch("local_transcriber.transcribe.streaming.WhisperModel") as mock_whisper:
+    with patch("escriba.transcribe.streaming.WhisperModel") as mock_whisper:
         mock_model = MagicMock()
         mock_whisper.return_value = mock_model
 
@@ -240,7 +240,7 @@ def test_streaming_transcriber_output_file():
 
 def test_process_wav_chunk_error_handling(mock_whisper_model):
     """Test error handling in process_wav_chunk."""
-    with patch("local_transcriber.transcribe.streaming.WhisperModel") as mock_whisper:
+    with patch("escriba.transcribe.streaming.WhisperModel") as mock_whisper:
         mock_whisper.return_value = mock_whisper_model
 
         # Configurar mock para lanzar excepción

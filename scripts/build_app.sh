@@ -14,6 +14,6 @@ uv run python setup_app.py
 
 echo "==> Bundling audio-capture binary..."
 cp "$PROJECT_DIR/swift-audio-capture/.build/release/audio-capture" \
-   "$PROJECT_DIR/dist/Local Transcriber.app/Contents/Resources/audio-capture"
+   "$PROJECT_DIR/dist/Escriba.app/Contents/Resources/audio-capture"
 
-echo "==> Done! App is at: dist/Local Transcriber.app"
+echo "==> Done! App is at: dist/Escriba.app"

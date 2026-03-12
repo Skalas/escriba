@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from local_transcriber.audio.live_capture import mix_audio
+from escriba.audio.live_capture import mix_audio
 
 
 def test_mix_audio_basic():

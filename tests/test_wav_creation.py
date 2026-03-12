@@ -6,7 +6,7 @@ import struct
 
 import pytest
 
-from local_transcriber.audio.live_capture import _create_wav_chunk
+from escriba.audio.live_capture import _create_wav_chunk
 
 
 def test_create_wav_chunk_basic():

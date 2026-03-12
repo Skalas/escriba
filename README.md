@@ -1,4 +1,4 @@
-# local-transcriber
+# Escriba
 
 Transcriptor local que captura audio del sistema + micrófono (macOS) y procesa audios nuevos en una carpeta. Similar a Notion AI Meeting Notes, proporciona transcripción en tiempo real con baja latencia usando Whisper local.
 
@@ -84,18 +84,18 @@ direnv allow
 
 ### Configuración con TOML (Recomendado)
 
-También puedes usar un archivo `local-transcriber.toml` para configurar defaults.
+También puedes usar un archivo `escriba.toml` para configurar defaults.
 
-- Se incluye un ejemplo en `local-transcriber.toml.example`.
+- Se incluye un ejemplo en `escriba.toml.example`.
 - Precedencia:
   - **CLI flags** (para esa ejecución)
-  - `local-transcriber.toml`
+  - `escriba.toml`
   - variables de entorno (`.env`)
 
 Opciones:
-- `--config /ruta/al/local-transcriber.toml`
-- o `LOCAL_TRANSCRIBER_CONFIG=/ruta/al/local-transcriber.toml`
-- o `./local-transcriber.toml`
+- `--config /ruta/al/escriba.toml`
+- o `ESCRIBA_CONFIG=/ruta/al/escriba.toml`
+- o `./escriba.toml`
 
 ### Configuración Básica
 
@@ -147,7 +147,7 @@ MIC_DEVICE="1"                    # Índice del micrófono
 
 Para listar dispositivos disponibles:
 ```bash
-local-transcriber list-devices
+escriba list-devices
 # o
 ffmpeg -f avfoundation -list_devices true -i ""
 ```
@@ -157,8 +157,8 @@ ffmpeg -f avfoundation -list_devices true -i ""
 ### Estructura del Proyecto
 
 ```
-local-transcriber/
-├── src/local_transcriber/
+escriba/
+├── src/escriba/
 │   ├── cli.py                    # CLI principal (argparse)
 │   ├── audio/
 │   │   ├── call_detection.py     # Detección de llamadas activas
@@ -275,13 +275,13 @@ Esto desactiva la captura de audio del sistema.
 Transcripción en tiempo real con latencia baja (2-5 segundos):
 
 ```bash
-local-transcriber live-stream --output-dir transcripts --combined transcripts/live.txt
+escriba live-stream --output-dir transcripts --combined transcripts/live.txt
 ```
 
 **Auto-inicio cuando detecta una llamada** (como Notion AI):
 
 ```bash
-local-transcriber live-stream --auto-start
+escriba live-stream --auto-start
 ```
 
 Esto espera automáticamente a que detecte una llamada activa (Zoom, Teams, Meet, etc.) antes de comenzar.
@@ -289,7 +289,7 @@ Esto espera automáticamente a que detecte una llamada activa (Zoom, Teams, Meet
 **Opciones adicionales:**
 
 ```bash
-local-transcriber live-stream \
+escriba live-stream \
   --output-dir transcripts \
   --combined transcripts/live.txt \
   --model-size base \
@@ -329,7 +329,7 @@ Notas:
 Captura en vivo con segmentos de 30s (latencia alta ~30+ segundos):
 
 ```bash
-local-transcriber live --output-dir transcripts --combined transcripts/combined.txt
+escriba live --output-dir transcripts --combined transcripts/combined.txt
 ```
 
 **Parámetros:**
@@ -341,7 +341,7 @@ local-transcriber live --output-dir transcripts --combined transcripts/combined.
 Monitorea una carpeta y transcribe automáticamente archivos nuevos:
 
 ```bash
-local-transcriber watch --dir audios --output-dir transcripts --combined transcripts/combined.txt
+escriba watch --dir audios --output-dir transcripts --combined transcripts/combined.txt
 ```
 
 **Parámetros:**
@@ -354,7 +354,7 @@ local-transcriber watch --dir audios --output-dir transcripts --combined transcr
 ### Listar Dispositivos de Audio
 
 ```bash
-local-transcriber list-devices
+escriba list-devices
 ```
 
 Muestra todos los dispositivos disponibles y los resultados de auto-detección.
@@ -428,13 +428,13 @@ Muestra todos los dispositivos disponibles y los resultados de auto-detección.
 
 ### Errores Generales
 
-**`command not found: local-transcriber`**
+**`command not found: escriba`**
 ```bash
 # Reinstalar el paquete
 uv pip install -e .
 
 # O ejecutar directamente
-uv run python -m local_transcriber.cli live-stream
+uv run python -m escriba.cli live-stream
 ```
 
 **Permisos de Screen Recording no otorgados**
@@ -472,7 +472,7 @@ uv pip install -e .
 - **Recomendación**: Usa `faster-whisper` (backend por defecto) que es más rápido y estable en CPU
 - Si quieres intentar `openai-whisper`:
   ```bash
-  local-transcriber live-stream --backend openai-whisper
+  escriba live-stream --backend openai-whisper
   # Por defecto usará CPU (más estable)
   # Para forzar MPS (puede fallar): export WHISPER_FORCE_MPS=true
   ```
@@ -491,7 +491,7 @@ export WHISPER_CACHE_DIR=~/.cache/whisper
 # Descarga el modelo manualmente y colócalo ahí
 
 # Solución 3: Usar faster-whisper (no requiere descarga manual, más estable)
-local-transcriber live-stream --backend faster-whisper
+escriba live-stream --backend faster-whisper
 ```
 
 **Error NaN con openai-whisper y MPS**
@@ -501,7 +501,7 @@ Si ves `ValueError: ... nan, nan, nan ...` al usar `openai-whisper`:
 - Si quieres forzar MPS (puede fallar): `export WHISPER_FORCE_MPS=true`
 - **Recomendación**: Usa `faster-whisper` que es más rápido y estable:
   ```bash
-  local-transcriber live-stream --backend faster-whisper
+  escriba live-stream --backend faster-whisper
   ```
 
 **No se detecta audio del sistema**
@@ -528,7 +528,7 @@ whisper --help
 **No se detecta micrófono**
 ```bash
 # Listar dispositivos disponibles
-local-transcriber list-devices
+escriba list-devices
 
 # Configurar manualmente si es necesario
 export AUTO_DETECT_DEVICES=false
@@ -537,7 +537,7 @@ export MIC_DEVICE="1"  # Usar índice correcto
 
 **AirPods no se detectan automáticamente**
 - Verifica que estén conectados y activos
-- Usa `local-transcriber list-devices` para verificar
+- Usa `escriba list-devices` para verificar
 - Si no aparecen, configura manualmente con `MIC_DEVICE`
 
 **Audio del sistema no se captura**
@@ -549,10 +549,10 @@ export MIC_DEVICE="1"  # Usar índice correcto
 
 ### Estructura del Código
 
-- **CLI**: `src/local_transcriber/cli.py`
-- **Captura de Audio**: `src/local_transcriber/audio/`
-- **Transcripción**: `src/local_transcriber/transcribe/`
-- **Monitoreo**: `src/local_transcriber/watch/`
+- **CLI**: `src/escriba/cli.py`
+- **Captura de Audio**: `src/escriba/audio/`
+- **Transcripción**: `src/escriba/transcribe/`
+- **Monitoreo**: `src/escriba/watch/`
 - **Swift CLI**: `swift-audio-capture/`
 
 ### Ejecutar Tests

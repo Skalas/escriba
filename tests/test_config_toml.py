@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from local_transcriber.config import AppConfig
+from escriba.config import AppConfig
 
 
 def test_toml_overrides_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -14,7 +14,7 @@ def test_toml_overrides_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     monkeypatch.setenv("SAMPLE_RATE", "8000")
     monkeypatch.setenv("STREAMING_MODEL_SIZE", "tiny")
 
-    cfg_path = tmp_path / "local-transcriber.toml"
+    cfg_path = tmp_path / "escriba.toml"
     cfg_path.write_text(
         """
 [audio]
@@ -36,6 +36,6 @@ def test_env_used_when_toml_missing(
 ) -> None:
     monkeypatch.setenv("SAMPLE_RATE", "8000")
     missing_path = tmp_path / "does-not-exist.toml"
-    monkeypatch.setenv("LOCAL_TRANSCRIBER_CONFIG", str(missing_path))
+    monkeypatch.setenv("ESCRIBA_CONFIG", str(missing_path))
     cfg = AppConfig.load(None)
     assert cfg.audio.sample_rate == 8000

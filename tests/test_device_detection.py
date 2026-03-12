@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from local_transcriber.audio.device_detection import (
+from escriba.audio.device_detection import (
     auto_detect_devices,
     list_audio_devices,
 )
@@ -87,7 +87,7 @@ def test_auto_detect_devices():
         ],
     }
 
-    with patch("local_transcriber.audio.device_detection.list_audio_devices") as mock_list:
+    with patch("escriba.audio.device_detection.list_audio_devices") as mock_list:
         mock_list.return_value = mock_devices
 
         system_device, mic_device = auto_detect_devices()
@@ -101,7 +101,7 @@ def test_auto_detect_devices_no_devices():
     """Test auto-detection when no devices are available."""
     mock_devices = {"inputs": [], "outputs": []}
 
-    with patch("local_transcriber.audio.device_detection.list_audio_devices") as mock_list:
+    with patch("escriba.audio.device_detection.list_audio_devices") as mock_list:
         mock_list.return_value = mock_devices
 
         system_device, mic_device = auto_detect_devices()
@@ -122,7 +122,7 @@ def test_auto_detect_devices_with_screen_capture():
         "outputs": [],
     }
 
-    with patch("local_transcriber.audio.device_detection.list_audio_devices") as mock_list:
+    with patch("escriba.audio.device_detection.list_audio_devices") as mock_list:
         mock_list.return_value = mock_devices
 
         # auto_detect_devices siempre retorna None para system_device

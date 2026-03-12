@@ -1,9 +1,9 @@
 ---
-description: Core coding standards and conventions for local-transcriber
+description: Core coding standards and conventions for escriba
 alwaysApply: true
 ---
 
-# Local Transcriber - Project Standards
+# Escriba - Project Standards
 
 ## Project Overview
 
@@ -269,7 +269,7 @@ import numpy as np
 from faster_whisper import WhisperModel
 
 # Local imports
-from local_transcriber.audio.device_detection import auto_detect_devices
+from escriba.audio.device_detection import auto_detect_devices
 ```
 
 ## Swift Integration
@@ -285,7 +285,7 @@ The Swift CLI for ScreenCaptureKit is located at:
 
 ```python
 try:
-    from local_transcriber.audio.screen_capture import (
+    from escriba.audio.screen_capture import (
         ScreenCaptureAudioCapture,
         SWIFT_CLI_AVAILABLE,
     )

@@ -1,5 +1,5 @@
 """
-Build a macOS .app bundle for Local Transcriber.
+Build a macOS .app bundle for Escriba.
 
 Instead of py2app (which struggles with ML dependencies), this creates
 a lightweight .app wrapper that launches the Python app via uv.
@@ -33,7 +33,7 @@ def build():
         d.mkdir(parents=True)
 
     # Copy static files
-    static_src = PROJECT_DIR / "src" / "local_transcriber" / "app" / "static"
+    static_src = PROJECT_DIR / "src" / "escriba" / "app" / "static"
     static_dst = RESOURCES_DIR / "static"
     static_dst.mkdir()
     for f in static_src.iterdir():
@@ -82,7 +82,7 @@ export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 LOG_DIR="$(dirname "{log_file}")"
 mkdir -p "$LOG_DIR"
 cd "{PROJECT_DIR}"
-exec "{uv_path}" run local-transcriber app >> "{log_file}" 2>&1
+exec "{uv_path}" run escriba app >> "{log_file}" 2>&1
 """)
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 

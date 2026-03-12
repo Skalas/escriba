@@ -1,4 +1,4 @@
-# Mejoras Propuestas — local-transcriber
+# Mejoras Propuestas — Escriba
 
 Análisis y roadmap de mejoras. Última actualización: 28 Enero 2026.
 
@@ -24,7 +24,7 @@ Análisis y roadmap de mejoras. Última actualización: 28 Enero 2026.
 
 ### 17. Configuración Centralizada (TOML)
 **Problema:** Demasiadas variables de entorno (`.env`) y flags.
-**Solución:** Soportar un archivo de configuración `local-transcriber.toml`.
+**Solución:** Soportar un archivo de configuración `escriba.toml`.
 ```toml
 [model]
 size = "base"
@@ -42,12 +42,12 @@ mic_boost = 1.2
 ### 1. ✅ Centralizar configuración de VAD [COMPLETADO]
 *Implementado en Enero 2026.*
 - Variables de entorno: `VAD_MIN_SILENCE_MS` y `VAD_THRESHOLD`.
-- Archivos: `src/local_transcriber/transcribe/config.py`.
+- Archivos: `src/escriba/transcribe/config.py`.
 
 ### 2. ✅ Mejorar mezcla de audio sistema + micrófono [COMPLETADO]
 *Implementado en Enero 2026.*
 - Normalización dinámica y `AUDIO_MIC_BOOST`.
-- Archivos: `src/local_transcriber/audio/live_capture.py`.
+- Archivos: `src/escriba/audio/live_capture.py`.
 
 ### 3. ⚠️ Soporte GPU - LIMITADO [COMPLETADO]
 *Implementado en Enero 2026.*
@@ -57,18 +57,18 @@ mic_boost = 1.2
 
 ### 4. ✅ Modo daemon con modelo pre-cargado [COMPLETADO]
 *Implementado en Enero 2026.*
-- Socket Unix en `~/.local-transcriber/daemon.sock`
+- Socket Unix en `~/.escriba/daemon.sock`
 - Comandos: `daemon start|stop|status`, `start-recording`, `stop-recording`
 - Mantiene `StreamingTranscriber` cargado en memoria
-- Archivos: `src/local_transcriber/daemon/` (server.py, client.py)
-- CLI: `local-transcriber daemon start --model-size base`
+- Archivos: `src/escriba/daemon/` (server.py, client.py)
+- CLI: `escriba daemon start --model-size base`
 
 ### 14. ✅ Migrar a mlx-whisper (Apple Silicon) [COMPLETADO]
 *Implementado en Enero 2026.*
 - Backend `mlx-whisper` implementado en `streaming_mlx.py`
 - Aceleración GPU real en Apple Silicon (M1/M2/M3/M4)
 - Uso: `--backend mlx-whisper`
-- Archivos: `src/local_transcriber/transcribe/streaming_mlx.py`
+- Archivos: `src/escriba/transcribe/streaming_mlx.py`
 - **Nota:** Requiere `pip install mlx-whisper`
 
 ---
@@ -76,7 +76,7 @@ mic_boost = 1.2
 ## 🚀 Nuevas Features (Ideas)
 
 ### 18. WebSocket Server
-**Idea:** `local-transcriber serve --port 8765`.
+**Idea:** `escriba serve --port 8765`.
 **Uso:** Integrar con otras apps (OBS, webs locales) que necesiten subtítulos en vivo.
 
 ### 19. Hotkey Global
@@ -98,7 +98,7 @@ mic_boost = 1.2
 - Marca segmentos con `[Speaker A]`, `[Speaker B]`
 - Uso: `--speaker-detection` o `STREAMING_SPEAKER_DETECTION=true`
 - Configuración: `SPEAKER_DETECTION_THRESHOLD=0.3`
-- Archivos: `src/local_transcriber/speaker/` (detection.py)
+- Archivos: `src/escriba/speaker/` (detection.py)
 - **Nota:** Implementación básica. Para diarización completa ver #15 (Pyannote).
 
 ### 8. ✅ Integración con Calendario [COMPLETADO]
@@ -107,7 +107,7 @@ mic_boost = 1.2
 - Detecta eventos con links de Zoom/Meet/Teams
 - Auto-start opcional para transcripciones
 - Uso: `watch-calendar --auto-start`
-- Archivos: `src/local_transcriber/calendar/` (apple_calendar.py)
+- Archivos: `src/escriba/calendar/` (apple_calendar.py)
 
 ### 9. ✅ Enviar Resumen por Mensaje [COMPLETADO]
 *Implementado en Enero 2026.*
@@ -115,7 +115,7 @@ mic_boost = 1.2
 - Formato Markdown con resumen ejecutivo, puntos clave y action items
 - Uso: `STREAMING_NOTIFY=true`, `STREAMING_NOTIFY_PLATFORM=telegram`
 - Variables: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
-- Archivos: `src/local_transcriber/notify/` (telegram.py)
+- Archivos: `src/escriba/notify/` (telegram.py)
 
 ### 10. ✅ Crear GitHub Issues desde Transcripción [COMPLETADO]
 *Implementado en Enero 2026.*
@@ -124,7 +124,7 @@ mic_boost = 1.2
 - Incluye contexto de la conversación
 - Uso: `create-issues --transcript <file> --repo owner/repo --model gemini`
 - Variables: `GITHUB_TOKEN`
-- Archivos: `src/local_transcriber/integrations/` (github.py)
+- Archivos: `src/escriba/integrations/` (github.py)
 
 ### 5. ✅ Resumen automático con LLM [COMPLETADO]
 *Implementado en Enero 2026.*
@@ -133,7 +133,7 @@ mic_boost = 1.2
 - Guarda en `_summary.json` al finalizar
 - Uso: `--summarize --summary-model gemini`
 - Variables: `STREAMING_SUMMARIZE`, `STREAMING_SUMMARY_MODEL`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`
-- Archivos: `src/local_transcriber/summarize/` (llm_summary.py)
+- Archivos: `src/escriba/summarize/` (llm_summary.py)
 
 ---
 
@@ -156,7 +156,7 @@ mic_boost = 1.2
 - Métricas: latencia promedio/min/max, % chunks silenciosos, nivel de audio (dB), errores
 - Integrado en `StreamingTranscriber` y `live_capture.py`
 - Uso: `--metrics` o `STREAMING_SHOW_METRICS=true`
-- Archivos: `src/local_transcriber/transcribe/metrics.py`
+- Archivos: `src/escriba/transcribe/metrics.py`
 
 ---
 
@@ -230,30 +230,30 @@ mic_boost = 1.2
   - `transcribe/metrics.py` - Health checks y métricas
 
 ### Archivos Principales Modificados
-- `src/local_transcriber/transcribe/streaming.py` - Métricas y speaker detection
-- `src/local_transcriber/transcribe/streaming_mlx.py` - Backend MLX (nuevo)
-- `src/local_transcriber/audio/live_capture.py` - Integración de todas las features
-- `src/local_transcriber/cli.py` - Nuevos comandos y flags
+- `src/escriba/transcribe/streaming.py` - Métricas y speaker detection
+- `src/escriba/transcribe/streaming_mlx.py` - Backend MLX (nuevo)
+- `src/escriba/audio/live_capture.py` - Integración de todas las features
+- `src/escriba/cli.py` - Nuevos comandos y flags
 - `.env.example` - Variables de entorno documentadas
 - `tests/` - Suite completa de tests
 
 ### Comandos Nuevos Disponibles
 ```bash
 # Daemon mode
-local-transcriber daemon start --model-size base
-local-transcriber daemon status
-local-transcriber daemon start-recording --output-dir transcripts
-local-transcriber daemon stop-recording
+escriba daemon start --model-size base
+escriba daemon status
+escriba daemon start-recording --output-dir transcripts
+escriba daemon stop-recording
 
 # Features avanzadas
-local-transcriber live-stream --summarize --summary-model gemini
-local-transcriber live-stream --speaker-detection
-local-transcriber live-stream --metrics
-local-transcriber live-stream --backend mlx-whisper
+escriba live-stream --summarize --summary-model gemini
+escriba live-stream --speaker-detection
+escriba live-stream --metrics
+escriba live-stream --backend mlx-whisper
 
 # Integraciones
-local-transcriber watch-calendar --auto-start
-local-transcriber create-issues --transcript file.txt --repo owner/repo
+escriba watch-calendar --auto-start
+escriba create-issues --transcript file.txt --repo owner/repo
 ```
 
 ### Próximos Pasos Recomendados

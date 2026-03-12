@@ -3,7 +3,7 @@
 # Usage: curl -fsSL <raw-url>/install.sh | bash
 set -euo pipefail
 
-REPO="https://github.com/Skalas/local-transcriber.git"
+REPO="https://github.com/Skalas/escriba.git"
 INSTALL_DIR="$HOME/.escriba"
 APP_NAME="Escriba"
 
@@ -79,9 +79,9 @@ echo ""
 echo "  Open from:  /Applications/$APP_NAME.app"
 echo "  Or run:     open /Applications/$APP_NAME.app"
 echo ""
-echo "  Config:     $INSTALL_DIR/local-transcriber.toml"
+echo "  Config:     $INSTALL_DIR/escriba.toml"
 echo "  API keys:   $INSTALL_DIR/.env"
-echo "  Logs:       ~/Library/Logs/local-transcriber/app.log"
+echo "  Logs:       ~/Library/Logs/escriba/app.log"
 echo ""
 echo "  To update later:  cd $INSTALL_DIR && git pull && uv sync && uv run python setup_app.py && cp -r dist/$APP_NAME.app /Applications/"
 echo ""

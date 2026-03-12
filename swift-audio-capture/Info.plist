@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Local Transcriber needs access to system audio for transcription.</string>
+	<string>Escriba needs access to system audio for transcription.</string>
 </dict>
 </plist>

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from local_transcriber.transcribe.config import VADConfig
+from escriba.transcribe.config import VADConfig
 
 
 def test_vad_config_defaults():

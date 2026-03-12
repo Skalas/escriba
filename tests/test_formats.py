@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from local_transcriber.transcribe.formats import (
+from escriba.transcribe.formats import (
     export_to_json,
     export_to_markdown,
     export_to_srt,

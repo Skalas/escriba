@@ -1,4 +1,4 @@
-# Ideas de Marketing y Redes Sociales - local-transcriber
+# Ideas de Marketing y Redes Sociales - Escriba
 
 ## Estrategia General: "Build in Public"
 No hacer tutoriales genéricos. Mostrar problemas reales, soluciones técnicas y herramientas propias.
@@ -12,14 +12,14 @@ No hacer tutoriales genéricos. Mostrar problemas reales, soluciones técnicas y
 ### Tweet 1 (El Gancho + Video)
 Cancelé mi suscripción a Otter.ai y construí mi propia solución local. 🐻🚫💸
 
-Les presento `local-transcriber`:
+Les presento `escriba`:
 - 🎙️ Transcripción en tiempo real en macOS.
 - 🔒 100% Privado (todo corre en tu máquina).
 - 🎧 Combina audio del sistema (Zoom/Meet) + Micrófono.
 - ⚡️ Gratis (gracias a Whisper).
 
 Aquí el código 👇 
-github.com/skalas/local-transcriber
+github.com/skalas/escriba
 
 *(Adjuntar video de 30s mostrando la terminal transcribiendo un video de YouTube o una call)*
 
@@ -40,7 +40,7 @@ Próximo paso: Meterle diarización (para saber quién habla) y resúmenes autom
 Si les interesa la privacidad y tener sus propias herramientas, denle una estrella ⭐ en GitHub.
 Acepto PRs (me faltan tests, no me juzguen 😅).
 
-github.com/skalas/local-transcriber
+github.com/skalas/escriba
 
 ---
 
