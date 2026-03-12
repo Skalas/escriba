@@ -337,7 +337,10 @@
     color: var(--text-secondary);
     font-style: italic;
   }
-  .segment { padding: 4px 0; }
+  .segment { padding: 4px 0; cursor: default; }
+  .segment.clickable { cursor: pointer; }
+  .segment.clickable:hover { background: var(--code-bg); border-radius: 4px; }
+  .segment.playing { background: rgba(0, 122, 255, 0.08); border-left: 3px solid var(--accent); padding-left: 8px; }
   .segment-time {
     color: var(--accent);
     font-size: 12px;
@@ -345,6 +348,8 @@
     font-variant-numeric: tabular-nums;
     margin-right: 8px;
   }
+  .audio-player-card audio { width: 100%; }
+  .audio-player-card .no-audio { color: var(--text-secondary); font-style: italic; font-size: 14px; }
 
   #notes-section { display: none; }
   #notes-section.visible { display: block; }
@@ -499,6 +504,10 @@
           <button class="btn-danger-outline" onclick="clearNotes()">Clear Notes</button>
         </div>
       </div>
+      <div class="card audio-player-card" id="audio-player-card" style="display:none;">
+        <h3>Recording</h3>
+        <audio id="session-audio" controls preload="metadata"></audio>
+      </div>
       <div class="card">
         <h3>Generate Notes (AI)</h3>
         <div class="prompt-chips" id="session-prompt-chips"></div>
@@ -561,7 +570,31 @@
         </div>
         <div class="settings-row">
           <span class="settings-label">Language</span>
-          <input type="text" class="settings-input" id="s-language" placeholder="es">
+          <select class="settings-input" id="s-language">
+            <option value="auto">Auto-detect</option>
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="it">Italian</option>
+            <option value="pt">Portuguese</option>
+            <option value="nl">Dutch</option>
+            <option value="ja">Japanese</option>
+            <option value="zh">Chinese</option>
+            <option value="ko">Korean</option>
+            <option value="ru">Russian</option>
+            <option value="ar">Arabic</option>
+            <option value="hi">Hindi</option>
+            <option value="pl">Polish</option>
+            <option value="uk">Ukrainian</option>
+            <option value="sv">Swedish</option>
+            <option value="da">Danish</option>
+            <option value="no">Norwegian</option>
+            <option value="fi">Finnish</option>
+            <option value="tr">Turkish</option>
+            <option value="he">Hebrew</option>
+            <option value="ca">Catalan</option>
+          </select>
         </div>
         <div class="settings-row">
           <span class="settings-label">Backend</span>
@@ -778,7 +811,7 @@ async function stopRecording() {
   document.getElementById('btn-stop').disabled = true;
   await api('/api/recording/stop', { method: 'POST' });
   document.getElementById('btn-start').disabled = false;
-  await pollStatus();
+  await syncStatus();
   await pollTranscript();
   refreshSessionList();
 }
@@ -903,12 +936,27 @@ async function selectSession(id) {
     document.getElementById('session-seg-count').textContent = res.segments ? res.segments.length : 0;
     document.getElementById('session-status').textContent = s.status || '-';
 
+    // Audio player
+    const audioCard = document.getElementById('audio-player-card');
+    const audioEl = document.getElementById('session-audio');
+    const hasAudio = !!s.audio_path;
+    audioCard.style.display = hasAudio ? '' : 'none';
+    if (hasAudio) {
+      audioEl.src = '/api/sessions/' + id + '/audio';
+      currentSessionSegments = res.segments || [];
+    } else {
+      audioEl.src = '';
+      currentSessionSegments = [];
+    }
+
     const box = document.getElementById('session-transcript');
     if (res.segments && res.segments.length > 0) {
-      box.innerHTML = res.segments.map(seg => {
+      box.innerHTML = res.segments.map((seg, i) => {
         const ts = formatTime(seg.start_time || 0);
         const speaker = seg.speaker ? `[${seg.speaker}] ` : '';
-        return `<div class="segment"><span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
+        const clickable = hasAudio ? ' clickable' : '';
+        const onclick = hasAudio ? ` onclick="seekToSegment(${seg.start_time || 0})"` : '';
+        return `<div class="segment${clickable}" data-start="${seg.start_time || 0}" data-end="${seg.end_time || 0}"${onclick}><span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
       }).join('');
     } else {
       box.innerHTML = '<span style="color:var(--text-secondary);font-style:italic;">No segments</span>';
@@ -1242,6 +1290,37 @@ function showError(msg) {
 function hideError() {
   document.getElementById('error-banner').classList.remove('visible');
 }
+
+// --- Audio playback sync ---
+let currentSessionSegments = [];
+
+function seekToSegment(startTime) {
+  const audio = document.getElementById('session-audio');
+  if (audio && audio.src) {
+    audio.currentTime = startTime;
+    audio.play();
+  }
+}
+
+document.getElementById('session-audio').addEventListener('timeupdate', function() {
+  const currentTime = this.currentTime;
+  const segments = document.querySelectorAll('#session-transcript .segment');
+  segments.forEach(el => {
+    const start = parseFloat(el.dataset.start || 0);
+    const end = parseFloat(el.dataset.end || 0);
+    if (currentTime >= start && currentTime < end) {
+      el.classList.add('playing');
+    } else {
+      el.classList.remove('playing');
+    }
+  });
+});
+
+document.getElementById('session-audio').addEventListener('pause', function() {
+  document.querySelectorAll('#session-transcript .segment.playing').forEach(el => {
+    el.classList.remove('playing');
+  });
+});
 
 // --- Init ---
 (async function init() {

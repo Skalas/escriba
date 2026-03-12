@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     backend TEXT,
     status TEXT DEFAULT 'active',
     notes_text TEXT,
-    parent_session_ids TEXT
+    parent_session_ids TEXT,
+    audio_path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS segments (
@@ -66,8 +67,17 @@ class Database:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
         logger.info("Database opened: %s", db_path)
+
+    def _migrate(self):
+        """Run safe migrations for columns added after initial schema."""
+        cursor = self._conn.execute("PRAGMA table_info(sessions)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "audio_path" not in columns:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN audio_path TEXT")
+            logger.info("Migration: added audio_path column to sessions")
 
     def create_session(
         self, name: str, model: str | None = None, language: str | None = None, backend: str | None = None
@@ -139,7 +149,22 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def update_audio_path(self, session_id: str, audio_path: str):
+        self._conn.execute(
+            "UPDATE sessions SET audio_path = ? WHERE id = ?",
+            (audio_path, session_id),
+        )
+        self._conn.commit()
+
     def delete_session(self, session_id: str):
+        row = self._conn.execute(
+            "SELECT audio_path FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        if row and row["audio_path"]:
+            audio_file = Path(row["audio_path"])
+            if audio_file.exists():
+                audio_file.unlink()
+                logger.info("Deleted audio file: %s", audio_file)
         self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         self._conn.commit()
 

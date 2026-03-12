@@ -8,6 +8,7 @@ import os
 import struct
 import threading
 import time
+import wave
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,35 @@ class TranscriptionSession:
         self._last_segment_count: int = 0
         self.output_dir = Path("transcripts")
         self.error: str | None = None
+        self._audio_file: Path | None = None
+        self._audio_writer: wave.Wave_write | None = None
+
+    def _open_audio_file(self):
+        """Open a WAV file to record the session audio."""
+        audio_dir = Path.home() / "Library" / "Application Support" / "Escriba" / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{self.db_session_id or self.session_id}.wav"
+        self._audio_file = audio_dir / filename
+        try:
+            self._audio_writer = wave.open(str(self._audio_file), "wb")
+            self._audio_writer.setnchannels(self.config.audio.channels)
+            self._audio_writer.setsampwidth(2)  # 16-bit = 2 bytes
+            self._audio_writer.setframerate(self.config.audio.sample_rate)
+            logger.info("Audio recording to: %s", self._audio_file)
+        except Exception as e:
+            logger.error("Failed to open audio file: %s", e)
+            self._audio_writer = None
+
+    def _close_audio_file(self):
+        """Close the WAV file and store the path in DB."""
+        if self._audio_writer:
+            try:
+                self._audio_writer.close()
+            except Exception as e:
+                logger.error("Failed to close audio file: %s", e)
+            self._audio_writer = None
+        if self._audio_file and self._audio_file.exists() and self.db and self.db_session_id:
+            self.db.update_audio_path(self.db_session_id, str(self._audio_file))
 
     def start(self):
         if self.is_active:
@@ -62,6 +92,9 @@ class TranscriptionSession:
             self.db_session_id = self.db.create_session(
                 name=name, model=model_size, language=language, backend=backend,
             )
+
+        # Open WAV file for audio recording
+        self._open_audio_file()
 
         # Create transcriber based on backend
         backend = self.config.streaming.backend
@@ -161,6 +194,9 @@ class TranscriptionSession:
 
         # Process any remaining audio
         self._flush_buffer()
+
+        # Close audio file and store path
+        self._close_audio_file()
 
         # Export transcript
         self._export()
@@ -266,6 +302,13 @@ class TranscriptionSession:
 
             if len(pcm_data) < min_bytes:
                 return
+
+        # Tee PCM data to the WAV file for playback
+        if self._audio_writer:
+            try:
+                self._audio_writer.writeframes(pcm_data)
+            except Exception as e:
+                logger.error("Failed to write audio data: %s", e)
 
         wav_data = _build_wav(pcm_data, sample_rate, channels)
 

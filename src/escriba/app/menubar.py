@@ -117,14 +117,17 @@ class TranscriberMenuBar(rumps.App):
 
         self.app_state["reload_config"] = self._do_reload
 
+        self._recording_item = rumps.MenuItem("Start Recording", callback=self.toggle_recording)
         self.menu = [
-            rumps.MenuItem("Start Recording", callback=self.toggle_recording),
+            self._recording_item,
             None,
             rumps.MenuItem("Open Dashboard", callback=self.open_dashboard),
             rumps.MenuItem("Reload Config", callback=self.reload_config),
             None,
             rumps.MenuItem("Quit", callback=self.quit_app),
         ]
+        self._last_active = False
+        self._sync_timer = rumps.Timer(self._sync_ui_state, 1)
 
     def _do_reload(self):
         from dotenv import load_dotenv
@@ -140,6 +143,20 @@ class TranscriberMenuBar(rumps.App):
         )
         _notify("Escriba", "Config reloaded", f"model={new_config.streaming.model_size}")
         return new_config
+
+    def _sync_ui_state(self, _):
+        """Poll session state and keep menu bar icon/title in sync."""
+        session: TranscriptionSession | None = self.app_state.get("session")
+        is_active = session.is_active if session else False
+        if is_active == self._last_active:
+            return
+        self._last_active = is_active
+        if is_active:
+            self._recording_item.title = "Stop Recording"
+            self.title = "\u3030\u25cf"
+        else:
+            self._recording_item.title = "Start Recording"
+            self.title = "\u3030"
 
     def reload_config(self, _):
         self._do_reload()
@@ -212,5 +229,6 @@ def run_menubar_app(config: AppConfig | None = None):
 
     app = TranscriberMenuBar(config)
     app.server = start_server(app.app_state)
+    app._sync_timer.start()
     logger.info("Dashboard at http://127.0.0.1:%s", PORT)
     app.run()

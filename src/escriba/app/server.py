@@ -54,6 +54,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._json_response(self._get_config())
         elif path == "/api/sessions":
             self._json_response(self._get_sessions())
+        elif path.startswith("/api/sessions/") and path.endswith("/audio"):
+            session_id = path.split("/api/sessions/")[1].rsplit("/audio", 1)[0]
+            self._serve_audio(session_id)
         elif path.startswith("/api/sessions/"):
             session_id = path.split("/api/sessions/")[1]
             if session_id:
@@ -126,6 +129,54 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
         self.wfile.write(content)
+
+    def _serve_audio(self, session_id: str):
+        """Serve the WAV audio file for a session with HTTP Range support."""
+        db = self._get_db()
+        if not db:
+            self._json_response({"ok": False, "error": "Database not available"}, status=500)
+            return
+        session = db.get_session(session_id)
+        if not session or not session.get("audio_path"):
+            self._json_response({"ok": False, "error": "No audio for this session"}, status=404)
+            return
+        audio_path = Path(session["audio_path"])
+        if not audio_path.exists():
+            self._json_response({"ok": False, "error": "Audio file not found"}, status=404)
+            return
+
+        file_size = audio_path.stat().st_size
+        range_header = self.headers.get("Range")
+
+        if range_header:
+            # Parse Range: bytes=start-end
+            range_spec = range_header.replace("bytes=", "")
+            parts = range_spec.split("-")
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if parts[1] else file_size - 1
+            end = min(end, file_size - 1)
+            length = end - start + 1
+
+            self.send_response(206)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(length))
+            self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+
+            with open(audio_path, "rb") as f:
+                f.seek(start)
+                self.wfile.write(f.read(length))
+        else:
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(file_size))
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+
+            with open(audio_path, "rb") as f:
+                while chunk := f.read(65536):
+                    self.wfile.write(chunk)
 
     def _json_response(self, data: dict, status: int = 200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")

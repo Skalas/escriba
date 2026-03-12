@@ -170,18 +170,17 @@ class StreamingTranscriberMLX:
 
                 # Transcribe with mlx-whisper
                 # API: mlx_whisper.transcribe(audio_path, path_or_hf_repo=model, ...)
-                result = mlx_whisper.transcribe(
-                    tmp_path,
-                    path_or_hf_repo=self.model_path,
-                    language=self.language if self.language != "auto" else None,
-                    # Hallucination prevention parameters
-                    condition_on_previous_text=self.hallucination_config.condition_on_previous_text,
-                    no_speech_threshold=self.hallucination_config.no_speech_threshold,
-                    compression_ratio_threshold=self.hallucination_config.compression_ratio_threshold,
-                    logprob_threshold=self.hallucination_config.logprob_threshold,
-                    # Extra mlx-whisper specific parameter for silence hallucinations
-                    hallucination_silence_threshold=2.0,  # Skip if >2s of silence detected
-                )
+                transcribe_kwargs = {
+                    "path_or_hf_repo": self.model_path,
+                    "condition_on_previous_text": self.hallucination_config.condition_on_previous_text,
+                    "no_speech_threshold": self.hallucination_config.no_speech_threshold,
+                    "compression_ratio_threshold": self.hallucination_config.compression_ratio_threshold,
+                    "logprob_threshold": self.hallucination_config.logprob_threshold,
+                    "hallucination_silence_threshold": 2.0,
+                }
+                if self.language and self.language != "auto":
+                    transcribe_kwargs["language"] = self.language
+                result = mlx_whisper.transcribe(tmp_path, **transcribe_kwargs)
 
                 # Process result
                 texts = []
