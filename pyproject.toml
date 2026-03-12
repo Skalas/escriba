@@ -15,6 +15,7 @@ dependencies = [
   "mlx-whisper>=0.4.3",
   "pyannote-audio>=4.0.3",
   "rumps>=0.4.0",
+  "google-generativeai>=0.8.0",
 ]
 
 [project.optional-dependencies]

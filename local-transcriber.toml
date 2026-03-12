@@ -8,7 +8,7 @@
 [audio]
 sample_rate = 16000
 #channels = 1
-mic_only = false
+mic_only = true
 mic_boost = 1.2
 auto_detect_devices = true
 #system_device = "0"

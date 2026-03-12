@@ -64,7 +64,8 @@ def _generate_summary_gemini(
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-pro")
+        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview")
+        model = genai.GenerativeModel(model_name)
 
         prompt = f"""Analiza esta transcripción de llamada/reunión y genera un resumen estructurado en formato JSON.
 

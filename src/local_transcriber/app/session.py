@@ -18,12 +18,14 @@ logger = logging.getLogger(__name__)
 class TranscriptionSession:
     """Manages a single transcription session: capture + transcribe + notes."""
 
-    def __init__(self, config):
+    def __init__(self, config, database=None):
         from local_transcriber.config import AppConfig
 
         self.config: AppConfig = config
+        self.db = database
         self.transcriber = None
         self.screen_capture = None
+        self._mic_stream = None
         self._audio_buffer = bytearray()
         self._buffer_lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -31,6 +33,8 @@ class TranscriptionSession:
         self.is_active = False
         self.start_time: datetime | None = None
         self.session_id: str | None = None
+        self.db_session_id: str | None = None
+        self._last_segment_count: int = 0
         self.output_dir = Path("transcripts")
         self.error: str | None = None
 
@@ -42,7 +46,18 @@ class TranscriptionSession:
         self.start_time = datetime.now()
         self._stop_event.clear()
         self._audio_buffer = bytearray()
+        self._last_segment_count = 0
         self.error = None
+
+        # Create DB session
+        if self.db:
+            backend = self.config.streaming.backend
+            model_size = self.config.streaming.model_size
+            language = self.config.streaming.language
+            name = f"Session {self.start_time.strftime('%Y-%m-%d %H:%M')}"
+            self.db_session_id = self.db.create_session(
+                name=name, model=model_size, language=language, backend=backend,
+            )
 
         # Create transcriber based on backend
         backend = self.config.streaming.backend
@@ -78,27 +93,35 @@ class TranscriptionSession:
             logger.error("Failed to load model: %s", e, exc_info=True)
             return
 
-        # Start screen capture
-        try:
-            from local_transcriber.audio.screen_capture import (
-                ScreenCaptureAudioCapture,
-            )
-
-            self.screen_capture = ScreenCaptureAudioCapture(
-                sample_rate=self.config.audio.sample_rate,
-                channels=self.config.audio.channels,
-                audio_callback=self._on_audio_data,
-            )
-            if not self.screen_capture.start():
-                self.error = "Failed to start audio capture. Check permissions."
+        # Start audio capture
+        if self.config.audio.mic_only:
+            try:
+                self._start_mic_capture()
+            except Exception as e:
+                self.error = f"Failed to start microphone capture: {e}"
+                logger.error(self.error, exc_info=True)
                 return
-        except ImportError:
-            self.error = (
-                "Swift audio-capture CLI not available. "
-                "Build with: cd swift-audio-capture && swift build -c release"
-            )
-            logger.error(self.error)
-            return
+        else:
+            try:
+                from local_transcriber.audio.screen_capture import (
+                    ScreenCaptureAudioCapture,
+                )
+
+                self.screen_capture = ScreenCaptureAudioCapture(
+                    sample_rate=self.config.audio.sample_rate,
+                    channels=self.config.audio.channels,
+                    audio_callback=self._on_audio_data,
+                )
+                if not self.screen_capture.start():
+                    self.error = "Failed to start audio capture. Check permissions."
+                    return
+            except ImportError:
+                self.error = (
+                    "Swift audio-capture CLI not available. "
+                    "Build with: cd swift-audio-capture && swift build -c release"
+                )
+                logger.error(self.error)
+                return
 
         # Start processing thread
         self._process_thread = threading.Thread(
@@ -115,6 +138,11 @@ class TranscriptionSession:
         self.is_active = False
         self._stop_event.set()
 
+        if self._mic_stream is not None:
+            self._mic_stream.stop()
+            self._mic_stream.close()
+            self._mic_stream = None
+
         if self.screen_capture:
             self.screen_capture.stop()
 
@@ -126,7 +154,36 @@ class TranscriptionSession:
 
         # Export transcript
         self._export()
+
+        # Update DB
+        if self.db and self.db_session_id:
+            status = "error" if self.error else "completed"
+            self.db.stop_session(self.db_session_id, status=status)
+
         logger.info("Session stopped: %s", self.session_id)
+
+    def _start_mic_capture(self):
+        """Start capturing audio from the microphone via sounddevice."""
+        import numpy as np
+        import sounddevice as sd
+
+        sample_rate = self.config.audio.sample_rate
+        channels = self.config.audio.channels
+
+        def mic_callback(indata, frames, time_info, status):
+            if status:
+                logger.debug("Mic status: %s", status)
+            pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
+            self._on_audio_data(pcm)
+
+        self._mic_stream = sd.InputStream(
+            samplerate=sample_rate,
+            channels=channels,
+            dtype="float32",
+            callback=mic_callback,
+        )
+        self._mic_stream.start()
+        logger.info("Started microphone capture (sample_rate=%s)", sample_rate)
 
     def _on_audio_data(self, data: bytes):
         with self._buffer_lock:
@@ -161,8 +218,19 @@ class TranscriptionSession:
         if self.transcriber:
             try:
                 self.transcriber.process_wav_chunk(wav_data)
+                self._write_new_segments_to_db()
             except Exception as e:
                 logger.error("Error transcribing chunk: %s", e, exc_info=True)
+
+    def _write_new_segments_to_db(self):
+        """Write any new segments to the database (avoids duplicates)."""
+        if not self.db or not self.db_session_id:
+            return
+        segments = self.get_segments()
+        new_segments = segments[self._last_segment_count:]
+        if new_segments:
+            self.db.add_segments(self.db_session_id, new_segments)
+            self._last_segment_count = len(segments)
 
     def get_transcript(self) -> str:
         if self.transcriber:
@@ -273,7 +341,8 @@ def _call_gemini(prompt: str) -> str | None:
     if not api_key:
         return "Error: GEMINI_API_KEY not set"
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-pro")
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview")
+    model = genai.GenerativeModel(model_name)
     response = model.generate_content(prompt)
     return response.text
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import sys
 import threading
 import shutil
 from pathlib import Path
@@ -24,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 def _find_swift_cli() -> Optional[Path]:
     """Busca el ejecutable del CLI Swift."""
+    # Check .app bundle first
+    if getattr(sys, "frozen", False):
+        bundle_path = Path(sys.executable).parent.parent / "Resources" / "audio-capture"
+        if bundle_path.exists():
+            return bundle_path
+
     # Buscar en el directorio del proyecto
     project_root = Path(__file__).parent.parent.parent.parent
     swift_capture_dir = project_root / "swift-audio-capture"

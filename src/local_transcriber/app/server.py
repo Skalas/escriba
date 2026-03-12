@@ -4,53 +4,99 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse, parse_qs
 
 if TYPE_CHECKING:
+    from local_transcriber.app.database import Database
     from local_transcriber.app.session import TranscriptionSession
     from local_transcriber.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
-STATIC_DIR = Path(__file__).parent / "static"
+if getattr(sys, "frozen", False):
+    STATIC_DIR = Path(sys.executable).parent.parent / "Resources" / "static"
+else:
+    STATIC_DIR = Path(__file__).parent / "static"
+
 PORT = 19876
 
 
 class _Handler(BaseHTTPRequestHandler):
     """HTTP request handler with API endpoints for the transcriber app."""
 
-    app_state: dict = {}  # Shared state: session, config, etc.
+    app_state: dict = {}
 
     def log_message(self, format, *args):
-        # Suppress default request logging
         pass
 
+    # --- Routing ---
+
     def do_GET(self):
-        if self.path == "/":
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        params = parse_qs(parsed.query)
+
+        if path == "/":
             self._serve_file("index.html", "text/html")
-        elif self.path == "/api/status":
+        elif path == "/api/status":
             self._json_response(self._get_status())
-        elif self.path == "/api/transcript":
-            self._json_response(self._get_transcript())
-        elif self.path == "/api/sessions":
+        elif path == "/api/transcript":
+            session_id = params.get("session_id", [None])[0]
+            self._json_response(self._get_transcript(session_id))
+        elif path == "/api/sessions":
             self._json_response(self._get_sessions())
+        elif path.startswith("/api/sessions/"):
+            session_id = path.split("/api/sessions/")[1]
+            if session_id:
+                self._json_response(self._get_session_detail(session_id))
+            else:
+                self._json_response({"ok": False, "error": "Not found"}, status=404)
         else:
-            self.send_error(404)
+            self._json_response({"ok": False, "error": "Not found"}, status=404)
 
     def do_POST(self):
-        if self.path == "/api/recording/start":
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+
+        if path == "/api/recording/start":
             self._json_response(self._start_recording())
-        elif self.path == "/api/recording/stop":
+        elif path == "/api/recording/stop":
             self._json_response(self._stop_recording())
-        elif self.path == "/api/notes":
+        elif path == "/api/notes":
             body = self._read_body()
             self._json_response(self._generate_notes(body))
+        elif path == "/api/sessions/merge":
+            body = self._read_body()
+            self._json_response(self._merge_sessions(body))
+        elif path.startswith("/api/sessions/") and path.endswith("/generate-notes"):
+            session_id = path.split("/api/sessions/")[1].rsplit("/generate-notes", 1)[0]
+            body = self._read_body()
+            self._json_response(self._generate_session_notes(session_id, body))
+        elif path.startswith("/api/sessions/") and path.endswith("/notes"):
+            session_id = path.split("/api/sessions/")[1].rsplit("/notes", 1)[0]
+            body = self._read_body()
+            self._json_response(self._save_notes(session_id, body))
         else:
-            self.send_error(404)
+            self._json_response({"ok": False, "error": "Not found"}, status=404)
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+
+        if path.startswith("/api/sessions/"):
+            session_id = path.split("/api/sessions/")[1]
+            if session_id:
+                self._json_response(self._delete_session(session_id))
+            else:
+                self._json_response({"ok": False, "error": "Not found"}, status=404)
+        else:
+            self._json_response({"ok": False, "error": "Not found"}, status=404)
 
     # --- Helpers ---
 
@@ -66,9 +112,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _json_response(self, data: dict):
+    def _json_response(self, data: dict, status: int = 200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -84,6 +130,9 @@ class _Handler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError):
             return {}
 
+    def _get_db(self) -> Database | None:
+        return self.app_state.get("db")
+
     # --- API handlers ---
 
     def _get_status(self) -> dict:
@@ -92,7 +141,23 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": True, **session.get_status()}
         return {"ok": True, "is_active": False, "session_id": None}
 
-    def _get_transcript(self) -> dict:
+    def _get_transcript(self, session_id: str | None = None) -> dict:
+        # If a session_id is given, load from DB
+        if session_id:
+            db = self._get_db()
+            if not db:
+                return {"ok": False, "error": "Database not available"}
+            segments = db.get_segments(session_id)
+            text = " ".join(s["text"] for s in segments)
+            session_info = db.get_session(session_id)
+            return {
+                "ok": True,
+                "text": text,
+                "segments": segments,
+                "notes": session_info.get("notes_text") if session_info else None,
+            }
+
+        # Otherwise return the live session transcript
         session: TranscriptionSession | None = self.app_state.get("session")
         if not session:
             return {"ok": True, "text": "", "segments": []}
@@ -103,14 +168,21 @@ class _Handler(BaseHTTPRequestHandler):
         }
 
     def _get_sessions(self) -> dict:
-        output_dir = Path("transcripts")
-        sessions = []
-        if output_dir.exists():
-            for f in sorted(output_dir.glob("transcript_*.txt"), reverse=True)[:20]:
-                sessions.append(
-                    {"name": f.stem, "path": str(f), "size": f.stat().st_size}
-                )
+        db = self._get_db()
+        if not db:
+            return {"ok": True, "sessions": []}
+        sessions = db.list_sessions()
         return {"ok": True, "sessions": sessions}
+
+    def _get_session_detail(self, session_id: str) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        session = db.get_session(session_id)
+        if not session:
+            return {"ok": False, "error": "Session not found"}
+        segments = db.get_segments(session_id)
+        return {"ok": True, "session": session, "segments": segments}
 
     def _start_recording(self) -> dict:
         session: TranscriptionSession | None = self.app_state.get("session")
@@ -121,7 +193,8 @@ class _Handler(BaseHTTPRequestHandler):
         from local_transcriber.config import AppConfig
 
         config: AppConfig = self.app_state.get("config", AppConfig.load())
-        session = TranscriptionSession(config)
+        db = self._get_db()
+        session = TranscriptionSession(config, database=db)
         session.start()
         self.app_state["session"] = session
 
@@ -156,6 +229,52 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error("Error generating notes: %s", e, exc_info=True)
             return {"ok": False, "error": str(e)}
+
+    def _merge_sessions(self, body: dict) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        session_ids = body.get("session_ids", [])
+        name = body.get("name", "Merged Session")
+        if len(session_ids) < 2:
+            return {"ok": False, "error": "Need at least 2 sessions to merge"}
+        merged_id = db.merge_sessions(session_ids, name)
+        return {"ok": True, "session_id": merged_id}
+
+    def _delete_session(self, session_id: str) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        db.delete_session(session_id)
+        return {"ok": True}
+
+    def _generate_session_notes(self, session_id: str, body: dict) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        segments = db.get_segments(session_id)
+        if not segments:
+            return {"ok": False, "error": "No segments in this session"}
+        transcript = " ".join(s["text"] for s in segments)
+        prompt = body.get("prompt", "").strip() or "Summarize the key points, decisions, and action items."
+        model = body.get("model", "gemini")
+        try:
+            from local_transcriber.app.session import _generate_custom_notes
+            notes = _generate_custom_notes(transcript, prompt, model=model)
+            if notes:
+                return {"ok": True, "notes": notes}
+            return {"ok": False, "error": "Failed to generate notes"}
+        except Exception as e:
+            logger.error("Error generating session notes: %s", e, exc_info=True)
+            return {"ok": False, "error": str(e)}
+
+    def _save_notes(self, session_id: str, body: dict) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        notes = body.get("notes_text", "")
+        db.save_notes(session_id, notes)
+        return {"ok": True}
 
 
 def start_server(app_state: dict, port: int = PORT) -> HTTPServer:

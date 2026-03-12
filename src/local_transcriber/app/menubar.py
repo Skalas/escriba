@@ -7,6 +7,7 @@ import webbrowser
 
 import rumps
 
+from local_transcriber.app.database import Database
 from local_transcriber.app.server import PORT, start_server
 from local_transcriber.app.session import TranscriptionSession
 from local_transcriber.config import AppConfig
@@ -28,7 +29,8 @@ class TranscriberMenuBar(rumps.App):
     def __init__(self, config: AppConfig):
         super().__init__("LT", quit_button=None)
         self.config = config
-        self.app_state: dict = {"config": config, "session": None}
+        self.db = Database()
+        self.app_state: dict = {"config": config, "session": None, "db": self.db}
         self.server = None
 
         self.menu = [
@@ -48,7 +50,7 @@ class TranscriberMenuBar(rumps.App):
             self.title = "LT"
             _notify("Local Transcriber", "Recording stopped", "Transcript saved.")
         else:
-            session = TranscriptionSession(self.config)
+            session = TranscriptionSession(self.config, database=self.db)
             session.start()
             self.app_state["session"] = session
 
@@ -69,6 +71,7 @@ class TranscriberMenuBar(rumps.App):
             session.stop()
         if self.server:
             self.server.shutdown()
+        self.db.close()
         rumps.quit_application()
 
 

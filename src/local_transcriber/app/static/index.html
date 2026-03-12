@@ -17,7 +17,12 @@
     --success: #34c759;
     --border: #d2d2d7;
     --code-bg: #f0f0f2;
+    --sidebar-bg: #f0f0f2;
     --radius: 12px;
+    --badge-active: #34c75930;
+    --badge-completed: #007aff20;
+    --badge-merged: #af52de20;
+    --badge-error: #ff3b3020;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -27,6 +32,7 @@
       --text-secondary: #98989d;
       --border: #48484a;
       --code-bg: #3a3a3c;
+      --sidebar-bg: #252527;
     }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -34,18 +40,106 @@
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
     background: var(--bg);
     color: var(--text);
+    height: 100vh;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 280px;
+    min-width: 280px;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  .sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-header h1 { font-size: 20px; font-weight: 700; margin-bottom: 12px; }
+  .sidebar-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .sidebar-actions button {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  .session-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .session-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-bottom: 4px;
+    transition: background 0.15s;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .session-item:hover { background: var(--card); }
+  .session-item.selected { background: var(--accent); color: white; }
+  .session-item.selected .session-meta,
+  .session-item.selected .session-badge { color: rgba(255,255,255,0.8); }
+  .session-checkbox { margin-top: 3px; }
+  .session-info { flex: 1; min-width: 0; }
+  .session-name {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .session-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+  .session-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .badge-active { background: var(--badge-active); color: var(--success); }
+  .badge-completed { background: var(--badge-completed); color: var(--accent); }
+  .badge-merged { background: var(--badge-merged); color: #af52de; }
+  .badge-error { background: var(--badge-error); color: var(--danger); }
+
+  .sidebar-footer {
+    padding: 12px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
+  }
+  .sidebar-footer button { flex: 1; font-size: 12px; padding: 8px; }
+
+  /* Main area */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
     padding: 24px;
-    max-width: 900px;
-    margin: 0 auto;
   }
 
   header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 24px;
+    margin-bottom: 20px;
   }
-  header h1 { font-size: 28px; font-weight: 700; }
+  header h2 { font-size: 22px; font-weight: 700; }
   #status-badge {
     display: inline-flex;
     align-items: center;
@@ -71,11 +165,25 @@
     50% { opacity: 0.3; }
   }
 
-  .controls {
+  .info-bar {
     display: flex;
-    gap: 12px;
-    margin-bottom: 24px;
+    gap: 20px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
   }
+
+  #error-banner {
+    background: #ff3b3018;
+    color: var(--danger);
+    padding: 12px 16px;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    display: none;
+  }
+  #error-banner.visible { display: block; }
+
   button {
     padding: 10px 20px;
     border: none;
@@ -91,6 +199,10 @@
   .btn-start:hover:not(:disabled) { background: var(--accent-hover); }
   .btn-stop { background: var(--danger); color: white; }
   .btn-stop:hover:not(:disabled) { background: var(--danger-hover); }
+  .btn-secondary { background: var(--code-bg); color: var(--text); }
+  .btn-secondary:hover:not(:disabled) { background: var(--border); }
+  .btn-danger-outline { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+  .btn-danger-outline:hover:not(:disabled) { background: var(--badge-error); }
 
   .card {
     background: var(--card);
@@ -99,8 +211,8 @@
     padding: 20px;
     margin-bottom: 20px;
   }
-  .card h2 {
-    font-size: 16px;
+  .card h3 {
+    font-size: 14px;
     font-weight: 600;
     margin-bottom: 12px;
     color: var(--text-secondary);
@@ -108,9 +220,14 @@
     letter-spacing: 0.5px;
   }
 
+  .content-area {
+    flex: 1;
+    overflow-y: auto;
+  }
+
   #transcript-box {
-    min-height: 200px;
-    max-height: 400px;
+    min-height: 120px;
+    max-height: 50vh;
     overflow-y: auto;
     font-size: 15px;
     line-height: 1.6;
@@ -118,13 +235,11 @@
     word-wrap: break-word;
   }
   #transcript-box:empty::before {
-    content: 'Transcript will appear here...';
+    content: 'Select a session or start recording...';
     color: var(--text-secondary);
     font-style: italic;
   }
-  .segment {
-    padding: 4px 0;
-  }
+  .segment { padding: 4px 0; }
   .segment-time {
     color: var(--accent);
     font-size: 12px;
@@ -156,15 +271,9 @@
     box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
   }
 
-  .btn-generate {
-    background: var(--success);
-    color: white;
-  }
+  .btn-generate { background: var(--success); color: white; }
   .btn-generate:hover:not(:disabled) { background: #2db84d; }
-  .btn-generate.loading {
-    pointer-events: none;
-    opacity: 0.6;
-  }
+  .btn-generate.loading { pointer-events: none; opacity: 0.6; }
 
   #notes-output {
     margin-top: 16px;
@@ -179,71 +288,222 @@
   }
   #notes-output.visible { display: block; }
 
-  .info-bar {
-    display: flex;
-    gap: 20px;
-    font-size: 13px;
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
     color: var(--text-secondary);
-    margin-bottom: 16px;
   }
+  .empty-state h3 { font-size: 18px; color: var(--text); margin-bottom: 8px; text-transform: none; }
+  .empty-state p { font-size: 14px; }
 
-  #error-banner {
-    background: #ff3b3018;
-    color: var(--danger);
-    padding: 12px 16px;
-    border-radius: 10px;
-    margin-bottom: 16px;
-    font-size: 14px;
-    display: none;
+  .controls-row { display: flex; gap: 8px; margin-bottom: 16px; }
+
+  .prompt-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
   }
-  #error-banner.visible { display: block; }
+  .prompt-chip {
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .prompt-chip:hover { border-color: var(--accent); }
+  .prompt-chip.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>Local Transcriber</h1>
-  <span id="status-badge" class="idle">
-    <span id="status-dot"></span>
-    <span id="status-text">Idle</span>
-  </span>
-</header>
-
-<div id="error-banner"></div>
-
-<div class="controls">
-  <button class="btn-start" id="btn-start" onclick="startRecording()">Start Recording</button>
-  <button class="btn-stop" id="btn-stop" onclick="stopRecording()" disabled>Stop Recording</button>
+<!-- Sidebar -->
+<div class="sidebar">
+  <div class="sidebar-header">
+    <h1>Local Transcriber</h1>
+    <div class="sidebar-actions">
+      <button class="btn-start" id="btn-start" onclick="startRecording()">Start</button>
+      <button class="btn-stop" id="btn-stop" onclick="stopRecording()" disabled>Stop</button>
+    </div>
+  </div>
+  <div class="session-list" id="session-list">
+    <!-- Populated by JS -->
+  </div>
+  <div class="sidebar-footer">
+    <button class="btn-secondary" id="btn-merge" onclick="mergeSelected()" disabled>Merge Selected</button>
+    <button class="btn-danger-outline" id="btn-delete" onclick="deleteSelected()" disabled>Delete</button>
+  </div>
 </div>
 
-<div class="info-bar">
-  <span>Elapsed: <strong id="elapsed">--:--:--</strong></span>
-  <span>Segments: <strong id="seg-count">0</strong></span>
-</div>
+<!-- Main content -->
+<div class="main">
+  <div id="error-banner"></div>
 
-<div class="card">
-  <h2>Transcript</h2>
-  <div id="transcript-box"></div>
-</div>
+  <!-- Live view -->
+  <div id="live-view" style="display:none;">
+    <header>
+      <h2>Live Recording</h2>
+      <span id="status-badge" class="recording">
+        <span id="status-dot"></span>
+        <span id="status-text">Recording</span>
+      </span>
+    </header>
+    <div class="info-bar">
+      <span>Elapsed: <strong id="elapsed">--:--:--</strong></span>
+      <span>Segments: <strong id="seg-count">0</strong></span>
+    </div>
+    <div class="card">
+      <h3>Transcript</h3>
+      <div id="transcript-box"></div>
+    </div>
+    <div id="notes-section">
+      <div class="card">
+        <h3>Generate Notes (AI)</h3>
+        <div class="prompt-chips" id="live-prompt-chips"></div>
+        <textarea id="prompt-input" placeholder="Select prompts above and/or type your own..." rows="2"></textarea>
+        <button class="btn-generate" id="btn-notes" onclick="generateNotes()">Generate Notes</button>
+        <div id="notes-output"></div>
+      </div>
+    </div>
+  </div>
 
-<div id="notes-section">
-  <div class="card">
-    <h2>Generate Notes</h2>
-    <textarea id="prompt-input" placeholder="e.g. Summarize the key decisions and action items..." rows="2"></textarea>
-    <button class="btn-generate" id="btn-notes" onclick="generateNotes()">Generate Notes</button>
-    <div id="notes-output"></div>
+  <!-- Session detail view -->
+  <div id="session-view" style="display:none;">
+    <header>
+      <h2 id="session-title">Session</h2>
+      <div class="controls-row">
+        <button class="btn-start" id="btn-back-to-live" onclick="backToLive()" style="display:none;">Back to Live</button>
+        <button class="btn-secondary" onclick="exportSession()">Export</button>
+      </div>
+    </header>
+    <div class="info-bar">
+      <span>Date: <strong id="session-date">-</strong></span>
+      <span>Duration: <strong id="session-duration">-</strong></span>
+      <span>Segments: <strong id="session-seg-count">0</strong></span>
+      <span>Status: <strong id="session-status">-</strong></span>
+    </div>
+    <div class="content-area">
+      <div class="card">
+        <h3>Notes</h3>
+        <textarea id="session-notes-input" placeholder="Your notes (manual + AI-generated)..." rows="8"
+          style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;"></textarea>
+        <div class="controls-row">
+          <button class="btn-secondary" onclick="saveNotes()">Save Notes</button>
+          <button class="btn-danger-outline" onclick="clearNotes()">Clear Notes</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Generate Notes (AI)</h3>
+        <div class="prompt-chips" id="session-prompt-chips"></div>
+        <textarea id="session-prompt-input" placeholder="Select prompts above and/or type your own..." rows="2"
+          style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;"></textarea>
+        <button class="btn-generate" id="btn-session-notes" onclick="generateSessionNotes()">Generate Notes</button>
+      </div>
+      <div class="card">
+        <h3>Transcript</h3>
+        <div id="session-transcript"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Empty state -->
+  <div id="empty-view">
+    <div class="empty-state">
+      <h3>No session selected</h3>
+      <p>Start a recording or select a past session from the sidebar.</p>
+    </div>
   </div>
 </div>
 
 <script>
 const API = '';
 let polling = null;
+let selectedSessionId = null;
+let checkedSessions = new Set();
+let viewingHistory = false; // true when user clicked a past session
+
+const PROMPT_TEMPLATES = [
+  {
+    id: 'summary',
+    label: 'Executive Summary',
+    prompt: 'Write a concise executive summary (3-5 sentences) covering the purpose of the meeting, main topics discussed, and overall outcome.',
+  },
+  {
+    id: 'actions',
+    label: 'Action Items',
+    prompt: 'Extract all action items, tasks, and to-dos. For each, identify: the task description, who is responsible (if mentioned), and any deadline or timeline mentioned. Format as a checklist.',
+  },
+  {
+    id: 'decisions',
+    label: 'Decisions',
+    prompt: 'List all decisions that were made during this meeting. Include the context for each decision and any alternatives that were considered.',
+  },
+  {
+    id: 'questions',
+    label: 'Open Questions',
+    prompt: 'Identify any unresolved questions, concerns, or topics that need follow-up. Note who raised them if mentioned.',
+  },
+  {
+    id: 'keypoints',
+    label: 'Key Points',
+    prompt: 'List the most important points, insights, and takeaways from the discussion in bullet-point format.',
+  },
+  {
+    id: 'blockers',
+    label: 'Risks & Blockers',
+    prompt: 'Identify any risks, blockers, dependencies, or concerns raised during the meeting that could impact progress.',
+  },
+];
+
+let activePrompts = { live: new Set(), session: new Set() };
+
+function renderChips(containerId, context) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = PROMPT_TEMPLATES.map(t => {
+    const isActive = activePrompts[context].has(t.id);
+    return `<span class="prompt-chip${isActive ? ' active' : ''}"
+      onclick="togglePrompt('${t.id}', '${context}', '${containerId}')">${t.label}</span>`;
+  }).join('');
+}
+
+function togglePrompt(id, context, containerId) {
+  if (activePrompts[context].has(id)) {
+    activePrompts[context].delete(id);
+  } else {
+    activePrompts[context].add(id);
+  }
+  renderChips(containerId, context);
+  updatePromptTextarea(context);
+}
+
+function updatePromptTextarea(context) {
+  const textareaId = context === 'live' ? 'prompt-input' : 'session-prompt-input';
+  const selected = PROMPT_TEMPLATES.filter(t => activePrompts[context].has(t.id));
+  if (selected.length === 0) {
+    document.getElementById(textareaId).value = '';
+    return;
+  }
+  const combined = selected.map((t, i) =>
+    `${i + 1}. ${t.label}: ${t.prompt}`
+  ).join('\n\n');
+  document.getElementById(textareaId).value = combined;
+}
 
 async function api(path, opts) {
   const r = await fetch(API + path, opts);
   return r.json();
 }
 
+// --- Recording ---
 async function startRecording() {
   hideError();
   document.getElementById('btn-start').disabled = true;
@@ -254,6 +514,8 @@ async function startRecording() {
     return;
   }
   document.getElementById('btn-stop').disabled = false;
+  viewingHistory = false;
+  showLiveView();
   startPolling();
 }
 
@@ -261,36 +523,12 @@ async function stopRecording() {
   document.getElementById('btn-stop').disabled = true;
   await api('/api/recording/stop', { method: 'POST' });
   document.getElementById('btn-start').disabled = false;
-  // Do one final poll to get the complete transcript
   await pollStatus();
   await pollTranscript();
+  refreshSessionList();
 }
 
-async function generateNotes() {
-  const btn = document.getElementById('btn-notes');
-  const out = document.getElementById('notes-output');
-  const prompt = document.getElementById('prompt-input').value.trim();
-
-  btn.classList.add('loading');
-  btn.textContent = 'Generating...';
-  out.className = 'visible';
-  out.textContent = 'Thinking...';
-
-  try {
-    const res = await api('/api/notes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: prompt || null }),
-    });
-    out.textContent = res.ok ? res.notes : ('Error: ' + (res.error || 'Unknown'));
-  } catch (e) {
-    out.textContent = 'Error: ' + e.message;
-  } finally {
-    btn.classList.remove('loading');
-    btn.textContent = 'Generate Notes';
-  }
-}
-
+// --- Polling ---
 function startPolling() {
   if (polling) return;
   polling = setInterval(async () => {
@@ -308,15 +546,15 @@ async function pollStatus() {
     const s = await api('/api/status');
     const badge = document.getElementById('status-badge');
     const text = document.getElementById('status-text');
-    const elapsed = document.getElementById('elapsed');
-    const segCount = document.getElementById('seg-count');
-    const notesSection = document.getElementById('notes-section');
 
     if (s.is_active) {
       badge.className = 'recording';
       text.textContent = 'Recording';
       document.getElementById('btn-start').disabled = true;
       document.getElementById('btn-stop').disabled = false;
+      document.getElementById('elapsed').textContent = s.elapsed || '--:--:--';
+      document.getElementById('seg-count').textContent = s.segments_count || 0;
+      if (!viewingHistory) showLiveView();
     } else {
       badge.className = 'idle';
       text.textContent = 'Idle';
@@ -325,15 +563,11 @@ async function pollStatus() {
       stopPolling();
     }
 
-    elapsed.textContent = s.elapsed || '--:--:--';
-    segCount.textContent = s.segments_count || 0;
-
-    // Show notes section if there are segments
     if ((s.segments_count || 0) > 0) {
-      notesSection.classList.add('visible');
+      document.getElementById('notes-section').classList.add('visible');
     }
 
-    if (s.error) { showError(s.error); }
+    if (s.error) showError(s.error);
   } catch (e) { /* ignore polling errors */ }
 }
 
@@ -342,28 +576,253 @@ async function pollTranscript() {
     const t = await api('/api/transcript');
     const box = document.getElementById('transcript-box');
     if (!t.segments || t.segments.length === 0) return;
-
     box.innerHTML = t.segments.map(seg => {
       const ts = formatTime(seg.start);
       const speaker = seg.speaker ? `[${seg.speaker}] ` : '';
       return `<div class="segment"><span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
     }).join('');
-
     box.scrollTop = box.scrollHeight;
   } catch (e) { /* ignore */ }
 }
 
+// --- Sessions ---
+async function refreshSessionList() {
+  try {
+    const res = await api('/api/sessions');
+    const list = document.getElementById('session-list');
+    if (!res.sessions || res.sessions.length === 0) {
+      list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary);font-size:13px;">No sessions yet</div>';
+      return;
+    }
+    list.innerHTML = res.sessions.map(s => {
+      const date = s.started_at ? new Date(s.started_at).toLocaleDateString() : '';
+      const dur = s.duration_seconds ? formatDuration(s.duration_seconds) : '-';
+      const checked = checkedSessions.has(s.id) ? 'checked' : '';
+      const sel = s.id === selectedSessionId ? ' selected' : '';
+      const badgeClass = 'badge-' + (s.status || 'completed');
+      return `<div class="session-item${sel}" data-id="${escAttr(s.id)}" onclick="selectSession('${escAttr(s.id)}')">
+        <input type="checkbox" class="session-checkbox" ${checked}
+          onclick="event.stopPropagation();toggleCheck('${escAttr(s.id)}', this.checked)">
+        <div class="session-info">
+          <div class="session-name">${escHtml(s.name)}</div>
+          <div class="session-meta">${date} &middot; ${dur} &middot; ${s.segment_count || 0} segs</div>
+        </div>
+        <span class="session-badge ${badgeClass}">${escHtml(s.status || 'completed')}</span>
+      </div>`;
+    }).join('');
+    updateFooterButtons();
+  } catch (e) { /* ignore */ }
+}
+
+async function selectSession(id) {
+  selectedSessionId = id;
+  viewingHistory = true;
+  try {
+    const res = await api('/api/sessions/' + id);
+    if (!res.ok) return;
+
+    const s = res.session;
+    document.getElementById('session-title').textContent = s.name;
+    document.getElementById('session-date').textContent = s.started_at ? new Date(s.started_at).toLocaleString() : '-';
+    document.getElementById('session-duration').textContent = s.duration_seconds ? formatDuration(s.duration_seconds) : '-';
+    document.getElementById('session-seg-count').textContent = res.segments ? res.segments.length : 0;
+    document.getElementById('session-status').textContent = s.status || '-';
+
+    const box = document.getElementById('session-transcript');
+    if (res.segments && res.segments.length > 0) {
+      box.innerHTML = res.segments.map(seg => {
+        const ts = formatTime(seg.start_time || 0);
+        const speaker = seg.speaker ? `[${seg.speaker}] ` : '';
+        return `<div class="segment"><span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
+      }).join('');
+    } else {
+      box.innerHTML = '<span style="color:var(--text-secondary);font-style:italic;">No segments</span>';
+    }
+
+    const notesInput = document.getElementById('session-notes-input');
+    notesInput.value = s.notes_text || '';
+
+    showSessionView();
+    refreshSessionList();
+  } catch (e) { /* ignore */ }
+}
+
+function toggleCheck(id, checked) {
+  if (checked) checkedSessions.add(id);
+  else checkedSessions.delete(id);
+  updateFooterButtons();
+}
+
+function updateFooterButtons() {
+  document.getElementById('btn-merge').disabled = checkedSessions.size < 2;
+  document.getElementById('btn-delete').disabled = checkedSessions.size === 0;
+}
+
+async function mergeSelected() {
+  if (checkedSessions.size < 2) return;
+  const name = prompt('Name for merged session:', 'Merged Session');
+  if (!name) return;
+  const res = await api('/api/sessions/merge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_ids: [...checkedSessions], name }),
+  });
+  if (res.ok) {
+    checkedSessions.clear();
+    refreshSessionList();
+    selectSession(res.session_id);
+  } else {
+    showError(res.error || 'Merge failed');
+  }
+}
+
+async function deleteSelected() {
+  if (checkedSessions.size === 0) return;
+  if (!confirm(`Delete ${checkedSessions.size} session(s)?`)) return;
+  for (const id of checkedSessions) {
+    await api('/api/sessions/' + id, { method: 'DELETE' });
+  }
+  if (checkedSessions.has(selectedSessionId)) {
+    selectedSessionId = null;
+    showEmptyView();
+  }
+  checkedSessions.clear();
+  refreshSessionList();
+}
+
+async function saveNotes() {
+  if (!selectedSessionId) return;
+  const notes = document.getElementById('session-notes-input').value;
+  await api('/api/sessions/' + selectedSessionId + '/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes_text: notes }),
+  });
+}
+
+async function clearNotes() {
+  if (!selectedSessionId) return;
+  if (!confirm('Clear all notes for this session?')) return;
+  document.getElementById('session-notes-input').value = '';
+  await saveNotes();
+}
+
+function exportSession() {
+  if (!selectedSessionId) return;
+  const box = document.getElementById('session-transcript');
+  const text = box.innerText;
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'transcript.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function generateSessionNotes() {
+  if (!selectedSessionId) return;
+  const btn = document.getElementById('btn-session-notes');
+  const promptVal = document.getElementById('session-prompt-input').value.trim();
+  const notesInput = document.getElementById('session-notes-input');
+
+  btn.classList.add('loading');
+  btn.textContent = 'Generating...';
+
+  try {
+    const res = await api('/api/sessions/' + selectedSessionId + '/generate-notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: promptVal || null }),
+    });
+    if (res.ok && res.notes) {
+      const separator = notesInput.value.trim() ? '\n\n---\n\n' : '';
+      notesInput.value = notesInput.value.trim() + separator + res.notes;
+      await saveNotes();
+    } else {
+      showError(res.error || 'Failed to generate notes');
+    }
+  } catch (e) {
+    showError('Error: ' + e.message);
+  } finally {
+    btn.classList.remove('loading');
+    btn.textContent = 'Generate Notes';
+  }
+}
+
+async function generateNotes() {
+  const btn = document.getElementById('btn-notes');
+  const out = document.getElementById('notes-output');
+  const promptVal = document.getElementById('prompt-input').value.trim();
+
+  btn.classList.add('loading');
+  btn.textContent = 'Generating...';
+  out.className = 'visible';
+  out.textContent = 'Thinking...';
+
+  try {
+    const res = await api('/api/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: promptVal || null }),
+    });
+    out.textContent = res.ok ? res.notes : ('Error: ' + (res.error || 'Unknown'));
+  } catch (e) {
+    out.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.classList.remove('loading');
+    btn.textContent = 'Generate Notes';
+  }
+}
+
+// --- View switching ---
+function backToLive() {
+  viewingHistory = false;
+  showLiveView();
+}
+function showLiveView() {
+  document.getElementById('live-view').style.display = '';
+  document.getElementById('session-view').style.display = 'none';
+  document.getElementById('empty-view').style.display = 'none';
+}
+function showSessionView() {
+  document.getElementById('live-view').style.display = 'none';
+  document.getElementById('session-view').style.display = '';
+  document.getElementById('empty-view').style.display = 'none';
+  // Show "Back to Live" button only if currently recording
+  const badge = document.getElementById('status-badge');
+  document.getElementById('btn-back-to-live').style.display =
+    badge.className === 'recording' ? '' : 'none';
+}
+function showEmptyView() {
+  document.getElementById('live-view').style.display = 'none';
+  document.getElementById('session-view').style.display = 'none';
+  document.getElementById('empty-view').style.display = '';
+}
+
+// --- Helpers ---
 function formatTime(seconds) {
+  if (seconds == null) return '00:00:00';
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
+function formatDuration(sec) {
+  if (!sec) return '-';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
 function pad(n) { return n.toString().padStart(2, '0'); }
 function escHtml(s) {
+  if (!s) return '';
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+function escAttr(s) {
+  return s ? s.replace(/'/g, "\\'").replace(/"/g, '&quot;') : '';
 }
 
 function showError(msg) {
@@ -375,12 +834,19 @@ function hideError() {
   document.getElementById('error-banner').classList.remove('visible');
 }
 
-// Initial status check
-pollStatus().then(() => {
-  // If already recording, start polling
-  const badge = document.getElementById('status-badge');
-  if (badge.className === 'recording') { startPolling(); }
-});
+// --- Init ---
+(async function init() {
+  renderChips('live-prompt-chips', 'live');
+  renderChips('session-prompt-chips', 'session');
+  await refreshSessionList();
+  const status = await api('/api/status');
+  if (status.is_active) {
+    showLiveView();
+    startPolling();
+  } else {
+    showEmptyView();
+  }
+})();
 </script>
 </body>
 </html>
