@@ -331,7 +331,6 @@ class _Handler(BaseHTTPRequestHandler):
                 else resolve_config_path() or Path("local-transcriber.toml")
             )
             save_config_to_toml(toml_data, config_path)
-            logger.info("Settings saved to %s", config_path)
 
         # Trigger reload
         reload_fn = self.app_state.get("reload_config")

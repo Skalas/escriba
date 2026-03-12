@@ -56,7 +56,8 @@ def _ensure_dashboard_app(icon_path: Path | None = None) -> Path:
             plistlib.dump(plist, f)
 
         # Launcher script — finds uv and runs the webview
-        # Resolve project dir so the script works from any cwd
+        # NOTE: project_dir is baked in at build time; if the project moves,
+        # delete ~/Library/Application Support/Escriba/Escriba.app to rebuild.
         project_dir = Path(__file__).resolve().parent.parent.parent.parent
         launcher = macos / "open-dashboard"
         launcher.write_text(f"""#!/usr/bin/env bash
@@ -168,6 +169,8 @@ class TranscriberMenuBar(rumps.App):
         url = f"http://127.0.0.1:{PORT}"
         try:
             app_bundle = _ensure_dashboard_app(icon_path=_find_icon())
+            if not app_bundle.exists():
+                raise FileNotFoundError(f"Dashboard app not found: {app_bundle}")
             subprocess.Popen(["open", "-a", str(app_bundle), "--args", url])
         except Exception:
             logger.warning("Dashboard app launch failed, falling back to browser", exc_info=True)
@@ -205,7 +208,7 @@ def run_menubar_app(config: AppConfig | None = None):
     try:
         _ensure_dashboard_app(icon_path=_find_icon())
     except Exception:
-        logger.debug("Could not pre-build dashboard app", exc_info=True)
+        logger.warning("Could not pre-build dashboard app", exc_info=True)
 
     app = TranscriberMenuBar(config)
     app.server = start_server(app.app_state)
