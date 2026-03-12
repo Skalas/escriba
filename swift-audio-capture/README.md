@@ -1,12 +1,12 @@
 # audio-capture
 
-CLI en Swift que captura audio del sistema usando ScreenCaptureKit y lo escribe a stdout como PCM raw (int16, little-endian, mono, 16kHz configurable).
+CLI en Swift que captura audio del sistema usando Core Audio Taps (macOS 14.2+) y escribe a stdout PCM raw (int16, little-endian, mono, 16kHz configurable). Usa solo el permiso de **Audio Capture**, no Screen Recording.
 
 ## Requisitos
 
-- macOS 12.3+ (ScreenCaptureKit requiere macOS Monterey o superior)
-- Xcode 13+ y Swift 5.5+
-- Permisos de Screen Recording
+- macOS 14.2+ (Core Audio Taps)
+- Swift 5.7+
+- Permisos de Audio Capture (Screen & System Audio Recording)
 
 ## Instalación
 
@@ -18,6 +18,8 @@ swift build -c release
 ```
 
 El ejecutable se encontrará en `.build/release/audio-capture`.
+
+**Nota**: Si la compilación falla por permisos de caché o por desajuste de versión del SDK (macOS 26 / Tahoe), prueba desde Xcode o asegúrate de que el toolchain de Swift coincida con el SDK. También puedes compilar desde una terminal fuera del IDE.
 
 ### Instalar en PATH (opcional)
 
@@ -35,7 +37,7 @@ Captura audio del sistema y escribe PCM raw a stdout:
 audio-capture --sample-rate 16000 --channels 1
 ```
 
-### Listar displays disponibles
+### Comprobar permiso de Audio Capture
 
 ```bash
 audio-capture --list
@@ -45,7 +47,7 @@ audio-capture --list
 
 - `--sample-rate <rate>`: Tasa de muestreo en Hz (por defecto: 16000)
 - `--channels <count>`: Número de canales (por defecto: 1, mono)
-- `--list`: Lista displays/dispositivos disponibles
+- `--list`: Comprueba si el permiso de Audio Capture está concedido
 - `--help, -h`: Muestra ayuda
 
 ## Output
@@ -81,23 +83,23 @@ while True:
 
 ## Permisos
 
-El programa requiere permisos de **Screen Recording** en macOS:
+El programa requiere permisos de **Audio Capture** (no Screen Recording):
 
-1. La primera vez que ejecutes el programa, macOS mostrará un diálogo
-2. O ve manualmente a: **System Settings > Privacy & Security > Screen Recording**
+1. La primera vez que ejecutes el programa, macOS puede mostrar un diálogo
+2. O ve manualmente a: **System Settings > Privacy & Security > Screen & System Audio Recording**
 3. Agrega tu terminal (Terminal, iTerm, etc.)
 
-**Nota**: No se requieren permisos de accesibilidad (a diferencia de soluciones como BlackHole).
+**Nota**: Solo se pide acceso al audio del sistema, no a la pantalla.
 
 ## Detalles Técnicos
 
-### ScreenCaptureKit
+### Core Audio Taps
 
-Este programa usa la API nativa de macOS `ScreenCaptureKit` para capturar audio del sistema, similar a como lo hace Notion AI. No requiere dispositivos virtuales como BlackHole.
+Este programa usa la API **Core Audio Taps** (`AudioHardwareCreateProcessTap`, macOS 14.2+) para capturar audio del sistema sin necesitar el permiso de Screen Recording. No requiere dispositivos virtuales como BlackHole.
 
 ### Conversión de Audio
 
-- ScreenCaptureKit típicamente entrega audio en formato float32 (-1.0 a 1.0)
+- Core Audio Taps entrega audio en formato float32 (-1.0 a 1.0)
 - El programa convierte automáticamente a int16 PCM
 - Si el audio es estéreo, se mezcla automáticamente a mono (promedio de canales)
 - El resampling se realiza si el sample rate del sistema difiere del configurado
@@ -110,9 +112,9 @@ El programa maneja correctamente:
 
 ## Troubleshooting
 
-### Error: "Screen Recording permission denied"
+### Error: "Audio Capture permission not granted"
 
-1. Ve a **System Settings > Privacy & Security > Screen Recording**
+1. Ve a **System Settings > Privacy & Security > Screen & System Audio Recording**
 2. Asegúrate de que tu terminal esté en la lista y habilitada
 3. Reinicia el programa
 
@@ -120,12 +122,12 @@ El programa maneja correctamente:
 
 - Verifica que haya audio reproduciéndose en el sistema
 - Algunas aplicaciones pueden bloquear la captura de audio
-- Prueba con `--list` para verificar que los displays estén disponibles
+- Prueba con `audio-capture --list` para verificar el permiso
 
 ### El programa se cierra inmediatamente
 
 - Verifica los logs en stderr para ver el error específico
-- Asegúrate de tener macOS 12.3+ (verifica con `sw_vers`)
+- Asegúrate de tener macOS 14.2+ (verifica con `sw_vers`)
 
 ## Desarrollo
 
@@ -134,11 +136,13 @@ El programa maneja correctamente:
 ```
 swift-audio-capture/
 ├── Package.swift                    # Configuración del paquete Swift
+├── Info.plist                       # NSAudioCaptureUsageDescription
 ├── Sources/
 │   └── audio-capture/
 │       ├── main.swift               # Punto de entrada del CLI
-│       ├── AudioCapture.swift      # Lógica de ScreenCaptureKit
-│       └── PCMConverter.swift      # Conversión a int16
+│       ├── CoreAudioTap.swift       # Wrapper Swift para Core Audio Taps
+│       ├── CoreAudioTapBridge.h/m   # Bridge Obj-C (CATapDescription, etc.)
+│       └── PCMConverter.swift       # Conversión a int16
 └── README.md                        # Este archivo
 ```
 
