@@ -1021,11 +1021,11 @@ function renderSessionItem(s) {
   const checked = checkedSessions.has(s.id) ? 'checked' : '';
   const sel = s.id === selectedSessionId ? ' selected' : '';
   const badgeClass = 'badge-' + (s.status || 'completed');
-  return `<div class="session-item${sel}" data-id="${escAttr(s.id)}" onclick="selectSession('${escAttr(s.id)}')">
+  return `<div class="session-item${sel}" data-id="${escAttr(s.id)}" onclick="handleSessionClick('${escAttr(s.id)}', event)" ondblclick="handleSessionDblClick('${escAttr(s.id)}', event)">
     <input type="checkbox" class="session-checkbox" data-session-id="${escAttr(s.id)}" ${checked}
       onclick="event.stopPropagation();toggleCheck('${escAttr(s.id)}', this.checked, event)">
     <div class="session-info">
-      <div class="session-name" ondblclick="event.stopPropagation();startRename('${escAttr(s.id)}', this)">${escHtml(s.name)}</div>
+      <div class="session-name" data-session-id="${escAttr(s.id)}">${escHtml(s.name)}</div>
       <div class="session-meta">${date} ${time} &middot; ${dur} &middot; ${s.segment_count || 0} segs</div>
     </div>
     <span class="session-badge ${badgeClass}">${escHtml(s.status || 'completed')}</span>
@@ -1211,6 +1211,25 @@ async function deleteFolder(folderId) {
   if (!confirm('Delete this folder? Sessions will be moved to Unfiled.')) return;
   await apiCall('/api/folders/' + folderId, { method: 'DELETE' });
   refreshSessionList();
+}
+
+// --- Click vs double-click on sessions ---
+let sessionClickTimer = null;
+
+function handleSessionClick(id, event) {
+  if (event.target.classList.contains('session-checkbox')) return;
+  if (sessionClickTimer) { clearTimeout(sessionClickTimer); sessionClickTimer = null; return; }
+  sessionClickTimer = setTimeout(() => {
+    sessionClickTimer = null;
+    selectSession(id);
+  }, 250);
+}
+
+function handleSessionDblClick(id, event) {
+  event.stopPropagation();
+  if (sessionClickTimer) { clearTimeout(sessionClickTimer); sessionClickTimer = null; }
+  const nameEl = event.currentTarget.querySelector('.session-name[data-session-id="' + id + '"]');
+  if (nameEl) startRename(id, nameEl);
 }
 
 // --- Rename sessions ---
