@@ -80,6 +80,7 @@ else
 
   curl -fsSL "$ASSET_URL" | tar xz -C "$SWIFT_BIN_DIR"
   chmod +x "$SWIFT_BIN"
+  xattr -d com.apple.quarantine "$SWIFT_BIN" 2>/dev/null || true
   ok "Swift audio-capture CLI downloaded"
 fi
 
