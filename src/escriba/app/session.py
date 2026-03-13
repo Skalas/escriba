@@ -213,24 +213,49 @@ class TranscriptionSession:
         import numpy as np
         import sounddevice as sd
 
-        sample_rate = self.config.audio.sample_rate
+        target_rate = self.config.audio.sample_rate
         channels = self.config.audio.channels
         callback_fn = self._on_mic_audio if mix_mode else self._on_audio_data
+
+        # Try the target rate first; fall back to the device's default rate
+        try:
+            device_info = sd.query_devices(kind="input")
+            device_rate = int(device_info["default_samplerate"])
+        except Exception:
+            device_rate = target_rate
+
+        try:
+            sd.check_input_settings(samplerate=target_rate, channels=channels)
+            actual_rate = target_rate
+        except Exception:
+            logger.info("Mic doesn't support %dHz, using native %dHz with resampling", target_rate, device_rate)
+            actual_rate = device_rate
+
+        needs_resample = actual_rate != target_rate
 
         def mic_callback(indata, frames, time_info, status):
             if status:
                 logger.debug("Mic status: %s", status)
-            pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
+            samples = indata[:, 0]
+            if needs_resample:
+                # Resample from actual_rate to target_rate using linear interpolation
+                n_target = int(len(samples) * target_rate / actual_rate)
+                indices = np.linspace(0, len(samples) - 1, n_target)
+                samples = np.interp(indices, np.arange(len(samples)), samples)
+            pcm = (samples * 32767).astype(np.int16).tobytes()
             callback_fn(pcm)
 
         self._mic_stream = sd.InputStream(
-            samplerate=sample_rate,
+            samplerate=actual_rate,
             channels=channels,
             dtype="float32",
             callback=mic_callback,
         )
         self._mic_stream.start()
-        logger.info("Started microphone capture (sample_rate=%s, mix_mode=%s)", sample_rate, mix_mode)
+        logger.info(
+            "Started microphone capture (device_rate=%s, target_rate=%s, resample=%s, mix_mode=%s)",
+            actual_rate, target_rate, needs_resample, mix_mode,
+        )
 
     def _on_audio_data(self, data: bytes):
         with self._buffer_lock:
@@ -432,15 +457,14 @@ def _generate_custom_notes(
 
 
 def _call_gemini(prompt: str) -> str | None:
-    import google.generativeai as genai
+    from google import genai
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return "Error: GEMINI_API_KEY not set"
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview")
-    model = genai.GenerativeModel(model_name)
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(model=model_name, contents=prompt)
     return response.text
 
 

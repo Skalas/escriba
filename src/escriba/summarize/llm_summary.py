@@ -50,10 +50,10 @@ def _generate_summary_gemini(
         Diccionario con el resumen estructurado o None si falla
     """
     try:
-        import google.generativeai as genai
+        from google import genai
     except ImportError:
         logger.error(
-            "google-generativeai not installed. Install with: pip install google-generativeai"
+            "google-genai not installed. Install with: pip install google-genai"
         )
         return None
 
@@ -63,9 +63,8 @@ def _generate_summary_gemini(
         return None
 
     try:
-        genai.configure(api_key=api_key)
+        client = genai.Client(api_key=api_key)
         model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview")
-        model = genai.GenerativeModel(model_name)
 
         prompt = f"""Analiza esta transcripción de llamada/reunión y genera un resumen estructurado en formato JSON.
 
@@ -89,7 +88,7 @@ Genera un JSON con la siguiente estructura:
 
 Responde SOLO con el JSON, sin texto adicional."""
 
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model=model_name, contents=prompt)
         response_text = response.text.strip()
 
         # Limpiar respuesta (puede tener markdown code blocks)
