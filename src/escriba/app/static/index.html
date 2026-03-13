@@ -1073,6 +1073,16 @@ function toggleFolder(folderId) {
 }
 
 async function selectSession(id) {
+  // If clicking the active recording session, just show live view
+  const activeSession = allSessions.find(s => s.id === id && s.status === 'active');
+  if (activeSession) {
+    selectedSessionId = null;
+    viewingHistory = false;
+    showLiveView();
+    document.querySelectorAll('.session-item').forEach(el => el.classList.remove('selected'));
+    return;
+  }
+
   selectedSessionId = id;
   viewingHistory = true;
   hideError();
