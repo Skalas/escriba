@@ -17,6 +17,12 @@ _LEGACY_DB_DIR = Path.home() / "Library" / "Application Support" / "local-transc
 _DB_FILENAME = "transcriber.db"
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS folders (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    position INTEGER DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -29,7 +35,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     status TEXT DEFAULT 'active',
     notes_text TEXT,
     parent_session_ids TEXT,
-    audio_path TEXT
+    audio_path TEXT,
+    folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS segments (
@@ -87,6 +94,19 @@ class Database:
         if "audio_path" not in columns:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN audio_path TEXT")
             logger.info("Migration: added audio_path column to sessions")
+        if "folder_id" not in columns:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL"
+            )
+            logger.info("Migration: added folder_id column to sessions")
+
+        # Ensure folders table exists (for DBs created before folders feature)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS folders ("
+            "id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER DEFAULT 0)"
+        )
+
+    # --- Sessions ---
 
     def create_session(
         self, name: str, model: str | None = None, language: str | None = None, backend: str | None = None
@@ -143,7 +163,7 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
-    def list_sessions(self, limit: int = 50) -> list[dict]:
+    def list_sessions(self, limit: int = 100) -> list[dict]:
         rows = self._conn.execute(
             "SELECT s.*, (SELECT COUNT(*) FROM segments WHERE session_id = s.id) AS segment_count "
             "FROM sessions s ORDER BY s.started_at DESC LIMIT ?",
@@ -173,6 +193,21 @@ class Database:
         self._conn.execute(
             "UPDATE sessions SET name = ? WHERE id = ?",
             (name, session_id),
+        )
+        self._conn.commit()
+
+    def move_session_to_folder(self, session_id: str, folder_id: str | None):
+        self._conn.execute(
+            "UPDATE sessions SET folder_id = ? WHERE id = ?",
+            (folder_id, session_id),
+        )
+        self._conn.commit()
+
+    def move_sessions_to_folder(self, session_ids: list[str], folder_id: str | None):
+        placeholders = ",".join("?" for _ in session_ids)
+        self._conn.execute(
+            f"UPDATE sessions SET folder_id = ? WHERE id IN ({placeholders})",
+            [folder_id, *session_ids],
         )
         self._conn.commit()
 
@@ -221,6 +256,43 @@ class Database:
             "UPDATE sessions SET notes_text = ? WHERE id = ?",
             (notes_text, session_id),
         )
+        self._conn.commit()
+
+    # --- Folders ---
+
+    def create_folder(self, name: str) -> str:
+        folder_id = str(uuid.uuid4())
+        max_pos = self._conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM folders"
+        ).fetchone()[0]
+        self._conn.execute(
+            "INSERT INTO folders (id, name, position) VALUES (?, ?, ?)",
+            (folder_id, name, max_pos),
+        )
+        self._conn.commit()
+        return folder_id
+
+    def list_folders(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT f.*, (SELECT COUNT(*) FROM sessions WHERE folder_id = f.id) AS session_count "
+            "FROM folders f ORDER BY f.position ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def rename_folder(self, folder_id: str, name: str):
+        self._conn.execute(
+            "UPDATE folders SET name = ? WHERE id = ?",
+            (name, folder_id),
+        )
+        self._conn.commit()
+
+    def delete_folder(self, folder_id: str):
+        # Move sessions out of folder before deleting
+        self._conn.execute(
+            "UPDATE sessions SET folder_id = NULL WHERE folder_id = ?",
+            (folder_id,),
+        )
+        self._conn.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
         self._conn.commit()
 
     def close(self):

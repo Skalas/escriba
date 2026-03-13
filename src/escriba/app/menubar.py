@@ -123,7 +123,7 @@ class TranscriberMenuBar(rumps.App):
         self.menu = [
             self._recording_item,
             None,
-            rumps.MenuItem("Open Dashboard", callback=self.open_dashboard),
+            rumps.MenuItem("Open Escriba", callback=self.open_dashboard),
             rumps.MenuItem("Reload Config", callback=self.reload_config),
             None,
             rumps.MenuItem("Quit", callback=self.quit_app),

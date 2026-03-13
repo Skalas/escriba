@@ -7,7 +7,6 @@ import logging
 import os
 import sys
 import threading
-from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -54,6 +53,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json_response(self._get_config())
         elif path == "/api/sessions":
             self._json_response(self._get_sessions())
+        elif path == "/api/folders":
+            self._json_response(self._get_folders())
         elif path.startswith("/api/sessions/") and path.endswith("/audio"):
             session_id = path.split("/api/sessions/")[1].rsplit("/audio", 1)[0]
             self._serve_audio(session_id)
@@ -82,6 +83,12 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/sessions/merge":
             body = self._read_body()
             self._json_response(self._merge_sessions(body))
+        elif path == "/api/sessions/move":
+            body = self._read_body()
+            self._json_response(self._move_sessions(body))
+        elif path == "/api/folders":
+            body = self._read_body()
+            self._json_response(self._create_folder(body))
         elif path.startswith("/api/sessions/") and path.endswith("/retranscribe"):
             session_id = path.split("/api/sessions/")[1].rsplit("/retranscribe", 1)[0]
             self._json_response(self._retranscribe_session(session_id))
@@ -107,6 +114,10 @@ class _Handler(BaseHTTPRequestHandler):
             session_id = path.split("/api/sessions/")[1].rsplit("/rename", 1)[0]
             body = self._read_body()
             self._json_response(self._rename_session(session_id, body))
+        elif path.startswith("/api/folders/") and path.endswith("/rename"):
+            folder_id = path.split("/api/folders/")[1].rsplit("/rename", 1)[0]
+            body = self._read_body()
+            self._json_response(self._rename_folder(folder_id, body))
         else:
             self._json_response({"ok": False, "error": "Not found"}, status=404)
 
@@ -114,7 +125,13 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
-        if path.startswith("/api/sessions/"):
+        if path.startswith("/api/folders/"):
+            folder_id = path.split("/api/folders/")[1]
+            if folder_id:
+                self._json_response(self._delete_folder(folder_id))
+            else:
+                self._json_response({"ok": False, "error": "Not found"}, status=404)
+        elif path.startswith("/api/sessions/"):
             session_id = path.split("/api/sessions/")[1]
             if session_id:
                 self._json_response(self._delete_session(session_id))
@@ -156,7 +173,6 @@ class _Handler(BaseHTTPRequestHandler):
         range_header = self.headers.get("Range")
 
         if range_header:
-            # Parse Range: bytes=start-end
             range_spec = range_header.replace("bytes=", "")
             parts = range_spec.split("-")
             start = int(parts[0]) if parts[0] else 0
@@ -215,7 +231,6 @@ class _Handler(BaseHTTPRequestHandler):
         return {"ok": True, "is_active": False, "session_id": None}
 
     def _get_transcript(self, session_id: str | None = None) -> dict:
-        # If a session_id is given, load from DB
         if session_id:
             db = self._get_db()
             if not db:
@@ -230,7 +245,6 @@ class _Handler(BaseHTTPRequestHandler):
                 "notes": session_info.get("notes_text") if session_info else None,
             }
 
-        # Otherwise return the live session transcript
         session: TranscriptionSession | None = self.app_state.get("session")
         if not session:
             return {"ok": True, "text": "", "segments": []}
@@ -243,9 +257,16 @@ class _Handler(BaseHTTPRequestHandler):
     def _get_sessions(self) -> dict:
         db = self._get_db()
         if not db:
-            return {"ok": True, "sessions": []}
+            return {"ok": True, "sessions": [], "folders": []}
         sessions = db.list_sessions()
-        return {"ok": True, "sessions": sessions}
+        folders = db.list_folders()
+        return {"ok": True, "sessions": sessions, "folders": folders}
+
+    def _get_folders(self) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": True, "folders": []}
+        return {"ok": True, "folders": db.list_folders()}
 
     def _get_session_detail(self, session_id: str) -> dict:
         db = self._get_db()
@@ -314,6 +335,17 @@ class _Handler(BaseHTTPRequestHandler):
         merged_id = db.merge_sessions(session_ids, name)
         return {"ok": True, "session_id": merged_id}
 
+    def _move_sessions(self, body: dict) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        session_ids = body.get("session_ids", [])
+        folder_id = body.get("folder_id")  # None means "unfiled"
+        if not session_ids:
+            return {"ok": False, "error": "No sessions specified"}
+        db.move_sessions_to_folder(session_ids, folder_id)
+        return {"ok": True}
+
     def _rename_session(self, session_id: str, body: dict) -> dict:
         db = self._get_db()
         if not db:
@@ -346,7 +378,6 @@ class _Handler(BaseHTTPRequestHandler):
         if not audio_path.exists():
             return {"ok": False, "error": "Audio file not found on disk"}
 
-        # Don't retranscribe while recording
         active_session: TranscriptionSession | None = self.app_state.get("session")
         if active_session and active_session.is_active:
             return {"ok": False, "error": "Stop recording before re-transcribing"}
@@ -358,7 +389,6 @@ class _Handler(BaseHTTPRequestHandler):
             config: AppConfig = self.app_state.get("config", AppConfig.load())
             segments = retranscribe_from_wav(audio_path, config)
 
-            # Clear old segments and save new ones
             db.delete_segments(session_id)
             if segments:
                 db.add_segments(session_id, segments)
@@ -412,21 +442,17 @@ class _Handler(BaseHTTPRequestHandler):
             save_config_to_toml,
         )
 
-        # Separate env keys from TOML config
         env_updates = {}
         env_key_names = ["GEMINI_API_KEY", "ANTHROPIC_API_KEY", "HUGGINGFACE_TOKEN"]
         for key in env_key_names:
             if key in body and body[key].strip():
                 env_updates[key] = body[key].strip()
 
-        # Update .env file if needed
         if env_updates:
             self._update_env_file(env_updates)
-            # Also set in current process
             for k, v in env_updates.items():
                 os.environ[k] = v
 
-        # Write TOML config — use the path the current config was loaded from
         toml_data = {k: v for k, v in body.items() if k not in env_key_names}
         if toml_data:
             current_config = self.app_state.get("config")
@@ -437,7 +463,6 @@ class _Handler(BaseHTTPRequestHandler):
             )
             save_config_to_toml(toml_data, config_path)
 
-        # Trigger reload
         reload_fn = self.app_state.get("reload_config")
         if reload_fn:
             new_config = reload_fn()
@@ -495,6 +520,35 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": False, "error": "Database not available"}
         notes = body.get("notes_text", "")
         db.save_notes(session_id, notes)
+        return {"ok": True}
+
+    # --- Folders ---
+
+    def _create_folder(self, body: dict) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        name = body.get("name", "").strip()
+        if not name:
+            return {"ok": False, "error": "Folder name cannot be empty"}
+        folder_id = db.create_folder(name)
+        return {"ok": True, "folder_id": folder_id}
+
+    def _rename_folder(self, folder_id: str, body: dict) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        name = body.get("name", "").strip()
+        if not name:
+            return {"ok": False, "error": "Name cannot be empty"}
+        db.rename_folder(folder_id, name)
+        return {"ok": True}
+
+    def _delete_folder(self, folder_id: str) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        db.delete_folder(folder_id)
         return {"ok": True}
 
 
