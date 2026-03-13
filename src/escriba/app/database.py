@@ -68,8 +68,17 @@ class Database:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA)
         self._migrate()
+        self._close_stale_sessions()
         self._conn.commit()
         logger.info("Database opened: %s", db_path)
+
+    def _close_stale_sessions(self):
+        """Mark any leftover 'active' sessions as 'completed' on startup."""
+        cursor = self._conn.execute(
+            "UPDATE sessions SET status = 'completed' WHERE status = 'active'"
+        )
+        if cursor.rowcount > 0:
+            logger.info("Closed %d stale active session(s)", cursor.rowcount)
 
     def _migrate(self):
         """Run safe migrations for columns added after initial schema."""
@@ -148,6 +157,10 @@ class Database:
             (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def delete_segments(self, session_id: str):
+        self._conn.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
+        self._conn.commit()
 
     def update_audio_path(self, session_id: str, audio_path: str):
         self._conn.execute(

@@ -457,3 +457,53 @@ def _call_claude(prompt: str) -> str | None:
         messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text
+
+
+def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
+    """Re-transcribe a WAV file and return segments."""
+    import wave as wave_mod
+
+    with wave_mod.open(str(audio_path), "rb") as wf:
+        sample_rate = wf.getframerate()
+        channels = wf.getnchannels()
+        total_frames = wf.getnframes()
+        all_pcm = wf.readframes(total_frames)
+
+    backend = config.streaming.backend
+    model_size = config.streaming.model_size
+    language = config.streaming.language
+    chunk_duration = config.streaming.chunk_duration
+
+    logger.info(
+        "Re-transcribing %s: %d frames, backend=%s, model=%s",
+        audio_path.name, total_frames, backend, model_size,
+    )
+
+    if backend == "mlx-whisper":
+        from escriba.transcribe.streaming_mlx import StreamingTranscriberMLX
+        transcriber = StreamingTranscriberMLX(
+            model_size=model_size, language=language, realtime_output=False,
+        )
+    else:
+        from escriba.transcribe.streaming import StreamingTranscriber
+        transcriber = StreamingTranscriber(
+            model_size=model_size, language=language,
+            device=config.streaming.device, realtime_output=False,
+        )
+
+    chunk_bytes = int(sample_rate * channels * 2 * chunk_duration)
+    min_bytes = sample_rate * 2  # at least 0.5s
+
+    for offset in range(0, len(all_pcm), chunk_bytes):
+        chunk_pcm = all_pcm[offset:offset + chunk_bytes]
+        if len(chunk_pcm) < min_bytes:
+            continue
+        wav_data = _build_wav(chunk_pcm, sample_rate, channels)
+        try:
+            transcriber.process_wav_chunk(wav_data)
+        except Exception as e:
+            logger.error("Error in re-transcribe chunk: %s", e)
+
+    segments = list(transcriber.segments)
+    logger.info("Re-transcription complete: %d segments", len(segments))
+    return segments

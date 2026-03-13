@@ -82,6 +82,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/sessions/merge":
             body = self._read_body()
             self._json_response(self._merge_sessions(body))
+        elif path.startswith("/api/sessions/") and path.endswith("/retranscribe"):
+            session_id = path.split("/api/sessions/")[1].rsplit("/retranscribe", 1)[0]
+            self._json_response(self._retranscribe_session(session_id))
         elif path.startswith("/api/sessions/") and path.endswith("/generate-notes"):
             session_id = path.split("/api/sessions/")[1].rsplit("/generate-notes", 1)[0]
             body = self._read_body()
@@ -313,6 +316,43 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": False, "error": "Database not available"}
         db.delete_session(session_id)
         return {"ok": True}
+
+    def _retranscribe_session(self, session_id: str) -> dict:
+        """Re-transcribe a session from its saved WAV audio file."""
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        session = db.get_session(session_id)
+        if not session:
+            return {"ok": False, "error": "Session not found"}
+        if not session.get("audio_path"):
+            return {"ok": False, "error": "No audio file for this session"}
+
+        audio_path = Path(session["audio_path"])
+        if not audio_path.exists():
+            return {"ok": False, "error": "Audio file not found on disk"}
+
+        # Don't retranscribe while recording
+        active_session: TranscriptionSession | None = self.app_state.get("session")
+        if active_session and active_session.is_active:
+            return {"ok": False, "error": "Stop recording before re-transcribing"}
+
+        try:
+            from escriba.app.session import retranscribe_from_wav
+            from escriba.config import AppConfig
+
+            config: AppConfig = self.app_state.get("config", AppConfig.load())
+            segments = retranscribe_from_wav(audio_path, config)
+
+            # Clear old segments and save new ones
+            db.delete_segments(session_id)
+            if segments:
+                db.add_segments(session_id, segments)
+
+            return {"ok": True, "segment_count": len(segments)}
+        except Exception as e:
+            logger.error("Re-transcribe failed: %s", e, exc_info=True)
+            return {"ok": False, "error": str(e)}
 
     def _generate_session_notes(self, session_id: str, body: dict) -> dict:
         db = self._get_db()

@@ -485,6 +485,7 @@
       <h2 id="session-title">Session</h2>
       <div class="controls-row">
         <button class="btn-start" id="btn-back-to-live" onclick="backToLive()" style="display:none;">Back to Live</button>
+        <button class="btn-secondary" id="btn-retranscribe" onclick="retranscribeSession()" style="display:none;">Re-transcribe</button>
         <button class="btn-secondary" onclick="exportSession()">Export</button>
       </div>
     </header>
@@ -724,32 +725,42 @@ const PROMPT_TEMPLATES = [
   {
     id: 'summary',
     label: 'Executive Summary',
-    prompt: 'Write a concise executive summary (3-5 sentences) covering the purpose of the meeting, main topics discussed, and overall outcome.',
+    prompt: 'Write an executive summary in 3-5 sentences. State the purpose of the conversation, the key topics covered, the main conclusions reached, and any agreed-upon next steps. Use clear, direct language — avoid filler phrases.',
   },
   {
     id: 'actions',
     label: 'Action Items',
-    prompt: 'Extract all action items, tasks, and to-dos. For each, identify: the task description, who is responsible (if mentioned), and any deadline or timeline mentioned. Format as a checklist.',
+    prompt: 'Extract every action item, task, and commitment made. Format as a markdown checklist. For each item include: what needs to be done, who owns it (if stated), and the deadline or timeframe (if mentioned). If ownership or deadline is unclear, note it as TBD. Group by owner when possible.',
   },
   {
     id: 'decisions',
     label: 'Decisions',
-    prompt: 'List all decisions that were made during this meeting. Include the context for each decision and any alternatives that were considered.',
+    prompt: 'List every decision made during this conversation. For each decision, state: (1) what was decided, (2) the rationale or context behind it, and (3) any alternatives that were discussed and rejected. Only include actual decisions — not suggestions or open questions.',
   },
   {
     id: 'questions',
     label: 'Open Questions',
-    prompt: 'Identify any unresolved questions, concerns, or topics that need follow-up. Note who raised them if mentioned.',
+    prompt: 'List all unresolved questions, open items, and topics that need follow-up. For each, note who raised it (if mentioned) and what information or action is needed to resolve it. Distinguish between questions that were deferred intentionally vs. ones that were simply not addressed.',
   },
   {
     id: 'keypoints',
     label: 'Key Points',
-    prompt: 'List the most important points, insights, and takeaways from the discussion in bullet-point format.',
+    prompt: 'Summarize the most important points, insights, and takeaways as a bulleted list. Focus on substance — what was said that matters — not procedural details. Capture specific data points, names, and figures mentioned. Keep each bullet to 1-2 sentences.',
   },
   {
     id: 'blockers',
     label: 'Risks & Blockers',
-    prompt: 'Identify any risks, blockers, dependencies, or concerns raised during the meeting that could impact progress.',
+    prompt: 'Identify all risks, blockers, dependencies, and concerns raised. For each, note: what the issue is, who flagged it, and any proposed mitigation or workaround discussed. Include implicit risks (things that seem problematic even if not explicitly flagged as risks).',
+  },
+  {
+    id: 'minutes',
+    label: 'Meeting Minutes',
+    prompt: 'Write structured meeting minutes with these sections: Attendees (list names/speakers if identifiable), Agenda Topics (what was discussed, in order), Key Discussion Points (important arguments and perspectives), Decisions Made, Action Items, and Next Steps. Use markdown formatting.',
+  },
+  {
+    id: 'followup',
+    label: 'Follow-up Email',
+    prompt: 'Draft a concise follow-up email summarizing this conversation. Include: a brief recap of what was discussed, decisions made, action items with owners, and next steps or upcoming deadlines. Use a professional but friendly tone. Start with "Hi team," and end with a clear call to action.',
   },
 ];
 
@@ -925,6 +936,7 @@ async function refreshSessionList() {
 async function selectSession(id) {
   selectedSessionId = id;
   viewingHistory = true;
+  hideError();
   try {
     const res = await api('/api/sessions/' + id);
     if (!res.ok) return;
@@ -936,11 +948,12 @@ async function selectSession(id) {
     document.getElementById('session-seg-count').textContent = res.segments ? res.segments.length : 0;
     document.getElementById('session-status').textContent = s.status || '-';
 
-    // Audio player
+    // Audio player + re-transcribe button
     const audioCard = document.getElementById('audio-player-card');
     const audioEl = document.getElementById('session-audio');
     const hasAudio = !!s.audio_path;
     audioCard.style.display = hasAudio ? '' : 'none';
+    document.getElementById('btn-retranscribe').style.display = hasAudio ? '' : 'none';
     if (hasAudio) {
       audioEl.src = '/api/sessions/' + id + '/audio';
       currentSessionSegments = res.segments || [];
@@ -1289,6 +1302,30 @@ function showError(msg) {
 }
 function hideError() {
   document.getElementById('error-banner').classList.remove('visible');
+}
+
+// --- Re-transcribe ---
+async function retranscribeSession() {
+  if (!selectedSessionId) return;
+  if (!confirm('Re-transcribe this session from the saved audio? This will replace the current transcript.')) return;
+  hideError();
+  const btn = document.getElementById('btn-retranscribe');
+  btn.disabled = true;
+  btn.textContent = 'Transcribing...';
+  try {
+    const res = await api('/api/sessions/' + selectedSessionId + '/retranscribe', { method: 'POST' });
+    if (res.ok) {
+      btn.textContent = res.segment_count + ' segments';
+      await selectSession(selectedSessionId);
+    } else {
+      showError(res.error || 'Re-transcription failed');
+    }
+  } catch (e) {
+    showError('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Re-transcribe';
+  }
 }
 
 // --- Audio playback sync ---

@@ -219,11 +219,11 @@ class StreamingConfig:
     # 15s is a good balance between context (accuracy) and latency.
     # Lower values (e.g., 5s) reduce latency; higher values (e.g., 30s) improve accuracy.
     chunk_duration: float = 15.0
-    model_size: str = "base"
-    language: str = "es"
+    model_size: str = "medium"
+    language: str = "auto"
     device: str = "auto"
-    backend: str = "faster-whisper"
-    vad_enabled: bool = False
+    backend: str = "mlx-whisper"
+    vad_enabled: bool = True
     realtime_output: bool = True
     export_formats: list[str] = field(default_factory=lambda: ["txt", "json"])
     show_metrics: bool = False
@@ -242,8 +242,8 @@ class AudioConfig:
     sample_rate: int = 16000
     channels: int = 1
     mic_only: bool = False
-    audio_source: str = "system"  # "system" | "mic" | "both"
-    mic_boost: float = 1.2
+    audio_source: str = "both"  # "system" | "mic" | "both"
+    mic_boost: float = 1.3
     auto_detect_devices: bool = True
     system_device: str = "0"
     mic_device: str = "1"
@@ -324,7 +324,7 @@ class AppConfig:
             channels=_resolve(channels, lambda: get_int_env("CHANNELS", 1, min_value=1)),
             mic_only=resolved_mic_only,
             audio_source=resolved_audio_source,
-            mic_boost=_resolve(mic_boost, lambda: get_float_env("AUDIO_MIC_BOOST", 1.2, min_value=0.1, max_value=5.0)),
+            mic_boost=_resolve(mic_boost, lambda: get_float_env("AUDIO_MIC_BOOST", 1.3, min_value=0.1, max_value=5.0)),
             auto_detect_devices=_resolve(auto_detect, lambda: get_bool_env("AUTO_DETECT_DEVICES", True)),
             system_device=_resolve(system_device, lambda: get_str_env("SYSTEM_DEVICE", "0")),
             mic_device=_resolve(mic_device, lambda: get_str_env("MIC_DEVICE", "1")),
@@ -354,11 +354,11 @@ class AppConfig:
 
         streaming_cfg = StreamingConfig(
             chunk_duration=_resolve(chunk_duration, lambda: get_float_env("STREAMING_CHUNK_DURATION", 15.0, min_value=0.5)),
-            model_size=_resolve(model_size, lambda: get_str_env("STREAMING_MODEL_SIZE", "base")),
-            language=_resolve(language, lambda: get_str_env("STREAMING_LANGUAGE", "es")),
+            model_size=_resolve(model_size, lambda: get_str_env("STREAMING_MODEL_SIZE", "medium")),
+            language=_resolve(language, lambda: get_str_env("STREAMING_LANGUAGE", "auto")),
             device=_resolve(device, lambda: get_str_env("STREAMING_DEVICE", "auto")),
-            backend=_resolve(backend, lambda: get_str_env("STREAMING_BACKEND", "faster-whisper")),
-            vad_enabled=_resolve(vad_enabled, lambda: get_bool_env("STREAMING_VAD_ENABLED", False)),
+            backend=_resolve(backend, lambda: get_str_env("STREAMING_BACKEND", "mlx-whisper")),
+            vad_enabled=_resolve(vad_enabled, lambda: get_bool_env("STREAMING_VAD_ENABLED", True)),
             realtime_output=_resolve(realtime_output, lambda: get_bool_env("STREAMING_REALTIME_OUTPUT", True)),
             export_formats=export_formats
             if export_formats is not None

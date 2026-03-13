@@ -73,7 +73,6 @@ def build():
     if not uv_path:
         raise RuntimeError("uv not found on PATH")
 
-    # Write launcher script
     log_file = Path.home() / "Library" / "Logs" / "escriba" / "app.log"
     launcher = MACOS_DIR / "launcher"
     launcher.write_text(f"""#!/usr/bin/env bash

@@ -55,20 +55,15 @@ def _ensure_dashboard_app(icon_path: Path | None = None) -> Path:
         with open(contents / "Info.plist", "wb") as f:
             plistlib.dump(plist, f)
 
-        # Launcher script — finds uv and runs the webview
+        # Launcher script — uses the venv Python directly (no uv at runtime)
         # NOTE: project_dir is baked in at build time; if the project moves,
         # delete ~/Library/Application Support/Escriba/Escriba.app to rebuild.
         project_dir = Path(__file__).resolve().parent.parent.parent.parent
+        venv_python = project_dir / ".venv" / "bin" / "python3"
         launcher = macos / "open-dashboard"
         launcher.write_text(f"""#!/usr/bin/env bash
-export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 cd "{project_dir}"
-UV=$(command -v uv 2>/dev/null)
-if [ -z "$UV" ]; then
-    echo "uv not found" >&2
-    exit 1
-fi
-exec "$UV" run python -c "
+exec "{venv_python}" -c "
 import webview, sys
 url = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:{PORT}'
 webview.create_window('Escriba', url, width=1060, height=720)
@@ -127,7 +122,6 @@ class TranscriberMenuBar(rumps.App):
             rumps.MenuItem("Quit", callback=self.quit_app),
         ]
         self._last_active = False
-        self._sync_timer = rumps.Timer(self._sync_ui_state, 1)
 
     def _do_reload(self):
         from dotenv import load_dotenv
@@ -144,6 +138,7 @@ class TranscriberMenuBar(rumps.App):
         _notify("Escriba", "Config reloaded", f"model={new_config.streaming.model_size}")
         return new_config
 
+    @rumps.timer(2)
     def _sync_ui_state(self, _):
         """Poll session state and keep menu bar icon/title in sync."""
         session: TranscriptionSession | None = self.app_state.get("session")
@@ -229,6 +224,5 @@ def run_menubar_app(config: AppConfig | None = None):
 
     app = TranscriberMenuBar(config)
     app.server = start_server(app.app_state)
-    app._sync_timer.start()
     logger.info("Dashboard at http://127.0.0.1:%s", PORT)
     app.run()
