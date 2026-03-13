@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 import logging
-import tempfile
 import threading
 import time
 from datetime import datetime
@@ -155,74 +154,79 @@ class StreamingTranscriberMLX:
                     )
                 return None
 
-            # mlx-whisper requires a file path, so write to temp file
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-                tmp_file.write(wav_data)
-                tmp_path = tmp_file.name
+            # Decode WAV to numpy array — passes audio directly to mlx-whisper,
+            # avoiding the ffmpeg dependency that load_audio() requires.
+            import numpy as np
 
-            try:
-                # Get audio duration for metrics
-                wav_io = io.BytesIO(wav_data)
-                with wave.open(wav_io, "rb") as wav_file:
-                    sample_rate = wav_file.getframerate()
-                    n_frames = wav_file.getnframes()
-                    chunk_duration = n_frames / sample_rate if sample_rate > 0 else 0
+            wav_io = io.BytesIO(wav_data)
+            with wave.open(wav_io, "rb") as wav_file:
+                sample_rate = wav_file.getframerate()
+                n_frames = wav_file.getnframes()
+                n_channels = wav_file.getnchannels()
+                sampwidth = wav_file.getsampwidth()
+                chunk_duration = n_frames / sample_rate if sample_rate > 0 else 0
+                raw_frames = wav_file.readframes(n_frames)
 
-                # Transcribe with mlx-whisper
-                # API: mlx_whisper.transcribe(audio_path, path_or_hf_repo=model, ...)
-                transcribe_kwargs = {
-                    "path_or_hf_repo": self.model_path,
-                    "condition_on_previous_text": self.hallucination_config.condition_on_previous_text,
-                    "no_speech_threshold": self.hallucination_config.no_speech_threshold,
-                    "compression_ratio_threshold": self.hallucination_config.compression_ratio_threshold,
-                    "logprob_threshold": self.hallucination_config.logprob_threshold,
-                    "hallucination_silence_threshold": 2.0,
-                }
-                if self.language and self.language != "auto":
-                    transcribe_kwargs["language"] = self.language
-                result = mlx_whisper.transcribe(tmp_path, **transcribe_kwargs)
+            if sampwidth == 2:
+                audio_np = np.frombuffer(raw_frames, dtype=np.int16).astype(np.float32) / 32768.0
+            elif sampwidth == 4:
+                audio_np = np.frombuffer(raw_frames, dtype=np.int32).astype(np.float32) / 2147483648.0
+            else:
+                audio_np = np.frombuffer(raw_frames, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
 
-                # Process result
-                texts = []
-                if result and "segments" in result:
-                    for segment in result["segments"]:
-                        text = segment.get("text", "").strip()
-                        if text and not self._is_repetitive(text):
-                            texts.append(text)
-                            start = segment.get("start", 0.0)
-                            end = segment.get("end", start)
-                            self._handle_transcription(
-                                text,
-                                self.accumulated_audio_time + start,
-                                self.accumulated_audio_time + end,
-                            )
-                        elif text:
-                            logger.debug("Filtered repetitive text: %s...", text[:50])
+            if n_channels > 1:
+                audio_np = audio_np.reshape(-1, n_channels).mean(axis=1)
 
-                # Update accumulated time
-                if chunk_duration > 0:
-                    self.accumulated_audio_time += chunk_duration
-                    if self.metrics:
-                        self.metrics.record_audio_duration(chunk_duration)
+            if sample_rate != 16000:
+                duration_s = len(audio_np) / sample_rate
+                target_len = int(duration_s * 16000)
+                audio_np = np.interp(
+                    np.linspace(0, len(audio_np), target_len, endpoint=False),
+                    np.arange(len(audio_np)),
+                    audio_np,
+                ).astype(np.float32)
 
-                result_text = " ".join(texts) if texts else None
+            transcribe_kwargs = {
+                "path_or_hf_repo": self.model_path,
+                "condition_on_previous_text": self.hallucination_config.condition_on_previous_text,
+                "no_speech_threshold": self.hallucination_config.no_speech_threshold,
+                "compression_ratio_threshold": self.hallucination_config.compression_ratio_threshold,
+                "logprob_threshold": self.hallucination_config.logprob_threshold,
+                "hallucination_silence_threshold": 2.0,
+            }
+            if self.language and self.language != "auto":
+                transcribe_kwargs["language"] = self.language
+            result = mlx_whisper.transcribe(audio_np, **transcribe_kwargs)
 
-                # Record metrics
-                if self.metrics and start_timestamp:
-                    self.metrics.record_chunk_end(
-                        start_timestamp, had_transcription=(result_text is not None)
-                    )
+            texts = []
+            if result and "segments" in result:
+                for segment in result["segments"]:
+                    text = segment.get("text", "").strip()
+                    if text and not self._is_repetitive(text):
+                        texts.append(text)
+                        start = segment.get("start", 0.0)
+                        end = segment.get("end", start)
+                        self._handle_transcription(
+                            text,
+                            self.accumulated_audio_time + start,
+                            self.accumulated_audio_time + end,
+                        )
+                    elif text:
+                        logger.debug("Filtered repetitive text: %s...", text[:50])
 
-                return result_text
+            if chunk_duration > 0:
+                self.accumulated_audio_time += chunk_duration
+                if self.metrics:
+                    self.metrics.record_audio_duration(chunk_duration)
 
-            finally:
-                # Clean up temp file
-                import os
+            result_text = " ".join(texts) if texts else None
 
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+            if self.metrics and start_timestamp:
+                self.metrics.record_chunk_end(
+                    start_timestamp, had_transcription=(result_text is not None)
+                )
+
+            return result_text
 
         except Exception as e:
             logger.error("Error processing WAV chunk: %s", e, exc_info=True)
