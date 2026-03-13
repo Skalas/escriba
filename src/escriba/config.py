@@ -205,7 +205,7 @@ class SpeakerConfig:
         threshold: Threshold for simple speaker change detection (0.0-1.0).
     """
 
-    mode: str = "none"
+    mode: str = "pyannote"
     threshold: float = 0.3
 
 
@@ -218,7 +218,7 @@ class StreamingConfig:
     # NOTE: chunk_duration controls how much audio is buffered before processing.
     # 15s is a good balance between context (accuracy) and latency.
     # Lower values (e.g., 5s) reduce latency; higher values (e.g., 30s) improve accuracy.
-    chunk_duration: float = 15.0
+    chunk_duration: float = 20.0
     model_size: str = "medium"
     language: str = "auto"
     device: str = "auto"
@@ -243,7 +243,7 @@ class AudioConfig:
     channels: int = 1
     mic_only: bool = False
     audio_source: str = "both"  # "system" | "mic" | "both"
-    mic_boost: float = 1.3
+    mic_boost: float = 1.4
     auto_detect_devices: bool = True
     system_device: str = "0"
     mic_device: str = "1"
@@ -315,7 +315,7 @@ class AppConfig:
         # Resolve audio_source: prefer explicit setting, fall back to mic_only compat
         resolved_mic_only = _resolve(mic_only, lambda: get_bool_env("MIC_ONLY", False))
         if audio_source is None:
-            resolved_audio_source = "mic" if resolved_mic_only else "system"
+            resolved_audio_source = "mic" if resolved_mic_only else "both"
         else:
             resolved_audio_source = audio_source
 
@@ -324,7 +324,7 @@ class AppConfig:
             channels=_resolve(channels, lambda: get_int_env("CHANNELS", 1, min_value=1)),
             mic_only=resolved_mic_only,
             audio_source=resolved_audio_source,
-            mic_boost=_resolve(mic_boost, lambda: get_float_env("AUDIO_MIC_BOOST", 1.3, min_value=0.1, max_value=5.0)),
+            mic_boost=_resolve(mic_boost, lambda: get_float_env("AUDIO_MIC_BOOST", 1.4, min_value=0.1, max_value=5.0)),
             auto_detect_devices=_resolve(auto_detect, lambda: get_bool_env("AUTO_DETECT_DEVICES", True)),
             system_device=_resolve(system_device, lambda: get_str_env("SYSTEM_DEVICE", "0")),
             mic_device=_resolve(mic_device, lambda: get_str_env("MIC_DEVICE", "1")),
@@ -348,12 +348,12 @@ class AppConfig:
         speaker_threshold = _get_toml_float(speaker_section, "threshold")
 
         speaker_cfg = SpeakerConfig(
-            mode=_resolve(speaker_mode, lambda: get_str_env("STREAMING_SPEAKER_MODE", "none")),
+            mode=_resolve(speaker_mode, lambda: get_str_env("STREAMING_SPEAKER_MODE", "pyannote")),
             threshold=_resolve(speaker_threshold, lambda: get_float_env("SPEAKER_DETECTION_THRESHOLD", 0.3, min_value=0.0, max_value=1.0)),
         )
 
         streaming_cfg = StreamingConfig(
-            chunk_duration=_resolve(chunk_duration, lambda: get_float_env("STREAMING_CHUNK_DURATION", 15.0, min_value=0.5)),
+            chunk_duration=_resolve(chunk_duration, lambda: get_float_env("STREAMING_CHUNK_DURATION", 20.0, min_value=0.5)),
             model_size=_resolve(model_size, lambda: get_str_env("STREAMING_MODEL_SIZE", "medium")),
             language=_resolve(language, lambda: get_str_env("STREAMING_LANGUAGE", "auto")),
             device=_resolve(device, lambda: get_str_env("STREAMING_DEVICE", "auto")),
