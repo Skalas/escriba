@@ -505,12 +505,14 @@
 <div class="sidebar" id="sidebar">
   <div class="sidebar-header">
     <h1>Escriba <button class="btn-icon" onclick="showSettingsView()" title="Settings">&#9881;</button></h1>
-    <div class="toolbar-row">
-      <input type="checkbox" id="select-all-checkbox" class="session-checkbox" onclick="toggleSelectAll(this.checked)" title="Select all">
-      <input type="text" class="search-box" id="search-box" placeholder="Search..." oninput="filterSessions()">
+    <div style="display:flex;justify-content:center;margin-top:10px;">
       <button class="btn-record" id="btn-record" onclick="toggleRecording()" title="Start recording">
         <span class="record-icon" id="record-icon"></span>
       </button>
+    </div>
+    <div class="toolbar-row">
+      <input type="checkbox" id="select-all-checkbox" class="session-checkbox" onclick="toggleSelectAll(this.checked)" title="Select all">
+      <input type="text" class="search-box" id="search-box" placeholder="Search..." oninput="filterSessions()">
     </div>
   </div>
   <div class="session-list" id="session-list">
