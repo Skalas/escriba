@@ -944,6 +944,7 @@ async function syncStatus() {
       stopPolling();
     }
     if (lastWasRecording && !isRecording) refreshSessionList();
+    if (!lastWasRecording && isRecording) refreshSessionList();
     lastWasRecording = isRecording;
     if (document.getElementById('settings-view').style.display !== 'none') updateSettingsSaveState();
     if (s.error) showError(s.error);
