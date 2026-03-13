@@ -1,8 +1,11 @@
-# Escriba
+## Escriba
 
 Local audio transcription app for macOS. Captures system audio + microphone, transcribes in real-time using Whisper, and provides a web dashboard for managing sessions, generating AI notes, and playing back recordings.
 
-## Features
+- **For users**: this README shows how to install and use Escriba.
+- **For contributors**: see `CONTRIBUTING.md` for dev setup and guidelines.
+
+### Features
 
 - **Real-time transcription** — system audio + microphone capture via ScreenCaptureKit
 - **Menu bar app** — start/stop recording from the macOS menu bar
@@ -14,13 +17,30 @@ Local audio transcription app for macOS. Captures system audio + microphone, tra
 - **Settings UI** — configure everything from the dashboard
 - **100% local transcription** — Whisper runs on-device (mlx-whisper on Apple Silicon)
 
-## Requirements
+### Requirements
 
 - macOS 13.0+ (Ventura) for ScreenCaptureKit
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/) package manager
+ 
+### Installation
 
-## Installation
+#### One-liner install (recommended)
+
+On a supported macOS machine, you can install Escriba with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Skalas/escriba/main/install.sh | bash
+```
+
+This will:
+
+- Install `uv` if needed
+- Clone/update Escriba into `~/.escriba`
+- Install Python dependencies with `uv sync`
+- Build `Escriba.app` and copy it into `/Applications`
+
+#### Manual install
 
 ```bash
 # Clone and install
@@ -46,16 +66,16 @@ On first run, macOS will prompt for:
 - **Screen Recording** — required for system audio capture
 - **Microphone** — required for mic capture
 
-## Usage
+### Usage
 
-### Menu Bar
+#### Menu Bar
 
 - `〰` — idle, `〰●` — recording
 - **Start/Stop Recording** — toggle transcription
 - **Open Dashboard** — open the web UI
 - **Reload Config** — apply config changes without restart
 
-### Dashboard
+#### Dashboard
 
 Open from the menu bar or navigate to `http://127.0.0.1:19876`.
 
@@ -89,9 +109,9 @@ ANTHROPIC_API_KEY=your-key
 Sessions with saved audio but failed transcripts (0 segments) can be re-processed:
 click **Re-transcribe** in the session detail view.
 
-## Configuration
+### Configuration
 
-### TOML (recommended)
+#### TOML (recommended)
 
 Create `escriba.toml` in the project root:
 
@@ -126,11 +146,11 @@ logprob_threshold = -1.0
 
 Settings can also be changed from the dashboard UI (Settings gear icon).
 
-### Environment variables
+#### Environment variables
 
 Alternatively, use `.env` or environment variables. TOML takes precedence.
 
-## CLI
+### CLI
 
 The app also provides CLI commands:
 
@@ -145,7 +165,7 @@ escriba live-stream --output-dir transcripts
 escriba list-devices
 ```
 
-## Architecture
+### Architecture
 
 ```
 src/escriba/
@@ -168,7 +188,7 @@ src/escriba/
     └── llm_summary.py        # Gemini/Claude summarization
 ```
 
-### Data storage
+#### Data storage
 
 | What | Location |
 |------|----------|
@@ -177,19 +197,10 @@ src/escriba/
 | Logs | `~/Library/Logs/escriba/app.log` |
 | Config | `./escriba.toml` (project root) |
 
-## Development
+### Development (for contributors)
 
-```bash
-# Install dev dependencies
-uv sync
+For development setup, tests, and project conventions, see `CONTRIBUTING.md`.
 
-# Run tests
-uv run pytest tests/
-
-# Run the app from source
-uv run escriba app
-```
-
-## License
+### License
 
 See `LICENSE` for details.

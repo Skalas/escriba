@@ -78,6 +78,7 @@ def build():
     launcher.write_text(f"""#!/usr/bin/env bash
 # Escriba launcher — runs the app via uv from the project directory.
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+export ESCRIBA_PROJECT_ROOT="{PROJECT_DIR}"
 LOG_DIR="$(dirname "{log_file}")"
 mkdir -p "$LOG_DIR"
 cd "{PROJECT_DIR}"

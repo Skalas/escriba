@@ -55,6 +55,13 @@ if [[ ! -f "$INSTALL_DIR/.env" ]]; then
   fi
 fi
 
+# --- Build Swift audio-capture CLI ---
+info "Building Swift audio-capture CLI..."
+cd "$INSTALL_DIR/swift-audio-capture"
+swift build -c release
+cd "$INSTALL_DIR"
+ok "Swift CLI built"
+
 # --- Build .app bundle ---
 info "Building Escriba.app..."
 uv run python setup_app.py
@@ -83,5 +90,5 @@ echo "  Config:     $INSTALL_DIR/escriba.toml"
 echo "  API keys:   $INSTALL_DIR/.env"
 echo "  Logs:       ~/Library/Logs/escriba/app.log"
 echo ""
-echo "  To update later:  cd $INSTALL_DIR && git pull && uv sync && uv run python setup_app.py && cp -r dist/$APP_NAME.app /Applications/"
+echo "  To update later:  cd $INSTALL_DIR && git pull && uv sync && (cd swift-audio-capture && swift build -c release) && uv run python setup_app.py && cp -r dist/$APP_NAME.app /Applications/"
 echo ""
