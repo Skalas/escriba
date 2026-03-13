@@ -11,7 +11,7 @@ Thanks for helping improve **Escriba** — local system + mic transcription 
 - **Python 3.10+**
 - **uv** for Python dependency management ([docs](https://docs.astral.sh/uv/))
 - **Swift toolchain** — Xcode or Xcode Command Line Tools (`xcode-select --install`), needed to build the audio capture helper
-- Optionally **Docker / docker-compose** for any future dev tooling you wire up
+- **Note**: ffmpeg is _not_ required — mlx-whisper receives audio as numpy arrays directly
 
 ### One‑liner install (for testing the full flow)
 

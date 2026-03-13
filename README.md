@@ -20,8 +20,9 @@ Local audio transcription app for macOS. Captures system audio + microphone, tra
 ### Requirements
 
 - macOS 13.0+ (Ventura) for ScreenCaptureKit
-- Python 3.10+
-- [uv](https://docs.astral.sh/uv/) package manager
+- git
+
+The installer handles everything else (Python, uv, audio-capture binary). No Xcode, Homebrew, or ffmpeg required.
  
 ### Installation
 
@@ -43,16 +44,19 @@ This will:
 
 #### Manual install
 
+Requires [uv](https://docs.astral.sh/uv/) and the pre-built `audio-capture` binary from the [latest release](https://github.com/Skalas/escriba/releases/latest).
+
 ```bash
 # Clone and install
 git clone https://github.com/Skalas/escriba.git
 cd escriba
 uv sync
 
-# Build the Swift audio capture CLI
-cd swift-audio-capture
-swift build -c release
-cd ..
+# Download pre-built audio-capture binary
+mkdir -p swift-audio-capture/.build/release
+curl -fsSL https://github.com/Skalas/escriba/releases/latest/download/audio-capture-arm64-darwin.tar.gz \
+  | tar xz -C swift-audio-capture/.build/release
+xattr -d com.apple.quarantine swift-audio-capture/.build/release/audio-capture 2>/dev/null || true
 
 # Build and install the macOS app
 uv run python setup_app.py
