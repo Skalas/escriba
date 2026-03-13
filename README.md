@@ -9,7 +9,7 @@ Local audio transcription app for macOS. Captures system audio + microphone, tra
 
 - **Real-time transcription** — system audio + microphone capture via ScreenCaptureKit
 - **Menu bar app** — start/stop recording from the macOS menu bar
-- **Web dashboard** — manage sessions, view transcripts, generate AI notes
+- **Web dashboard** — manage sessions with folders, search, rename, view transcripts, generate AI notes with markdown rendering
 - **Audio recording & playback** — WAV files saved alongside transcripts with seek-to-segment
 - **Re-transcribe** — retry failed transcriptions from saved audio
 - **AI notes** — generate summaries, action items, meeting minutes via Gemini or Claude
@@ -77,17 +77,21 @@ On first run, macOS will prompt for:
 
 - `〰` — idle, `〰●` — recording
 - **Start/Stop Recording** — toggle transcription
-- **Open Dashboard** — open the web UI
+- **Open Escriba** — open the web UI
 - **Reload Config** — apply config changes without restart
 
 #### Dashboard
 
 Open from the menu bar or navigate to `http://127.0.0.1:19876`.
 
-- **Sidebar** — session list with status badges, multi-select for merge/delete
+- **Sidebar** — session list with folders, search, select-all, shift-click range selection, merge/move/delete
+- **Record button** — unified start/stop (red circle / white square)
+- **Folders** — organize sessions into folders, create/rename/delete via "Move to..." dropdown
+- **Session rename** — double-click a session name in sidebar or detail view title
 - **Live view** — real-time transcript during recording
-- **Session detail** — view transcript, play back audio, generate AI notes, re-transcribe
-- **Settings** — configure audio, transcription, speaker detection, AI, and advanced options
+- **Session detail** — view transcript, play back audio, generate AI notes with markdown rendering, re-transcribe
+- **Collapsible sidebar** — toggle button to hide/show
+- **Settings** — configure audio, transcription, speaker detection, AI, keyboard shortcuts, and advanced options
 
 ### Audio Playback
 
@@ -123,19 +127,19 @@ Create `escriba.toml` in the project root:
 ```toml
 [audio]
 audio_source = "both"     # "system" | "mic" | "both"
-mic_boost = 1.3
+mic_boost = 1.4
 sample_rate = 16000
 
 [streaming]
 model_size = "medium"     # tiny | base | small | medium | large
 language = "auto"         # auto | en | es | fr | ...
 backend = "mlx-whisper"   # mlx-whisper | faster-whisper | openai-whisper
-chunk_duration = 15
+chunk_duration = 20
 vad_enabled = true
 summary_model = "gemini"  # gemini | claude
 
 [speaker]
-mode = "none"             # none | simple | pyannote
+mode = "pyannote"         # none | simple | pyannote
 threshold = 0.3
 
 [vad]
