@@ -151,6 +151,14 @@ condition_on_previous_text = false
 no_speech_threshold = 0.6
 compression_ratio_threshold = 2.4
 logprob_threshold = -1.0
+
+[dictionary]
+# Domain terms fed to Whisper to improve recognition
+terms = ["API", "SDK", "OAuth", "Kubernetes"]
+# Post-processing corrections (case-insensitive → exact)
+[dictionary.replacements]
+"whatsapp" = "WhatsApp"
+"github" = "GitHub"
 ```
 
 Settings can also be changed from the dashboard UI (Settings gear icon).

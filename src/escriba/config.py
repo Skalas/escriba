@@ -196,6 +196,34 @@ def _get_toml_str_list(section: dict[str, Any], key: str) -> list[str] | None:
 
 
 @dataclass(frozen=True)
+class DictionaryConfig:
+    """Custom vocabulary for improving transcription accuracy.
+
+    Attributes:
+        terms: Domain terms/acronyms fed to Whisper's initial_prompt to bias recognition.
+        replacements: Post-processing find-and-replace map (case-insensitive keys).
+    """
+
+    terms: list[str] = field(default_factory=list)
+    replacements: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def initial_prompt(self) -> str | None:
+        if not self.terms:
+            return None
+        return ", ".join(self.terms)
+
+    def apply_replacements(self, text: str) -> str:
+        if not self.replacements:
+            return text
+        for wrong, correct in self.replacements.items():
+            # Case-insensitive replace preserving boundaries
+            import re
+            text = re.sub(re.escape(wrong), correct, text, flags=re.IGNORECASE)
+        return text
+
+
+@dataclass(frozen=True)
 class SpeakerConfig:
     """
     Speaker configuration.
@@ -264,6 +292,7 @@ class AppConfig:
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
     vad: VADConfig = field(default_factory=VADConfig)
     hallucination: HallucinationConfig = field(default_factory=HallucinationConfig)
+    dictionary: DictionaryConfig = field(default_factory=DictionaryConfig)
 
     config_path: Path | None = None
 
@@ -402,11 +431,23 @@ class AppConfig:
             logprob_threshold=_resolve(logprob_thresh, lambda: get_float_env("WHISPER_LOGPROB_THRESHOLD", -1.0, max_value=0.0)),
         )
 
+        # Dictionary (custom vocabulary)
+        dict_section = _get_section(toml_data, "dictionary")
+        dict_terms = _get_toml_str_list(dict_section, "terms") or []
+        dict_replacements_raw = dict_section.get("replacements", {})
+        dict_replacements = {}
+        if isinstance(dict_replacements_raw, dict):
+            dict_replacements = {
+                str(k): str(v) for k, v in dict_replacements_raw.items()
+            }
+        dict_cfg = DictionaryConfig(terms=dict_terms, replacements=dict_replacements)
+
         return cls(
             audio=audio_cfg,
             streaming=streaming_cfg,
             vad=vad_cfg,
             hallucination=hallucination_cfg,
+            dictionary=dict_cfg,
             config_path=resolved_path,
         )
 
@@ -463,5 +504,9 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
             "no_speech_threshold": cfg.hallucination.no_speech_threshold,
             "compression_ratio_threshold": cfg.hallucination.compression_ratio_threshold,
             "logprob_threshold": cfg.hallucination.logprob_threshold,
+        },
+        "dictionary": {
+            "terms": list(cfg.dictionary.terms),
+            "replacements": dict(cfg.dictionary.replacements),
         },
     }

@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from escriba.config import DictionaryConfig
 from escriba.transcribe.config import HallucinationConfig, VADConfig
 from escriba.transcribe.metrics import CaptureMetrics
 
@@ -58,6 +59,7 @@ class StreamingTranscriberMLX:
         vad_config: Optional[VADConfig] = None,
         hallucination_config: Optional[HallucinationConfig] = None,
         metrics: Optional[CaptureMetrics] = None,
+        dictionary: Optional[DictionaryConfig] = None,
     ):
         """
         Inicializa el transcriber MLX.
@@ -89,6 +91,7 @@ class StreamingTranscriberMLX:
         self.hallucination_config = (
             hallucination_config or HallucinationConfig.from_env()
         )
+        self.dictionary = dictionary or DictionaryConfig()
 
         # Buffer para mantener contexto entre chunks
         self.transcription_buffer: list[str] = []
@@ -196,12 +199,16 @@ class StreamingTranscriberMLX:
             }
             if self.language and self.language != "auto":
                 transcribe_kwargs["language"] = self.language
+            if self.dictionary.initial_prompt:
+                transcribe_kwargs["initial_prompt"] = self.dictionary.initial_prompt
             result = mlx_whisper.transcribe(audio_np, **transcribe_kwargs)
 
             texts = []
             if result and "segments" in result:
                 for segment in result["segments"]:
                     text = segment.get("text", "").strip()
+                    if text:
+                        text = self.dictionary.apply_replacements(text)
                     if text and not self._is_repetitive(text):
                         texts.append(text)
                         start = segment.get("start", 0.0)

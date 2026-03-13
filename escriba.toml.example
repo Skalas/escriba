@@ -39,3 +39,10 @@ threshold = 0.3
 # - pyannote: real diarization via pyannote-audio (optional dependency)
 mode = "pyannote"
 threshold = 0.3
+
+[dictionary]
+# Terms fed to Whisper's initial_prompt to improve recognition of domain vocabulary
+terms = ["API", "SDK", "REST", "OAuth"]
+# Post-processing replacements (case-insensitive find → exact replace)
+[dictionary.replacements]
+"whatsapp" = "WhatsApp"

@@ -115,6 +115,7 @@ class TranscriptionSession:
                     model_size=model_size,
                     language=language,
                     realtime_output=True,
+                    dictionary=self.config.dictionary,
                 )
             else:
                 from escriba.transcribe.streaming import StreamingTranscriber
