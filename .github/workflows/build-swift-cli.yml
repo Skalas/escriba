@@ -1,0 +1,40 @@
+name: Build Swift audio-capture CLI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14  # Apple Silicon runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Swift CLI (release)
+        run: |
+          cd swift-audio-capture
+          swift build -c release
+
+      - name: Package binary
+        run: |
+          cd swift-audio-capture/.build/release
+          tar czf audio-capture-arm64-darwin.tar.gz audio-capture
+          shasum -a 256 audio-capture-arm64-darwin.tar.gz > audio-capture-arm64-darwin.tar.gz.sha256
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd swift-audio-capture/.build/release
+          gh release upload "${{ github.event.release.tag_name }}" \
+            audio-capture-arm64-darwin.tar.gz \
+            audio-capture-arm64-darwin.tar.gz.sha256
+
+      - name: Upload artifact (for workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-capture-arm64-darwin
+          path: swift-audio-capture/.build/release/audio-capture

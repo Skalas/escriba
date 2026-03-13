@@ -38,6 +38,7 @@ This will:
 - Install `uv` if needed
 - Clone/update Escriba into `~/.escriba`
 - Install Python dependencies with `uv sync`
+- Download the pre-built audio-capture binary
 - Build `Escriba.app` and copy it into `/Applications`
 
 #### Manual install

@@ -10,7 +10,7 @@ Thanks for helping improve **Escriba** — local system + mic transcription 
 - **macOS 13+ (Ventura)** with ScreenCaptureKit enabled
 - **Python 3.10+**
 - **uv** for Python dependency management ([docs](https://docs.astral.sh/uv/))
-- **Swift toolchain** (for the ScreenCaptureKit audio capture helper)
+- **Swift toolchain** — Xcode or Xcode Command Line Tools (`xcode-select --install`), needed to build the audio capture helper
 - Optionally **Docker / docker-compose** for any future dev tooling you wire up
 
 ### One‑liner install (for testing the full flow)
@@ -26,6 +26,7 @@ This will:
 - Install `uv` if it is missing
 - Clone/update the repo into `~/.escriba`
 - Run `uv sync`
+- Download the pre-built Swift audio-capture binary from the latest GitHub release
 - Build the `.app` bundle and copy `Escriba.app` into `/Applications`
 
 ### Local development setup

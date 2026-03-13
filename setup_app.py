@@ -39,6 +39,16 @@ def build():
     for f in static_src.iterdir():
         (static_dst / f.name).write_bytes(f.read_bytes())
 
+    # Copy Swift audio-capture binary if available
+    swift_bin = PROJECT_DIR / "swift-audio-capture" / ".build" / "release" / "audio-capture"
+    if swift_bin.exists():
+        dst = RESOURCES_DIR / "audio-capture"
+        dst.write_bytes(swift_bin.read_bytes())
+        dst.chmod(dst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        print(f"Bundled Swift CLI: {swift_bin}")
+    else:
+        print(f"Warning: Swift audio-capture binary not found at {swift_bin}")
+
     # Copy icon
     icon_src = PROJECT_DIR / "resources" / "Escriba.icns"
     if icon_src.exists():
