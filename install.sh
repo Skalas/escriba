@@ -44,6 +44,7 @@ ok "Source ready at $INSTALL_DIR"
 # --- Install dependencies ---
 info "Installing Python dependencies (this may take a few minutes the first time)..."
 cd "$INSTALL_DIR"
+unset VIRTUAL_ENV 2>/dev/null
 uv sync
 ok "Dependencies installed"
 
