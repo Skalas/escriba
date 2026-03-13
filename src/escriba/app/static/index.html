@@ -1079,7 +1079,10 @@ async function selectSession(id) {
     document.getElementById('session-notes-input').value = s.notes_text || '';
     renderNotesView(s.notes_text || '');
     showSessionView();
-    renderSessionList();
+    // Update selection highlight in-place instead of full re-render
+    document.querySelectorAll('.session-item').forEach(el => {
+      el.classList.toggle('selected', el.dataset.id === id);
+    });
   } catch (e) {}
 }
 
