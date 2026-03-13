@@ -33,8 +33,15 @@ def _ensure_dashboard_app(icon_path: Path | None = None) -> Path:
     macos = contents / "MacOS"
     resources = contents / "Resources"
 
-    # Only rebuild if missing
-    if not (macos / "open-dashboard").exists():
+    # Rebuild if missing or if project directory changed
+    needs_rebuild = not (macos / "open-dashboard").exists()
+    if not needs_rebuild:
+        existing = (macos / "open-dashboard").read_text()
+        project_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
+        if project_dir not in existing:
+            needs_rebuild = True
+
+    if needs_rebuild:
         macos.mkdir(parents=True, exist_ok=True)
         resources.mkdir(parents=True, exist_ok=True)
 
