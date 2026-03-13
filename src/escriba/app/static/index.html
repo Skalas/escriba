@@ -187,7 +187,14 @@
   .session-item.selected { background: var(--accent); color: white; }
   .session-item.selected .session-meta,
   .session-item.selected .session-badge { color: rgba(255,255,255,0.8); }
-  .session-checkbox { margin-top: 3px; }
+  .session-checkbox {
+    margin-top: 3px;
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    cursor: pointer;
+    accent-color: var(--accent);
+  }
   .session-info { flex: 1; min-width: 0; }
   .session-name {
     font-size: 13px;
@@ -425,6 +432,79 @@
     color: white;
     border-color: var(--accent);
   }
+
+  /* Markdown rendered notes */
+  .notes-rendered {
+    padding: 16px;
+    background: var(--code-bg);
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.7;
+    cursor: pointer;
+    min-height: 60px;
+  }
+  .notes-rendered:empty::before {
+    content: 'Click to edit notes...';
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+  .notes-rendered h1, .notes-rendered h2, .notes-rendered h3,
+  .notes-rendered h4, .notes-rendered h5, .notes-rendered h6 {
+    margin: 16px 0 8px 0;
+    font-weight: 700;
+  }
+  .notes-rendered h1 { font-size: 20px; }
+  .notes-rendered h2 { font-size: 18px; }
+  .notes-rendered h3 { font-size: 16px; }
+  .notes-rendered p { margin: 8px 0; }
+  .notes-rendered ul, .notes-rendered ol { margin: 8px 0; padding-left: 24px; }
+  .notes-rendered li { margin: 4px 0; }
+  .notes-rendered li input[type="checkbox"] { margin-right: 6px; }
+  .notes-rendered code {
+    background: var(--border);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'SF Mono', Menlo, monospace;
+  }
+  .notes-rendered pre {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+    margin: 8px 0;
+  }
+  .notes-rendered pre code { background: none; padding: 0; }
+  .notes-rendered blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 12px;
+    margin: 8px 0;
+    color: var(--text-secondary);
+  }
+  .notes-rendered hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+  .notes-rendered strong { font-weight: 700; }
+  .notes-rendered em { font-style: italic; }
+  .notes-rendered a { color: var(--accent); text-decoration: none; }
+  .notes-rendered a:hover { text-decoration: underline; }
+
+  .notes-editor { display: none; }
+  .notes-editor.active { display: block; }
+  .notes-rendered.hidden { display: none; }
+
+  /* Session rename */
+  .session-name-edit {
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 2px 4px;
+    background: var(--bg);
+    color: var(--text);
+    width: 100%;
+    font-family: inherit;
+    outline: none;
+  }
 </style>
 </head>
 <body>
@@ -497,12 +577,16 @@
     </div>
     <div class="content-area">
       <div class="card">
-        <h3>Notes</h3>
-        <textarea id="session-notes-input" placeholder="Your notes (manual + AI-generated)..." rows="8"
-          style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;"></textarea>
-        <div class="controls-row">
-          <button class="btn-secondary" onclick="saveNotes()">Save Notes</button>
-          <button class="btn-danger-outline" onclick="clearNotes()">Clear Notes</button>
+        <h3>Notes <button class="btn-secondary" id="btn-toggle-notes-edit" onclick="toggleNotesEdit()" style="font-size:11px;padding:4px 10px;margin-left:8px;">Edit</button></h3>
+        <div class="notes-rendered" id="notes-rendered" onclick="toggleNotesEdit()"></div>
+        <div class="notes-editor" id="notes-editor">
+          <textarea id="session-notes-input" placeholder="Your notes (manual + AI-generated)..." rows="8"
+            style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;"></textarea>
+          <div class="controls-row">
+            <button class="btn-start" onclick="saveNotesAndRender()">Save Notes</button>
+            <button class="btn-secondary" onclick="cancelNotesEdit()">Cancel</button>
+            <button class="btn-danger-outline" onclick="clearNotes()">Clear Notes</button>
+          </div>
         </div>
       </div>
       <div class="card audio-player-card" id="audio-player-card" style="display:none;">
@@ -720,6 +804,8 @@ let lastWasRecording = false;
 let selectedSessionId = null;
 let checkedSessions = new Set();
 let viewingHistory = false; // true when user clicked a past session
+let lastCheckedIndex = null; // for shift-click range selection
+let sessionOrder = []; // ordered list of session ids for shift-click
 
 const PROMPT_TEMPLATES = [
   {
@@ -913,6 +999,7 @@ async function refreshSessionList() {
       list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary);font-size:13px;">No sessions yet</div>';
       return;
     }
+    sessionOrder = res.sessions.map(s => s.id);
     list.innerHTML = res.sessions.map(s => {
       const date = s.started_at ? new Date(s.started_at).toLocaleDateString() : '';
       const dur = s.duration_seconds ? formatDuration(s.duration_seconds) : '-';
@@ -920,10 +1007,10 @@ async function refreshSessionList() {
       const sel = s.id === selectedSessionId ? ' selected' : '';
       const badgeClass = 'badge-' + (s.status || 'completed');
       return `<div class="session-item${sel}" data-id="${escAttr(s.id)}" onclick="selectSession('${escAttr(s.id)}')">
-        <input type="checkbox" class="session-checkbox" ${checked}
-          onclick="event.stopPropagation();toggleCheck('${escAttr(s.id)}', this.checked)">
+        <input type="checkbox" class="session-checkbox" data-session-id="${escAttr(s.id)}" ${checked}
+          onclick="event.stopPropagation();toggleCheck('${escAttr(s.id)}', this.checked, event)">
         <div class="session-info">
-          <div class="session-name">${escHtml(s.name)}</div>
+          <div class="session-name" ondblclick="event.stopPropagation();startRename('${escAttr(s.id)}', this)">${escHtml(s.name)}</div>
           <div class="session-meta">${date} &middot; ${dur} &middot; ${s.segment_count || 0} segs</div>
         </div>
         <span class="session-badge ${badgeClass}">${escHtml(s.status || 'completed')}</span>
@@ -977,15 +1064,30 @@ async function selectSession(id) {
 
     const notesInput = document.getElementById('session-notes-input');
     notesInput.value = s.notes_text || '';
+    renderNotesView(s.notes_text || '');
 
     showSessionView();
     refreshSessionList();
   } catch (e) { /* ignore */ }
 }
 
-function toggleCheck(id, checked) {
-  if (checked) checkedSessions.add(id);
-  else checkedSessions.delete(id);
+function toggleCheck(id, checked, event) {
+  const currentIndex = sessionOrder.indexOf(id);
+  if (event && event.shiftKey && lastCheckedIndex !== null && currentIndex !== -1) {
+    const start = Math.min(lastCheckedIndex, currentIndex);
+    const end = Math.max(lastCheckedIndex, currentIndex);
+    for (let i = start; i <= end; i++) {
+      checkedSessions.add(sessionOrder[i]);
+    }
+    // Update all checkbox visuals
+    document.querySelectorAll('.session-checkbox').forEach(cb => {
+      cb.checked = checkedSessions.has(cb.dataset.sessionId);
+    });
+  } else {
+    if (checked) checkedSessions.add(id);
+    else checkedSessions.delete(id);
+  }
+  lastCheckedIndex = currentIndex;
   updateFooterButtons();
 }
 
@@ -1074,6 +1176,7 @@ async function generateSessionNotes() {
       const separator = notesInput.value.trim() ? '\n\n---\n\n' : '';
       notesInput.value = notesInput.value.trim() + separator + res.notes;
       await saveNotes();
+      renderNotesView(notesInput.value);
     } else {
       showError(res.error || 'Failed to generate notes');
     }
@@ -1101,7 +1204,12 @@ async function generateNotes() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: promptVal || null }),
     });
-    out.textContent = res.ok ? res.notes : ('Error: ' + (res.error || 'Unknown'));
+    if (res.ok) {
+      out.innerHTML = renderMarkdown(res.notes);
+      out.classList.add('notes-rendered');
+    } else {
+      out.textContent = 'Error: ' + (res.error || 'Unknown');
+    }
   } catch (e) {
     out.textContent = 'Error: ' + e.message;
   } finally {
@@ -1302,6 +1410,118 @@ function showError(msg) {
 }
 function hideError() {
   document.getElementById('error-banner').classList.remove('visible');
+}
+
+// --- Rename sessions ---
+function startRename(id, nameEl) {
+  const currentName = nameEl.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = currentName;
+  input.className = 'session-name-edit';
+  input.onclick = (e) => e.stopPropagation();
+
+  async function finishRename() {
+    const newName = input.value.trim();
+    if (newName && newName !== currentName) {
+      await api('/api/sessions/' + id + '/rename', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName }),
+      });
+      if (id === selectedSessionId) {
+        document.getElementById('session-title').textContent = newName;
+      }
+    }
+    refreshSessionList();
+  }
+
+  input.addEventListener('blur', finishRename);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.value = currentName; input.blur(); }
+  });
+
+  nameEl.textContent = '';
+  nameEl.appendChild(input);
+  input.focus();
+  input.select();
+}
+
+// --- Markdown rendering ---
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = escHtml(text);
+  // Headings
+  html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
+  html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
+  html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+  // Horizontal rule
+  html = html.replace(/^---$/gm, '<hr>');
+  // Bold and italic
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Checkboxes
+  html = html.replace(/^- \[x\]\s+(.+)$/gm, '<li><input type="checkbox" checked disabled>$1</li>');
+  html = html.replace(/^- \[ \]\s+(.+)$/gm, '<li><input type="checkbox" disabled>$1</li>');
+  // Unordered list items
+  html = html.replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>');
+  // Numbered list items
+  html = html.replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>');
+  // Wrap consecutive <li> in <ul>
+  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+  // Blockquotes
+  html = html.replace(/^&gt;\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+  // Paragraphs: wrap remaining bare lines
+  html = html.replace(/^(?!<[a-z])((?:.(?!<[a-z]))+)$/gm, function(match) {
+    const trimmed = match.trim();
+    if (!trimmed) return '';
+    return '<p>' + trimmed + '</p>';
+  });
+  // Clean up empty lines
+  html = html.replace(/\n{2,}/g, '\n');
+  return html;
+}
+
+// --- Notes edit/render toggle ---
+function renderNotesView(notesText) {
+  const rendered = document.getElementById('notes-rendered');
+  const editor = document.getElementById('notes-editor');
+  const btn = document.getElementById('btn-toggle-notes-edit');
+  rendered.innerHTML = renderMarkdown(notesText || '');
+  rendered.classList.remove('hidden');
+  editor.classList.remove('active');
+  btn.textContent = 'Edit';
+}
+
+function toggleNotesEdit() {
+  const rendered = document.getElementById('notes-rendered');
+  const editor = document.getElementById('notes-editor');
+  const btn = document.getElementById('btn-toggle-notes-edit');
+  if (editor.classList.contains('active')) {
+    renderNotesView(document.getElementById('session-notes-input').value);
+  } else {
+    rendered.classList.add('hidden');
+    editor.classList.add('active');
+    btn.textContent = 'Preview';
+    document.getElementById('session-notes-input').focus();
+  }
+}
+
+async function saveNotesAndRender() {
+  await saveNotes();
+  renderNotesView(document.getElementById('session-notes-input').value);
+}
+
+function cancelNotesEdit() {
+  // Revert to last saved value by re-rendering
+  renderNotesView(document.getElementById('session-notes-input').value);
 }
 
 // --- Re-transcribe ---

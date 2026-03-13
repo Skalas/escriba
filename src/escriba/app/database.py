@@ -169,6 +169,13 @@ class Database:
         )
         self._conn.commit()
 
+    def rename_session(self, session_id: str, name: str):
+        self._conn.execute(
+            "UPDATE sessions SET name = ? WHERE id = ?",
+            (name, session_id),
+        )
+        self._conn.commit()
+
     def delete_session(self, session_id: str):
         row = self._conn.execute(
             "SELECT audio_path FROM sessions WHERE id = ?", (session_id,)

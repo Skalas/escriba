@@ -103,6 +103,10 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             body = self._read_body()
             self._json_response(self._put_config(body))
+        elif path.startswith("/api/sessions/") and path.endswith("/rename"):
+            session_id = path.split("/api/sessions/")[1].rsplit("/rename", 1)[0]
+            body = self._read_body()
+            self._json_response(self._rename_session(session_id, body))
         else:
             self._json_response({"ok": False, "error": "Not found"}, status=404)
 
@@ -309,6 +313,16 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": False, "error": "Need at least 2 sessions to merge"}
         merged_id = db.merge_sessions(session_ids, name)
         return {"ok": True, "session_id": merged_id}
+
+    def _rename_session(self, session_id: str, body: dict) -> dict:
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        name = body.get("name", "").strip()
+        if not name:
+            return {"ok": False, "error": "Name cannot be empty"}
+        db.rename_session(session_id, name)
+        return {"ok": True}
 
     def _delete_session(self, session_id: str) -> dict:
         db = self._get_db()
