@@ -152,8 +152,37 @@
     padding: 8px 0; text-transform: uppercase; letter-spacing: 0.5px;
   }
 
-  .sidebar-actions { display: flex; gap: 6px; }
-  .sidebar-actions button { flex: 1; padding: 8px 10px; font-size: 12px; }
+  .toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .toolbar-row .search-box { flex: 1; margin-bottom: 0; }
+  .btn-record {
+    width: 36px; height: 36px; min-width: 36px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+    background: var(--code-bg);
+    transition: background 0.15s;
+  }
+  .btn-record:hover { background: var(--border); }
+  .btn-record.recording { background: var(--danger); }
+  .btn-record.recording:hover { background: var(--danger-hover); }
+  .record-icon {
+    display: block;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--danger);
+    transition: border-radius 0.15s, background 0.15s;
+  }
+  .btn-record.recording .record-icon {
+    border-radius: 3px;
+    background: white;
+  }
 
   /* Folder groups */
   .folder-group { margin-bottom: 4px; }
@@ -242,21 +271,6 @@
     gap: 6px;
   }
   .sidebar-footer button { flex: 1; font-size: 11px; padding: 7px 6px; min-width: 0; }
-  .select-all-row {
-    padding: 6px 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-  }
-  .select-all-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    user-select: none;
-  }
 
   /* Sidebar collapse toggle (in main area) */
   .sidebar-toggle {
@@ -491,17 +505,13 @@
 <div class="sidebar" id="sidebar">
   <div class="sidebar-header">
     <h1>Escriba <button class="btn-icon" onclick="showSettingsView()" title="Settings">&#9881;</button></h1>
-    <div class="sidebar-actions">
-      <button class="btn-start" id="btn-start" onclick="startRecording()">Start</button>
-      <button class="btn-stop" id="btn-stop" onclick="stopRecording()" disabled>Stop</button>
+    <div class="toolbar-row">
+      <input type="checkbox" id="select-all-checkbox" class="session-checkbox" onclick="toggleSelectAll(this.checked)" title="Select all">
+      <input type="text" class="search-box" id="search-box" placeholder="Search..." oninput="filterSessions()">
+      <button class="btn-record" id="btn-record" onclick="toggleRecording()" title="Start recording">
+        <span class="record-icon" id="record-icon"></span>
+      </button>
     </div>
-    <input type="text" class="search-box" id="search-box" placeholder="Search sessions..." oninput="filterSessions()" style="margin-top:8px;">
-  </div>
-  <div class="select-all-row" id="select-all-row">
-    <label class="select-all-label">
-      <input type="checkbox" id="select-all-checkbox" class="session-checkbox" onclick="toggleSelectAll(this.checked)">
-      <span>Select all</span>
-    </label>
   </div>
   <div class="session-list" id="session-list">
     <!-- Populated by JS -->
@@ -880,24 +890,29 @@ function toggleSidebar() {
 }
 
 // --- Recording ---
-async function startRecording() {
-  hideError();
-  document.getElementById('btn-start').disabled = true;
-  const res = await apiCall('/api/recording/start', { method: 'POST' });
-  if (!res.ok) { showError(res.error || 'Failed to start'); document.getElementById('btn-start').disabled = false; return; }
-  document.getElementById('btn-stop').disabled = false;
-  viewingHistory = false;
-  showLiveView();
+async function toggleRecording() {
+  const btn = document.getElementById('btn-record');
+  if (btn.classList.contains('recording')) {
+    btn.disabled = true;
+    await apiCall('/api/recording/stop', { method: 'POST' });
+    btn.disabled = false;
+    await syncStatus();
+    await pollTranscript();
+    refreshSessionList();
+  } else {
+    hideError();
+    btn.disabled = true;
+    const res = await apiCall('/api/recording/start', { method: 'POST' });
+    btn.disabled = false;
+    if (!res.ok) { showError(res.error || 'Failed to start'); return; }
+    viewingHistory = false;
+    showLiveView();
+  }
 }
 
-async function stopRecording() {
-  document.getElementById('btn-stop').disabled = true;
-  await apiCall('/api/recording/stop', { method: 'POST' });
-  document.getElementById('btn-start').disabled = false;
-  await syncStatus();
-  await pollTranscript();
-  refreshSessionList();
-}
+// Keep old names for menubar/shortcut compatibility
+async function startRecording() { if (!document.getElementById('btn-record').classList.contains('recording')) toggleRecording(); }
+async function stopRecording() { if (document.getElementById('btn-record').classList.contains('recording')) toggleRecording(); }
 
 // --- Polling ---
 function startPolling() { if (polling) return; polling = setInterval(pollTranscript, 2000); }
@@ -910,10 +925,11 @@ async function syncStatus() {
     const badge = document.getElementById('status-badge');
     const text = document.getElementById('status-text');
     const isRecording = !!s.is_active;
+    const recordBtn = document.getElementById('btn-record');
     if (isRecording) {
       badge.className = 'recording'; text.textContent = 'Recording';
-      document.getElementById('btn-start').disabled = true;
-      document.getElementById('btn-stop').disabled = false;
+      recordBtn.classList.add('recording');
+      recordBtn.title = 'Stop recording';
       document.getElementById('elapsed').textContent = s.elapsed || '--:--:--';
       document.getElementById('seg-count').textContent = s.segments_count || 0;
       if (!lastWasRecording) showLiveView();
@@ -921,8 +937,8 @@ async function syncStatus() {
       if ((s.segments_count || 0) > 0) document.getElementById('notes-section').classList.add('visible');
     } else {
       badge.className = 'idle'; text.textContent = 'Idle';
-      document.getElementById('btn-start').disabled = false;
-      document.getElementById('btn-stop').disabled = true;
+      recordBtn.classList.remove('recording');
+      recordBtn.title = 'Start recording';
       stopPolling();
     }
     if (lastWasRecording && !isRecording) refreshSessionList();
