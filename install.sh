@@ -17,29 +17,6 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-# --- Install Homebrew if missing ---
-if ! command -v brew &>/dev/null; then
-  info "Installing Homebrew..."
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  eval "$(/opt/homebrew/bin/brew shellenv)"
-  if ! command -v brew &>/dev/null; then
-    err "Failed to install Homebrew. Install it manually: https://brew.sh"
-    exit 1
-  fi
-  ok "Homebrew installed"
-else
-  ok "Homebrew already installed"
-fi
-
-# --- Install ffmpeg if missing ---
-if ! command -v ffmpeg &>/dev/null; then
-  info "Installing ffmpeg (required by Whisper for audio decoding)..."
-  brew install ffmpeg
-  ok "ffmpeg installed"
-else
-  ok "ffmpeg already installed"
-fi
-
 # --- Install uv if missing ---
 if ! command -v uv &>/dev/null; then
   info "Installing uv (Python package manager)..."
