@@ -68,9 +68,8 @@ else
   ASSET_URL=$(curl -fsSL \
     -H "Accept: application/vnd.github+json" \
     "https://api.github.com/repos/Skalas/escriba/releases/latest" \
-    | grep -o '"browser_download_url":\s*"[^"]*audio-capture-arm64-darwin\.tar\.gz"' \
-    | head -1 \
-    | sed 's/"browser_download_url":\s*"//;s/"$//')
+    | grep -o 'https://[^"]*audio-capture-arm64-darwin\.tar\.gz' \
+    | head -1)
 
   if [[ -z "$ASSET_URL" ]]; then
     err "Could not find audio-capture binary in the latest GitHub release."
