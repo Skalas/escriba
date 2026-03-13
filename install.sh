@@ -55,6 +55,34 @@ if [[ ! -f "$INSTALL_DIR/.env" ]]; then
   fi
 fi
 
+# --- Download pre-built Swift audio-capture CLI ---
+SWIFT_BIN_DIR="$INSTALL_DIR/swift-audio-capture/.build/release"
+SWIFT_BIN="$SWIFT_BIN_DIR/audio-capture"
+
+if [[ -x "$SWIFT_BIN" ]]; then
+  ok "Swift audio-capture CLI already present"
+else
+  info "Downloading pre-built audio-capture CLI..."
+  mkdir -p "$SWIFT_BIN_DIR"
+
+  ASSET_URL=$(curl -fsSL \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/Skalas/escriba/releases/latest" \
+    | grep -o '"browser_download_url":\s*"[^"]*audio-capture-arm64-darwin\.tar\.gz"' \
+    | head -1 \
+    | sed 's/"browser_download_url":\s*"//;s/"$//')
+
+  if [[ -z "$ASSET_URL" ]]; then
+    err "Could not find audio-capture binary in the latest GitHub release."
+    err "You can build it manually: cd $INSTALL_DIR/swift-audio-capture && swift build -c release"
+    exit 1
+  fi
+
+  curl -fsSL "$ASSET_URL" | tar xz -C "$SWIFT_BIN_DIR"
+  chmod +x "$SWIFT_BIN"
+  ok "Swift audio-capture CLI downloaded"
+fi
+
 # --- Build .app bundle ---
 info "Building Escriba.app..."
 uv run python setup_app.py

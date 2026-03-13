@@ -13,6 +13,7 @@ Requiere:
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -31,7 +32,20 @@ def _find_swift_cli() -> Optional[Path]:
         if bundle_path.exists():
             return bundle_path
 
-    # Buscar en el directorio del proyecto
+    # When launched from .app, launcher sets ESCRIBA_PROJECT_ROOT to install dir
+    env_root = os.environ.get("ESCRIBA_PROJECT_ROOT", "").strip()
+    if env_root:
+        project_root = Path(env_root)
+        if (project_root / "swift-audio-capture").exists():
+            swift_capture_dir = project_root / "swift-audio-capture"
+            release_path = swift_capture_dir / ".build" / "release" / "audio-capture"
+            if release_path.exists():
+                return release_path
+            debug_path = swift_capture_dir / ".build" / "debug" / "audio-capture"
+            if debug_path.exists():
+                return debug_path
+
+    # Buscar en el directorio del proyecto (from __file__)
     project_root = Path(__file__).parent.parent.parent.parent
     swift_capture_dir = project_root / "swift-audio-capture"
 
