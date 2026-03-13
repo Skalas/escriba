@@ -242,8 +242,21 @@
     gap: 6px;
   }
   .sidebar-footer button { flex: 1; font-size: 11px; padding: 7px 6px; min-width: 0; }
-  .sidebar-footer .select-row { display: flex; gap: 6px; width: 100%; margin-bottom: 4px; }
-  .sidebar-footer .select-row button { font-size: 11px; padding: 4px 8px; flex: 0 1 auto; }
+  .select-all-row {
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+  }
+  .select-all-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
 
   /* Sidebar collapse toggle (in main area) */
   .sidebar-toggle {
@@ -482,16 +495,18 @@
       <button class="btn-start" id="btn-start" onclick="startRecording()">Start</button>
       <button class="btn-stop" id="btn-stop" onclick="stopRecording()" disabled>Stop</button>
     </div>
-    <input type="text" class="search-box" id="search-box" placeholder="Search sessions..." oninput="filterSessions()">
+    <input type="text" class="search-box" id="search-box" placeholder="Search sessions..." oninput="filterSessions()" style="margin-top:8px;">
+  </div>
+  <div class="select-all-row" id="select-all-row">
+    <label class="select-all-label">
+      <input type="checkbox" id="select-all-checkbox" class="session-checkbox" onclick="toggleSelectAll(this.checked)">
+      <span>Select all</span>
+    </label>
   </div>
   <div class="session-list" id="session-list">
     <!-- Populated by JS -->
   </div>
   <div class="sidebar-footer">
-    <div class="select-row">
-      <button class="btn-secondary" onclick="selectAll()">Select All</button>
-      <button class="btn-secondary" onclick="deselectAll()">Deselect All</button>
-    </div>
     <button class="btn-secondary" id="btn-merge" onclick="mergeSelected()" disabled>Merge</button>
     <div class="move-dropdown">
       <button class="btn-secondary" id="btn-move" onclick="toggleMoveDropdown()" disabled>Move to...</button>
@@ -1104,28 +1119,31 @@ function toggleCheck(id, checked, event) {
   updateFooterButtons();
 }
 
-function selectAll() {
-  const visible = searchQuery
-    ? allSessions.filter(s => s.name.toLowerCase().includes(searchQuery)).map(s => s.id)
-    : allSessions.map(s => s.id);
-  visible.forEach(id => checkedSessions.add(id));
+function toggleSelectAll(checked) {
+  if (checked) {
+    sessionOrder.forEach(id => checkedSessions.add(id));
+  } else {
+    checkedSessions.clear();
+    lastCheckedIndex = null;
+  }
   document.querySelectorAll('.session-checkbox').forEach(cb => {
-    cb.checked = checkedSessions.has(cb.dataset.sessionId);
+    if (cb.id !== 'select-all-checkbox') cb.checked = checkedSessions.has(cb.dataset.sessionId);
   });
   updateFooterButtons();
 }
 
-function deselectAll() {
-  checkedSessions.clear();
-  lastCheckedIndex = null;
-  document.querySelectorAll('.session-checkbox').forEach(cb => cb.checked = false);
-  updateFooterButtons();
+function syncSelectAllCheckbox() {
+  const cb = document.getElementById('select-all-checkbox');
+  if (!cb || sessionOrder.length === 0) { if (cb) cb.checked = false; return; }
+  cb.checked = sessionOrder.length > 0 && sessionOrder.every(id => checkedSessions.has(id));
+  cb.indeterminate = !cb.checked && checkedSessions.size > 0;
 }
 
 function updateFooterButtons() {
   document.getElementById('btn-merge').disabled = checkedSessions.size < 2;
   document.getElementById('btn-delete').disabled = checkedSessions.size === 0;
   document.getElementById('btn-move').disabled = checkedSessions.size === 0;
+  syncSelectAllCheckbox();
 }
 
 // --- Move to folder ---
