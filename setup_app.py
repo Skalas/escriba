@@ -77,23 +77,23 @@ def build():
     with open(CONTENTS / "Info.plist", "wb") as f:
         plistlib.dump(plist, f)
 
-    venv_bin = PROJECT_DIR / ".venv" / "bin" / "escriba"
-    if not venv_bin.exists():
-        raise RuntimeError(
-            f"escriba not found at {venv_bin} — run 'uv sync' first"
-        )
+    # Resolve uv path at build time so the launcher works from .app context
+    import shutil as _shutil
+    uv_path = _shutil.which("uv")
+    if not uv_path:
+        raise RuntimeError("uv not found on PATH")
 
     log_file = Path.home() / "Library" / "Logs" / "escriba" / "app.log"
     launcher = MACOS_DIR / "launcher"
     launcher.write_text(f"""#!/usr/bin/env bash
-# Escriba launcher — runs the app directly from the venv.
+# Escriba launcher — runs the app via uv from the project directory.
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 export ESCRIBA_PROJECT_ROOT="{PROJECT_DIR}"
 unset VIRTUAL_ENV LOCAL_TRANSCRIBER_CONFIG 2>/dev/null
 LOG_DIR="$(dirname "{log_file}")"
 mkdir -p "$LOG_DIR"
 cd "{PROJECT_DIR}"
-exec "{venv_bin}" app >> "{log_file}" 2>&1
+exec "{uv_path}" run escriba app >> "{log_file}" 2>&1
 """)
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
