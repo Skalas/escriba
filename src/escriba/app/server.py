@@ -55,6 +55,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json_response(self._get_sessions())
         elif path == "/api/folders":
             self._json_response(self._get_folders())
+        elif path == "/api/models":
+            self._json_response(self._list_models())
         elif path.startswith("/api/sessions/") and path.endswith("/audio"):
             session_id = path.split("/api/sessions/")[1].rsplit("/audio", 1)[0]
             self._serve_audio(session_id)
@@ -416,6 +418,15 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": False, "error": "Failed to generate notes"}
         except Exception as e:
             logger.error("Error generating session notes: %s", e, exc_info=True)
+            return {"ok": False, "error": str(e)}
+
+    def _list_models(self) -> dict:
+        try:
+            from escriba.summarize.llm_summary import list_available_models
+            models = list_available_models()
+            return {"ok": True, "models": models}
+        except Exception as e:
+            logger.error("Error listing models: %s", e, exc_info=True)
             return {"ok": False, "error": str(e)}
 
     def _get_config(self) -> dict:

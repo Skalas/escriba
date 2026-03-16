@@ -436,6 +436,8 @@ def _generate_custom_notes(
     transcript: str, prompt: str, model: str = "gemini"
 ) -> str | None:
     """Generate notes from transcript with a custom user prompt."""
+    from escriba.summarize.llm_summary import resolve_provider_and_model
+
     full_prompt = (
         "Here is a transcript from a meeting/call:\n\n"
         f"{transcript}\n\n"
@@ -444,32 +446,33 @@ def _generate_custom_notes(
         "Respond in a clear, well-structured format."
     )
 
+    provider, model_id = resolve_provider_and_model(model)
+
     try:
-        if model == "gemini":
-            return _call_gemini(full_prompt)
-        elif model == "claude":
-            return _call_claude(full_prompt)
+        if provider == "gemini":
+            return _call_gemini(full_prompt, model_id)
+        elif provider == "claude":
+            return _call_claude(full_prompt, model_id)
         else:
-            logger.error("Unsupported model for notes: %s", model)
+            logger.error("Unsupported provider for notes: %s", provider)
             return None
     except Exception as e:
         logger.error("Error generating notes: %s", e, exc_info=True)
         return None
 
 
-def _call_gemini(prompt: str) -> str | None:
+def _call_gemini(prompt: str, model_id: str) -> str | None:
     from google import genai
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return "Error: GEMINI_API_KEY not set"
     client = genai.Client(api_key=api_key)
-    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview")
-    response = client.models.generate_content(model=model_name, contents=prompt)
+    response = client.models.generate_content(model=model_id, contents=prompt)
     return response.text
 
 
-def _call_claude(prompt: str) -> str | None:
+def _call_claude(prompt: str, model_id: str) -> str | None:
     from anthropic import Anthropic
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -477,7 +480,7 @@ def _call_claude(prompt: str) -> str | None:
         return "Error: ANTHROPIC_API_KEY not set"
     client = Anthropic(api_key=api_key)
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model=model_id,
         max_tokens=4000,
         messages=[{"role": "user", "content": prompt}],
     )

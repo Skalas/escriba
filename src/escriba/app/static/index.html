@@ -716,10 +716,13 @@
         <h3>AI Notes</h3>
         <div class="settings-row">
           <span class="settings-label">Summary Model</span>
-          <select class="settings-input" id="s-summary-model">
-            <option value="gemini">gemini</option>
-            <option value="claude">claude</option>
-          </select>
+          <div style="display:flex;align-items:center;gap:6px;flex:1;max-width:320px;">
+            <select class="settings-input" id="s-summary-model" style="flex:1;max-width:none;">
+              <option value="gemini">gemini (default)</option>
+              <option value="claude">claude (default)</option>
+            </select>
+            <button type="button" id="btn-refresh-models" onclick="refreshModels()" title="Refresh model list from APIs" style="padding:4px 8px;cursor:pointer;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:14px;">&#x21bb;</button>
+          </div>
         </div>
         <div class="settings-row">
           <span class="settings-label">Gemini API Key</span>
@@ -1515,7 +1518,12 @@ async function loadSettings() {
     document.getElementById('s-chunk-duration').value = c.streaming.chunk_duration;
     document.getElementById('s-speaker-mode').value = c.streaming.speaker.mode;
     document.getElementById('s-speaker-threshold').value = c.streaming.speaker.threshold;
-    document.getElementById('s-summary-model').value = c.streaming.summary_model;
+    const smSel = document.getElementById('s-summary-model');
+    const smVal = c.streaming.summary_model;
+    if (![...smSel.options].some(o => o.value === smVal)) {
+      const o = document.createElement('option'); o.value = smVal; o.textContent = smVal; smSel.appendChild(o);
+    }
+    smSel.value = smVal;
     document.getElementById('s-vad-enabled').checked = c.streaming.vad_enabled;
     document.getElementById('s-vad-threshold').value = c.vad.threshold;
     document.getElementById('s-vad-silence').value = c.vad.min_silence_ms;
@@ -1542,6 +1550,48 @@ function setEnvStatus(id, isSet) {
   const el = document.getElementById(id);
   el.textContent = isSet ? 'SET' : 'NOT SET';
   el.className = 'env-status ' + (isSet ? 'env-set' : 'env-unset');
+}
+
+async function refreshModels() {
+  const btn = document.getElementById('btn-refresh-models');
+  const sel = document.getElementById('s-summary-model');
+  const currentVal = sel.value;
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    const res = await fetch('/api/models').then(r => r.json());
+    if (!res.ok) { showSettingsBanner('Failed to fetch models: ' + (res.error || 'unknown'), 'error'); return; }
+    const models = res.models;
+    sel.innerHTML = '';
+    // Add provider defaults first
+    const defaultOpt = (val, label) => { const o = document.createElement('option'); o.value = val; o.textContent = label; return o; };
+    sel.appendChild(defaultOpt('gemini', 'gemini (default)'));
+    sel.appendChild(defaultOpt('claude', 'claude (default)'));
+    // Add specific models grouped by provider
+    for (const [provider, ids] of Object.entries(models)) {
+      if (ids.length) {
+        const grp = document.createElement('optgroup');
+        grp.label = provider.charAt(0).toUpperCase() + provider.slice(1) + ' Models';
+        for (const id of ids) {
+          const o = document.createElement('option');
+          o.value = id;
+          o.textContent = id;
+          grp.appendChild(o);
+        }
+        sel.appendChild(grp);
+      }
+    }
+    // Restore previous selection if it still exists
+    if ([...sel.options].some(o => o.value === currentVal)) {
+      sel.value = currentVal;
+    }
+    showSettingsBanner('Model list refreshed', 'success');
+  } catch (e) {
+    showSettingsBanner('Error refreshing models: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '\u21bb';
+  }
 }
 
 function updateSettingsSaveState() {
