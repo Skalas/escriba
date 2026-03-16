@@ -11,7 +11,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-preview"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6-20250514"
 
 
