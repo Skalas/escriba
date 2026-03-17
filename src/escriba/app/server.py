@@ -408,7 +408,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not segments:
             return {"ok": False, "error": "No segments in this session"}
         transcript = " ".join(s["text"] for s in segments)
-        prompt = body.get("prompt", "").strip() or "Summarize the key points, decisions, and action items."
+        prompt = body.get("prompt", "").strip() or "Summarize the key points, decisions, and action items. Respond in the same language as the transcript."
         model = body.get("model", "gemini")
         try:
             from escriba.app.session import _generate_custom_notes
