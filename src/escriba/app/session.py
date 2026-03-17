@@ -443,6 +443,7 @@ def _generate_custom_notes(
         f"{transcript}\n\n"
         "Based on the above transcript, please do the following:\n"
         f"{prompt}\n\n"
+        "IMPORTANT: Respond in the SAME LANGUAGE as the transcript.\n"
         "Respond in a clear, well-structured format."
     )
 

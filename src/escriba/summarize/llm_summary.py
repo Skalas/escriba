@@ -36,6 +36,32 @@ def resolve_provider_and_model(model: str) -> tuple[str, str]:
     return "gemini", m
 
 
+def _build_summary_prompt(transcript: str) -> str:
+    return f"""Analyze this meeting/call transcript and generate a structured summary as JSON.
+
+IMPORTANT: Respond in the SAME LANGUAGE as the transcript.
+
+Transcript:
+{transcript}
+
+Generate a JSON with this structure (use the transcript's language for all values):
+{{
+  "summary": "Executive summary in 3-5 sentences",
+  "key_points": ["key point 1", "key point 2", ...],
+  "action_items": [
+    {{
+      "task": "task description",
+      "assignee": "person if mentioned",
+      "due_date": "date if mentioned"
+    }}
+  ],
+  "decisions": ["decision 1", "decision 2", ...],
+  "topics": ["topic 1", "topic 2", ...]
+}}
+
+Respond ONLY with the JSON, no additional text."""
+
+
 def generate_summary(
     transcript: str,
     model: str = "gemini",
@@ -85,27 +111,7 @@ def _generate_summary_gemini(
     try:
         client = genai.Client(api_key=api_key)
 
-        prompt = f"""Analiza esta transcripción de llamada/reunión y genera un resumen estructurado en formato JSON.
-
-Transcripción:
-{transcript}
-
-Genera un JSON con la siguiente estructura:
-{{
-  "summary": "Resumen ejecutivo en 3-5 oraciones",
-  "key_points": ["punto clave 1", "punto clave 2", ...],
-  "action_items": [
-    {{
-      "task": "descripción de la tarea",
-      "assignee": "responsable si se menciona",
-      "due_date": "fecha si se menciona"
-    }}
-  ],
-  "decisions": ["decisión 1", "decisión 2", ...],
-  "topics": ["tema 1", "tema 2", ...]
-}}
-
-Responde SOLO con el JSON, sin texto adicional."""
+        prompt = _build_summary_prompt(transcript)
 
         response = client.models.generate_content(model=model_id, contents=prompt)
         response_text = response.text.strip()
@@ -169,27 +175,7 @@ def _generate_summary_claude(
     try:
         client = Anthropic(api_key=api_key)
 
-        prompt = f"""Analiza esta transcripción de llamada/reunión y genera un resumen estructurado en formato JSON.
-
-Transcripción:
-{transcript}
-
-Genera un JSON con la siguiente estructura:
-{{
-  "summary": "Resumen ejecutivo en 3-5 oraciones",
-  "key_points": ["punto clave 1", "punto clave 2", ...],
-  "action_items": [
-    {{
-      "task": "descripción de la tarea",
-      "assignee": "responsable si se menciona",
-      "due_date": "fecha si se menciona"
-    }}
-  ],
-  "decisions": ["decisión 1", "decisión 2", ...],
-  "topics": ["tema 1", "tema 2", ...]
-}}
-
-Responde SOLO con el JSON, sin texto adicional."""
+        prompt = _build_summary_prompt(transcript)
 
         message = client.messages.create(
             model=model_id,
