@@ -196,7 +196,19 @@ class TranscriberMenuBar(rumps.App):
             import webbrowser
             webbrowser.open(url)
 
+    def _terminate_dashboard(self):
+        """Terminate the dashboard viewer app if running."""
+        try:
+            subprocess.run(
+                ["osascript", "-e", 'quit app id "com.escriba.dashboard"'],
+                capture_output=True,
+                timeout=5,
+            )
+        except Exception:
+            logger.debug("Dashboard termination failed", exc_info=True)
+
     def quit_app(self, _):
+        self._terminate_dashboard()
         session: TranscriptionSession | None = self.app_state.get("session")
         if session and session.is_active:
             session.stop()
