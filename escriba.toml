@@ -19,6 +19,16 @@ threshold = 0.3
 min_silence_ms = 500
 threshold = 0.3
 
+[auto_record]
+enabled = true              # Detect mic activation and prompt to record
+cooldown_seconds = 60        # Seconds to wait after dismissing before prompting again
+poll_interval = 3            # Seconds between mic state checks
+
+[auto_name]
+enabled = true               # Auto-generate session titles via LLM
+min_segments = 5             # Minimum segments before first title attempt
+max_snippet_words = 500      # Max words sent to LLM for naming
+
 [whisper]
 condition_on_previous_text = false
 no_speech_threshold = 0.6
