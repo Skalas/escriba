@@ -328,6 +328,14 @@ def run_menubar_app(config: AppConfig | None = None):
         "Config: backend=%s, model=%s", config.streaming.backend, config.streaming.model_size
     )
 
+    # Configure local LLM cache TTL from config
+    try:
+        from escriba.summarize.llm_summary import configure_local_cache
+
+        configure_local_cache(ttl=config.local_llm.cache_ttl)
+    except Exception:
+        logger.debug("Could not configure local LLM cache", exc_info=True)
+
     # Pre-build dashboard app at startup (so first "Open Dashboard" is instant)
     try:
         _ensure_dashboard_app(icon_path=_find_icon())

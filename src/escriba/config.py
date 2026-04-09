@@ -256,7 +256,7 @@ class StreamingConfig:
     export_formats: list[str] = field(default_factory=lambda: ["txt", "json"])
     show_metrics: bool = False
     summarize: bool = False
-    summary_model: str = "gemini"
+    summary_model: str = "auto"
 
     speaker: SpeakerConfig = field(default_factory=SpeakerConfig)
 
@@ -277,6 +277,14 @@ class AutoNameConfig:
     enabled: bool = True
     min_segments: int = 5
     max_snippet_words: int = 500
+
+
+@dataclass(frozen=True)
+class LocalLLMConfig:
+    """Local LLM configuration for on-device inference via mlx-lm."""
+
+    model: str = "auto"  # "auto" = pick by RAM, or explicit HF repo ID
+    cache_ttl: int = 300  # seconds to keep model loaded after last use
 
 
 @dataclass(frozen=True)
@@ -313,6 +321,7 @@ class AppConfig:
     dictionary: DictionaryConfig = field(default_factory=DictionaryConfig)
     auto_record: AutoRecordConfig = field(default_factory=AutoRecordConfig)
     auto_name: AutoNameConfig = field(default_factory=AutoNameConfig)
+    local_llm: LocalLLMConfig = field(default_factory=LocalLLMConfig)
 
     config_path: Path | None = None
 
@@ -473,6 +482,15 @@ class AppConfig:
             max_snippet_words=an_max_words if an_max_words is not None else 500,
         )
 
+        # Local LLM
+        ll_section = _get_section(toml_data, "local_llm")
+        ll_model = _get_toml_str(ll_section, "model")
+        ll_ttl = _get_toml_int(ll_section, "cache_ttl")
+        local_llm_cfg = LocalLLMConfig(
+            model=ll_model if ll_model is not None else "auto",
+            cache_ttl=ll_ttl if ll_ttl is not None else 300,
+        )
+
         # Dictionary (custom vocabulary)
         dict_section = _get_section(toml_data, "dictionary")
         dict_terms = _get_toml_str_list(dict_section, "terms") or []
@@ -492,6 +510,7 @@ class AppConfig:
             dictionary=dict_cfg,
             auto_record=auto_record_cfg,
             auto_name=auto_name_cfg,
+            local_llm=local_llm_cfg,
             config_path=resolved_path,
         )
 
@@ -562,5 +581,9 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
             "enabled": cfg.auto_name.enabled,
             "min_segments": cfg.auto_name.min_segments,
             "max_snippet_words": cfg.auto_name.max_snippet_words,
+        },
+        "local_llm": {
+            "model": cfg.local_llm.model,
+            "cache_ttl": cfg.local_llm.cache_ttl,
         },
     }

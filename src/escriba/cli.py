@@ -408,6 +408,47 @@ def cmd_create_issues(
         print("No issues created.")
 
 
+@app.command("download-model")
+def cmd_download_model(
+    ctx: typer.Context,
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="HuggingFace model repo ID. Defaults to best model for your hardware.",
+    ),
+) -> None:
+    """Pre-download the local LLM model so it's ready when you need it."""
+    from escriba.summarize.llm_summary import recommend_model, get_system_ram_gb
+
+    cfg = _get_cfg(ctx)
+    model_id = model or cfg.local_llm.model
+
+    if model_id == "auto":
+        model_id = recommend_model()
+        if not model_id:
+            ram = get_system_ram_gb()
+            print(f"No local model available for {ram}GB RAM.")
+            print("Set a model explicitly: escriba download-model --model mlx-community/gemma-4-e4b-it-4bit")
+            raise typer.Exit(code=1)
+
+    ram = get_system_ram_gb()
+    print(f"System RAM: {ram}GB")
+    print(f"Downloading model: {model_id}")
+    print("This may take a while on first download...\n")
+
+    try:
+        from mlx_lm import load
+
+        load(model_id)
+        print(f"\nModel ready: {model_id}")
+    except ImportError:
+        print("Error: mlx-lm is not installed. Run: uv sync")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        print(f"Error downloading model: {e}")
+        raise typer.Exit(code=1)
+
+
 def main() -> None:
     app()
 

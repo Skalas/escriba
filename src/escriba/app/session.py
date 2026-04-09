@@ -514,12 +514,19 @@ def _generate_custom_notes(
     provider, model_id = resolve_provider_and_model(model)
 
     try:
-        if provider == "gemini":
+        if provider == "local":
+            from escriba.summarize.llm_summary import _call_llm_local
+
+            return _call_llm_local(full_prompt, model_id, max_tokens=4096)
+        elif provider == "gemini":
             return _call_gemini(full_prompt, model_id)
         elif provider == "claude":
             return _call_claude(full_prompt, model_id)
         else:
-            logger.error("Unsupported provider for notes: %s", provider)
+            if provider == "none":
+                logger.info("No AI provider available — skipping notes")
+            else:
+                logger.error("Unsupported provider for notes: %s", provider)
             return None
     except Exception as e:
         logger.error("Error generating notes: %s", e, exc_info=True)
