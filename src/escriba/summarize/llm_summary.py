@@ -426,10 +426,25 @@ def _extract_response(text: str) -> str:
         parts = text.split("<channel|>")
         return parts[-1].strip()
 
-    return text.strip()
+    # If only thinking channel is present (model ran out of tokens before
+    # emitting the response channel), strip the thinking block entirely.
+    thought_match = re.search(r"<\|channel\>thought\s*\n?(.*)", text, re.DOTALL)
+    if thought_match:
+        # The model never produced a response — return empty so callers
+        # know the generation was incomplete.
+        return ""
+
+    # Strip any remaining special tokens the model may have leaked.
+    cleaned = re.sub(r"<\|[^>]*\>", "", text).strip()
+    return cleaned
 
 
-def _call_llm_local(prompt: str, model_id: str, max_tokens: int = 256) -> str | None:
+def _call_llm_local(
+    prompt: str,
+    model_id: str,
+    max_tokens: int = 256,
+    enable_thinking: bool = True,
+) -> str | None:
     """Call a local MLX model via the hybrid cache."""
     model, tokenizer = _model_cache.get(model_id)
     if model is None:
@@ -437,14 +452,18 @@ def _call_llm_local(prompt: str, model_id: str, max_tokens: int = 256) -> str | 
     try:
         from mlx_lm import generate
 
-        # Enable thinking for better quality; we strip it from the output after.
         messages = [{"role": "user", "content": prompt}]
-        chat_prompt = tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=False,
-            enable_thinking=True,
-        )
+        template_kwargs: dict = {
+            "add_generation_prompt": True,
+            "tokenize": False,
+            "enable_thinking": enable_thinking,
+        }
+        try:
+            chat_prompt = tokenizer.apply_chat_template(messages, **template_kwargs)
+        except TypeError:
+            # Tokenizer doesn't support enable_thinking kwarg
+            template_kwargs.pop("enable_thinking", None)
+            chat_prompt = tokenizer.apply_chat_template(messages, **template_kwargs)
 
         result = generate(model, tokenizer, prompt=chat_prompt, max_tokens=max_tokens)
         if not result:
@@ -479,7 +498,9 @@ def generate_session_title(
     provider, model_id = resolve_provider_and_model(model)
     try:
         if provider == "local":
-            title = _call_llm_local(prompt, model_id, max_tokens=60)
+            title = _call_llm_local(
+                prompt, model_id, max_tokens=60, enable_thinking=False,
+            )
         elif provider == "gemini":
             title = _call_llm_gemini(prompt, model_id)
         elif provider == "claude":

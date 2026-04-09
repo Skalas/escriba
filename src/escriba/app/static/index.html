@@ -12,18 +12,26 @@
     --text-secondary: #86868b;
     --accent: #007aff;
     --accent-hover: #0056b3;
+    --accent-subtle: rgba(0, 122, 255, 0.08);
     --danger: #ff3b30;
     --danger-hover: #d32f2f;
     --success: #34c759;
     --border: #d2d2d7;
+    --border-light: #e8e8ed;
     --code-bg: #f0f0f2;
     --sidebar-bg: #f0f0f2;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
     --radius: 12px;
+    --radius-sm: 8px;
     --badge-active: #34c75930;
     --badge-completed: #007aff20;
     --badge-merged: #af52de20;
     --badge-error: #ff3b3020;
     --sidebar-width: 300px;
+    --transition-fast: 150ms ease;
+    --transition-normal: 200ms ease;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -32,8 +40,20 @@
       --text: #f5f5f7;
       --text-secondary: #98989d;
       --border: #48484a;
+      --border-light: #3a3a3c;
       --code-bg: #3a3a3c;
       --sidebar-bg: #252527;
+      --accent-subtle: rgba(0, 122, 255, 0.12);
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+      --shadow-md: 0 2px 8px rgba(0,0,0,0.24), 0 1px 2px rgba(0,0,0,0.16);
+      --shadow-lg: 0 4px 16px rgba(0,0,0,0.32), 0 2px 4px rgba(0,0,0,0.16);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
     }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -44,7 +64,16 @@
     height: 100vh;
     display: flex;
     overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+  /* SVG icon base */
+  .icon { width: 16px; height: 16px; display: inline-block; vertical-align: middle; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  .icon-sm { width: 14px; height: 14px; }
+  .icon-lg { width: 20px; height: 20px; }
+  /* Focus ring */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   /* Sidebar */
   .sidebar {
@@ -66,7 +95,7 @@
   .sidebar.collapsed > * { display: none; }
 
   .sidebar-header {
-    padding: 12px 16px;
+    padding: 16px 16px 12px;
     border-bottom: 1px solid var(--border);
   }
   .sidebar-header h1 {
@@ -76,19 +105,22 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    letter-spacing: -0.3px;
   }
   .btn-icon {
     background: none;
     border: none;
-    font-size: 22px;
     cursor: pointer;
-    padding: 6px 8px;
-    border-radius: 6px;
+    padding: 8px;
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
-    transition: background 0.15s;
-    line-height: 1;
+    transition: background var(--transition-fast), color var(--transition-fast);
+    line-height: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
-  .btn-icon:hover { background: var(--border); }
+  .btn-icon:hover { background: var(--border-light); color: var(--text); }
 
   /* Search */
   .search-box {
@@ -102,7 +134,7 @@
     color: var(--text);
     margin-bottom: 8px;
   }
-  .search-box:focus { outline: none; border-color: var(--accent); }
+  .search-box:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,122,255,0.12); }
 
   /* Settings */
   .settings-card { margin-bottom: 16px; }
@@ -128,7 +160,7 @@
     background: var(--bg);
     color: var(--text);
   }
-  .settings-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0,122,255,0.15); }
+  .settings-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,122,255,0.12); }
   .settings-toggle { position: relative; width: 44px; height: 24px; }
   .settings-toggle input { opacity: 0; width: 0; height: 0; }
   .settings-toggle .slider {
@@ -160,52 +192,61 @@
   }
   .toolbar-row .search-box { flex: 1; margin-bottom: 0; }
   .btn-record {
-    width: 36px; height: 36px; min-width: 36px;
+    width: 44px; height: 44px; min-width: 44px;
     border-radius: 50%;
-    border: none;
+    border: 2px solid var(--border);
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     padding: 0;
-    background: var(--code-bg);
-    transition: background 0.15s;
+    background: var(--card);
+    transition: all var(--transition-normal);
+    position: relative;
   }
-  .btn-record:hover { background: var(--border); }
-  .btn-record.recording { background: var(--danger); }
-  .btn-record.recording:hover { background: var(--danger-hover); }
+  .btn-record:hover { border-color: var(--danger); background: rgba(255, 59, 48, 0.06); }
+  .btn-record.recording { background: var(--danger); border-color: var(--danger); box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.2); }
+  .btn-record.recording:hover { background: var(--danger-hover); border-color: var(--danger-hover); }
+  @keyframes recording-ring { 0%, 100% { box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.2); } 50% { box-shadow: 0 0 0 8px rgba(255, 59, 48, 0.08); } }
+  .btn-record.recording { animation: recording-ring 2s ease-in-out infinite; }
   .record-icon {
     display: block;
-    width: 14px; height: 14px;
+    width: 16px; height: 16px;
     border-radius: 50%;
     background: var(--danger);
-    transition: border-radius 0.15s, background 0.15s;
+    transition: border-radius var(--transition-normal), background var(--transition-normal), width var(--transition-normal), height var(--transition-normal);
   }
   .btn-record.recording .record-icon {
     border-radius: 3px;
+    width: 14px; height: 14px;
     background: white;
   }
 
   /* Folder groups */
-  .folder-group { margin-bottom: 4px; }
+  .folder-group { margin-bottom: 2px; }
   .folder-header {
-    display: flex; align-items: center; gap: 6px;
-    padding: 6px 12px; font-size: 12px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.5px;
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px;
     color: var(--text-secondary); cursor: pointer; user-select: none;
-    border-radius: 6px; transition: background 0.15s;
+    border-radius: var(--radius-sm); transition: background var(--transition-fast);
   }
-  .folder-header:hover { background: var(--card); }
+  .folder-header:hover { background: var(--accent-subtle); }
   .folder-chevron {
-    font-size: 10px; transition: transform 0.15s; display: inline-block; width: 12px;
+    transition: transform var(--transition-fast); display: inline-flex; width: 16px; height: 16px;
+    align-items: center; justify-content: center;
   }
-  .folder-chevron.collapsed { transform: rotate(-90deg); }
+  .folder-chevron.collapsed svg { transform: rotate(-90deg); }
+  .folder-chevron svg { transition: transform var(--transition-fast); }
   .folder-sessions { overflow: hidden; }
   .folder-sessions.collapsed { display: none; }
-  .folder-actions { margin-left: auto; display: flex; gap: 2px; }
+  .folder-actions { margin-left: auto; display: flex; gap: 2px; opacity: 0; transition: opacity var(--transition-fast); }
+  .folder-header:hover .folder-actions { opacity: 1; }
   .folder-actions button {
-    background: none; border: none; font-size: 12px; cursor: pointer;
-    padding: 2px 4px; border-radius: 4px; color: var(--text-secondary);
+    background: none; border: none; cursor: pointer;
+    padding: 4px; border-radius: 4px; color: var(--text-secondary);
+    line-height: 0; display: inline-flex; align-items: center; justify-content: center;
+    transition: background var(--transition-fast), color var(--transition-fast);
   }
-  .folder-actions button:hover { background: var(--border); }
+  .folder-actions button:hover { background: var(--border-light); color: var(--text); }
 
   .session-list {
     flex: 1;
@@ -213,17 +254,17 @@
     padding: 4px 8px;
   }
   .session-item {
-    padding: 8px 10px;
-    border-radius: 8px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     margin-bottom: 2px;
-    transition: background 0.15s;
+    transition: background var(--transition-fast);
     display: flex;
     align-items: flex-start;
-    gap: 8px;
+    gap: 10px;
   }
-  .session-item:hover { background: var(--card); }
-  .session-item.selected { background: var(--accent); color: white; }
+  .session-item:hover { background: var(--accent-subtle); }
+  .session-item.selected { background: var(--accent); color: white; box-shadow: var(--shadow-sm); }
   .session-item.selected .session-meta,
   .session-item.selected .session-badge { color: rgba(255,255,255,0.8); }
   .session-checkbox {
@@ -242,6 +283,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .session-rename-btn {
+    display: none; background: none; border: none; padding: 2px;
+    cursor: pointer; color: var(--text-secondary); line-height: 0;
+    border-radius: 4px; transition: color var(--transition-fast);
+    flex-shrink: 0;
+  }
+  .session-rename-btn:hover { color: var(--accent); }
+  .session-item:hover .session-rename-btn { display: inline-flex; }
+  .session-item.selected .session-rename-btn { display: inline-flex; color: rgba(255,255,255,0.7); }
+  .session-item.selected .session-rename-btn:hover { color: white; }
   .session-meta {
     font-size: 11px;
     color: var(--text-secondary);
@@ -262,15 +313,26 @@
     padding: 2px 4px; background: var(--bg); color: var(--text);
     width: 100%; font-family: inherit; outline: none;
   }
+  .session-edit-actions {
+    display: flex; gap: 2px; margin-top: 4px;
+  }
+  .session-edit-actions button {
+    padding: 3px 6px; font-size: 11px; font-weight: 600; border-radius: 4px;
+    line-height: 1;
+  }
+  .btn-edit-save { background: var(--accent); color: white; }
+  .btn-edit-save:hover { background: var(--accent-hover); }
+  .btn-edit-cancel { background: var(--code-bg); color: var(--text-secondary); }
+  .btn-edit-cancel:hover { background: var(--border-light); }
 
   .sidebar-footer {
-    padding: 8px 12px;
+    padding: 10px 12px;
     border-top: 1px solid var(--border);
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
   }
-  .sidebar-footer button { flex: 1; font-size: 11px; padding: 7px 6px; min-width: 0; }
+  .sidebar-footer button { flex: 1; font-size: 12px; padding: 8px 8px; min-width: 0; font-weight: 600; }
 
   /* Sidebar collapse toggle (in main area) */
   .sidebar-toggle {
@@ -282,13 +344,16 @@
     background: var(--sidebar-bg);
     border: 1px solid var(--border);
     border-radius: 0 8px 8px 0;
-    padding: 12px 4px;
+    padding: 12px 6px;
     cursor: pointer;
-    font-size: 14px;
     color: var(--text-secondary);
-    transition: left 0.2s;
-    line-height: 1;
+    transition: left var(--transition-normal), background var(--transition-fast), color var(--transition-fast);
+    line-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
+  .sidebar-toggle:hover { background: var(--border-light); color: var(--text); }
   .sidebar-toggle.open { left: calc(var(--sidebar-width) - 1px); }
 
   /* Main area */
@@ -297,6 +362,7 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    scroll-behavior: smooth;
     padding: 24px;
   }
 
@@ -319,19 +385,20 @@
     font-family: inherit; outline: none; flex: 1; min-width: 200px;
   }
   #status-badge {
-    display: inline-flex; align-items: center; gap: 6px;
+    display: inline-flex; align-items: center; gap: 8px;
     padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;
-    white-space: nowrap;
+    white-space: nowrap; transition: all var(--transition-normal);
   }
   #status-badge.idle { background: var(--code-bg); color: var(--text-secondary); }
-  #status-badge.recording { background: #ff3b3020; color: var(--danger); }
+  #status-badge.recording { background: rgba(255, 59, 48, 0.1); color: var(--danger); }
   #status-dot {
     width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary);
+    transition: background var(--transition-normal);
   }
   #status-badge.recording #status-dot {
     background: var(--danger); animation: pulse 1.5s ease-in-out infinite;
   }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
 
   .info-bar {
     display: flex; gap: 20px; font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;
@@ -341,32 +408,38 @@
   #error-banner {
     background: #ff3b3018; color: var(--danger); padding: 12px 16px;
     border-radius: 10px; margin-bottom: 16px; font-size: 14px; display: none;
+    border-left: 3px solid var(--danger);
   }
-  #error-banner.visible { display: block; }
+  #error-banner.visible { display: block; animation: slideDown 200ms ease; }
+  @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
   button {
     padding: 10px 20px; border: none; border-radius: 10px;
     font-size: 14px; font-weight: 600; cursor: pointer;
-    transition: background 0.15s, opacity 0.15s;
+    transition: background var(--transition-fast), transform 80ms ease, opacity var(--transition-fast), box-shadow var(--transition-fast);
   }
-  button:active { opacity: 0.7; }
+  button:active:not(:disabled) { transform: scale(0.97); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-start { background: var(--accent); color: white; }
-  .btn-start:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-start:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 2px 8px rgba(0, 122, 255, 0.25); }
   .btn-stop { background: var(--danger); color: white; }
-  .btn-stop:hover:not(:disabled) { background: var(--danger-hover); }
+  .btn-stop:hover:not(:disabled) { background: var(--danger-hover); box-shadow: 0 2px 8px rgba(255, 59, 48, 0.25); }
   .btn-secondary { background: var(--code-bg); color: var(--text); }
-  .btn-secondary:hover:not(:disabled) { background: var(--border); }
+  .btn-secondary:hover:not(:disabled) { background: var(--border-light); }
   .btn-danger-outline { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
   .btn-danger-outline:hover:not(:disabled) { background: var(--badge-error); }
 
   .card {
-    background: var(--card); border: 1px solid var(--border);
+    background: var(--card); border: 1px solid var(--border-light);
     border-radius: var(--radius); padding: 20px; margin-bottom: 20px;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow var(--transition-normal);
   }
+  .card:hover { box-shadow: var(--shadow-md); }
   .card h3 {
-    font-size: 14px; font-weight: 600; margin-bottom: 12px;
-    color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;
+    font-size: 12px; font-weight: 700; margin-bottom: 14px;
+    color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.6px;
     display: flex; align-items: center; gap: 8px;
   }
 
@@ -380,13 +453,14 @@
     content: 'Select a session or start recording...';
     color: var(--text-secondary); font-style: italic;
   }
-  .segment { padding: 4px 0; cursor: default; }
+  .segment { padding: 6px 4px; cursor: default; border-radius: 6px; transition: background var(--transition-fast); }
   .segment.clickable { cursor: pointer; }
-  .segment.clickable:hover { background: var(--code-bg); border-radius: 4px; }
+  .segment.clickable:hover { background: var(--accent-subtle); }
   .segment.playing { background: rgba(0, 122, 255, 0.08); border-left: 3px solid var(--accent); padding-left: 8px; }
   .segment-time {
     color: var(--accent); font-size: 12px; font-weight: 600;
     font-variant-numeric: tabular-nums; margin-right: 8px;
+    opacity: 0.85;
   }
   .audio-player-card audio { width: 100%; }
   .audio-player-card .no-audio { color: var(--text-secondary); font-style: italic; font-size: 14px; }
@@ -402,9 +476,9 @@
   #prompt-input::placeholder { color: var(--text-secondary); }
   #prompt-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15); }
 
-  .btn-generate { background: var(--success); color: white; }
-  .btn-generate:hover:not(:disabled) { background: #2db84d; }
-  .btn-generate.loading { pointer-events: none; opacity: 0.6; }
+  .btn-generate { background: var(--success); color: white; display: inline-flex; align-items: center; gap: 8px; }
+  .btn-generate:hover:not(:disabled) { background: #2db84d; box-shadow: 0 2px 8px rgba(52, 199, 89, 0.25); }
+  .btn-generate.loading { pointer-events: none; opacity: 0.7; }
 
   #notes-output {
     margin-top: 16px; padding: 16px; background: var(--code-bg); border-radius: 10px;
@@ -412,26 +486,29 @@
   }
   #notes-output.visible { display: block; }
 
-  .empty-state { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
-  .empty-state h3 { font-size: 18px; color: var(--text); margin-bottom: 8px; text-transform: none; }
-  .empty-state p { font-size: 14px; }
+  .empty-state { text-align: center; padding: 80px 24px; color: var(--text-secondary); }
+  .empty-state-icon { margin-bottom: 20px; opacity: 0.3; }
+  .empty-state h3 { font-size: 18px; color: var(--text); margin-bottom: 8px; text-transform: none; font-weight: 700; letter-spacing: -0.2px; }
+  .empty-state p { font-size: 14px; line-height: 1.6; max-width: 300px; margin: 0 auto; }
 
   .controls-row { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 
   .prompt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
   .prompt-chip {
-    padding: 6px 12px; border-radius: 16px; font-size: 12px; font-weight: 500;
-    cursor: pointer; border: 1px solid var(--border); background: var(--card);
-    color: var(--text); transition: all 0.15s; user-select: none;
+    padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 500;
+    cursor: pointer; border: 1px solid var(--border-light); background: var(--card);
+    color: var(--text); transition: all var(--transition-fast); user-select: none;
   }
-  .prompt-chip:hover { border-color: var(--accent); }
-  .prompt-chip.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .prompt-chip:hover { border-color: var(--accent); background: var(--accent-subtle); }
+  .prompt-chip.active { background: var(--accent); color: white; border-color: var(--accent); box-shadow: 0 1px 4px rgba(0, 122, 255, 0.2); }
 
   /* Markdown rendered notes */
   .notes-rendered {
-    padding: 16px; background: var(--code-bg); border-radius: 10px;
+    padding: 16px 20px; background: var(--code-bg); border-radius: 10px;
     font-size: 14px; line-height: 1.7; cursor: pointer; min-height: 60px;
+    border: 1px solid transparent; transition: border-color var(--transition-fast);
   }
+  .notes-rendered:hover { border-color: var(--border-light); }
   .notes-rendered:empty::before {
     content: 'Click to add notes...'; color: var(--text-secondary); font-style: italic;
   }
@@ -474,8 +551,8 @@
   }
   .move-dropdown-content {
     display: none; position: absolute; bottom: 100%; left: 0;
-    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-    min-width: 180px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    background: var(--card); border: 1px solid var(--border-light); border-radius: var(--radius-sm);
+    min-width: 200px; box-shadow: var(--shadow-lg);
     z-index: 10; max-height: 200px; overflow-y: auto; margin-bottom: 4px;
   }
   .move-dropdown-content.visible { display: block; }
@@ -499,19 +576,20 @@
 <body>
 
 <!-- AI availability banner -->
-<div id="ai-banner" style="display:none;background:#fff3cd;color:#856404;padding:10px 16px;font-size:13px;text-align:center;border-bottom:1px solid #ffc107;position:sticky;top:0;z-index:1000;">
+<div id="ai-banner" style="display:none;background:#fff3cd;color:#856404;padding:10px 16px;font-size:13px;border-bottom:1px solid #ffc107;position:sticky;top:0;z-index:1000;gap:8px;align-items:center;justify-content:center;">
+  <svg class="icon" viewBox="0 0 24 24" style="stroke:#856404;flex-shrink:0;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
   <span id="ai-banner-text"></span>
 </div>
 
 <!-- Sidebar toggle -->
-<button class="sidebar-toggle open" id="sidebar-toggle" onclick="toggleSidebar()">&#9664;</button>
+<button class="sidebar-toggle open" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle sidebar"><svg class="icon" viewBox="0 0 24 24" id="sidebar-toggle-icon"><polyline points="15 18 9 12 15 6"></polyline></svg></button>
 
 <!-- Sidebar -->
 <div class="sidebar" id="sidebar">
   <div class="sidebar-header">
-    <h1>Escriba <button class="btn-icon" onclick="showSettingsView()" title="Settings">&#9881;</button></h1>
+    <h1>Escriba <button class="btn-icon" onclick="showSettingsView()" title="Settings" aria-label="Settings"><svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg></button></h1>
     <div style="display:flex;justify-content:center;margin-top:10px;">
-      <button class="btn-record" id="btn-record" onclick="toggleRecording()" title="Start recording">
+      <button class="btn-record" id="btn-record" onclick="toggleRecording()" title="Start recording" aria-label="Start recording">
         <span class="record-icon" id="record-icon"></span>
       </button>
     </div>
@@ -572,7 +650,7 @@
       <div class="controls-row" style="margin-bottom:0;">
         <button class="btn-start" id="btn-back-to-live" onclick="backToLive()" style="display:none;">Back to Live</button>
         <button class="btn-secondary" id="btn-retranscribe" onclick="retranscribeSession()" style="display:none;">Re-transcribe</button>
-        <button class="btn-secondary" onclick="exportSession()">Export</button>
+        <button class="btn-secondary" id="btn-export" onclick="exportSession(this)" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download</button>
       </div>
     </header>
     <div class="info-bar">
@@ -728,8 +806,8 @@
               <option value="gemini">gemini</option>
               <option value="claude">claude</option>
             </select>
-            <button type="button" id="btn-refresh-models" onclick="refreshModels()" title="Refresh model list" style="padding:4px 8px;cursor:pointer;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:14px;flex-shrink:0;">&#x21bb;</button>
-            <button type="button" id="btn-download-model" onclick="downloadModel()" title="Pre-download local model" style="padding:4px 8px;cursor:pointer;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:12px;white-space:nowrap;flex-shrink:0;">&#x2B07; Download</button>
+            <button type="button" id="btn-refresh-models" onclick="refreshModels()" title="Refresh model list" aria-label="Refresh model list" style="padding:6px 8px;cursor:pointer;border:1px solid var(--border);border-radius:6px;background:var(--card);flex-shrink:0;line-height:0;"><svg class="icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg></button>
+            <button type="button" id="btn-download-model" onclick="downloadModel()" title="Pre-download local model" style="padding:6px 8px;cursor:pointer;border:1px solid var(--border);border-radius:6px;background:var(--card);font-size:12px;white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:4px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download</button>
           </div>
           <div id="download-status" style="display:none;font-size:12px;color:var(--muted);margin-top:4px;width:100%;"></div>
         </div>
@@ -822,6 +900,7 @@
   <!-- Empty state -->
   <div id="empty-view">
     <div class="empty-state">
+      <div class="empty-state-icon"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg></div>
       <h3>No session selected</h3>
       <p>Start a recording or select a past session from the sidebar.</p>
     </div>
@@ -894,12 +973,13 @@ function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
   const toggle = document.getElementById('sidebar-toggle');
   sidebar.classList.toggle('collapsed');
+  const icon = document.getElementById('sidebar-toggle-icon');
   if (sidebar.classList.contains('collapsed')) {
     toggle.classList.remove('open');
-    toggle.innerHTML = '&#9654;';
+    icon.innerHTML = '<polyline points="9 18 15 12 9 6"></polyline>';
   } else {
     toggle.classList.add('open');
-    toggle.innerHTML = '&#9664;';
+    icon.innerHTML = '<polyline points="15 18 9 12 15 6"></polyline>';
   }
 }
 
@@ -957,6 +1037,8 @@ async function syncStatus() {
     }
     if (lastWasRecording && !isRecording) refreshSessionList();
     if (!lastWasRecording && isRecording) refreshSessionList();
+    // Refresh periodically during recording so auto-generated names appear
+    if (isRecording && lastWasRecording) refreshSessionList();
     lastWasRecording = isRecording;
     if (document.getElementById('settings-view').style.display !== 'none') updateSettingsSaveState();
     if (s.error) showError(s.error);
@@ -988,7 +1070,10 @@ async function refreshSessionList() {
     const res = await apiCall('/api/sessions');
     allSessions = res.sessions || [];
     allFolders = res.folders || [];
-    renderSessionList();
+    // Skip DOM re-render if user is editing a session name inline
+    if (!document.querySelector('#session-list .session-name-edit, #session-list .session-edit-actions')) {
+      renderSessionList();
+    }
   } catch (e) {}
 }
 
@@ -1031,11 +1116,11 @@ function renderSessionList() {
     const sessionsClass = isCollapsed ? ' collapsed' : '';
     html += `<div class="folder-group">
       <div class="folder-header" onclick="toggleFolder('${escAttr(f.id)}')">
-        <span class="folder-chevron${chevronClass}">&#9660;</span>
+        <span class="folder-chevron${chevronClass}"><svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg></span>
         <span>${escHtml(f.name)} (${sessions.length})</span>
         <span class="folder-actions">
-          <button onclick="event.stopPropagation();startFolderRename('${escAttr(f.id)}', this.parentElement.parentElement)" title="Rename">&#9998;</button>
-          <button onclick="event.stopPropagation();deleteFolder('${escAttr(f.id)}')" title="Delete folder">&#10005;</button>
+          <button onclick="event.stopPropagation();startFolderRename('${escAttr(f.id)}', this.parentElement.parentElement)" title="Rename" aria-label="Rename folder"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg></button>
+          <button onclick="event.stopPropagation();deleteFolder('${escAttr(f.id)}')" title="Delete folder" aria-label="Delete folder"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
         </span>
       </div>
       <div class="folder-sessions${sessionsClass}">
@@ -1048,7 +1133,7 @@ function renderSessionList() {
   if (unfiled.length > 0) {
     if (allFolders.length > 0) {
       html += `<div class="folder-header" style="cursor:default;opacity:0.6;">
-        <span class="folder-chevron">&#9660;</span>
+        <span class="folder-chevron"><svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg></span>
         <span>Unfiled (${unfiled.length})</span>
       </div>`;
     }
@@ -1067,13 +1152,14 @@ function renderSessionItem(s) {
   const checked = checkedSessions.has(s.id) ? 'checked' : '';
   const sel = s.id === selectedSessionId ? ' selected' : '';
   const badgeClass = 'badge-' + (s.status || 'completed');
-  return `<div class="session-item${sel}" data-id="${escAttr(s.id)}" onclick="handleSessionClick('${escAttr(s.id)}', event)" ondblclick="handleSessionDblClick('${escAttr(s.id)}', event)">
+  return `<div class="session-item${sel}" data-id="${escAttr(s.id)}" onclick="handleSessionClick('${escAttr(s.id)}', event)">
     <input type="checkbox" class="session-checkbox" data-session-id="${escAttr(s.id)}" ${checked}
       onclick="event.stopPropagation();toggleCheck('${escAttr(s.id)}', this.checked, event)">
     <div class="session-info">
       <div class="session-name" data-session-id="${escAttr(s.id)}">${escHtml(s.name)}</div>
       <div class="session-meta">${date} ${time} &middot; ${dur} &middot; ${s.segment_count || 0} segs</div>
     </div>
+    <button class="session-rename-btn" onclick="event.stopPropagation();startRenameById('${escAttr(s.id)}')" title="Rename" aria-label="Rename session"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg></button>
     <span class="session-badge ${badgeClass}">${escHtml(s.status || 'completed')}</span>
   </div>`;
 }
@@ -1272,52 +1358,74 @@ async function deleteFolder(folderId) {
   refreshSessionList();
 }
 
-// --- Click vs double-click on sessions ---
-let sessionClickTimer = null;
-
+// --- Session click ---
 function handleSessionClick(id, event) {
   if (event.target.classList.contains('session-checkbox')) return;
-  if (sessionClickTimer) { clearTimeout(sessionClickTimer); sessionClickTimer = null; return; }
-  sessionClickTimer = setTimeout(() => {
-    sessionClickTimer = null;
-    selectSession(id);
-  }, 250);
+  if (event.target.closest('.session-rename-btn')) return;
+  selectSession(id);
 }
 
-function handleSessionDblClick(id, event) {
-  event.stopPropagation();
-  if (sessionClickTimer) { clearTimeout(sessionClickTimer); sessionClickTimer = null; }
-  const nameEl = event.currentTarget.querySelector('.session-name[data-session-id="' + id + '"]');
+function startRenameById(id) {
+  const nameEl = document.querySelector('.session-name[data-session-id="' + id + '"]');
   if (nameEl) startRename(id, nameEl);
 }
 
 // --- Rename sessions ---
-function startRename(id, nameEl) {
-  const currentName = nameEl.textContent;
-  const input = document.createElement('input');
-  input.type = 'text'; input.value = currentName;
-  input.className = 'session-name-edit';
-  input.onclick = (e) => e.stopPropagation();
+let _renameState = null;
 
-  async function finishRename() {
-    const newName = input.value.trim();
-    if (newName && newName !== currentName) {
-      await apiCall('/api/sessions/' + id + '/rename', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName }),
-      });
-      if (id === selectedSessionId) document.getElementById('session-title').textContent = newName;
-    }
-    refreshSessionList();
-  }
-  input.addEventListener('blur', finishRename);
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-    if (e.key === 'Escape') { input.value = currentName; input.blur(); }
-  });
-  nameEl.textContent = '';
-  nameEl.appendChild(input);
+function startRename(id, nameEl) {
+  // If already editing this one, just focus
+  const existing = nameEl.querySelector('.session-name-edit');
+  if (existing) { existing.focus(); existing.select(); return; }
+
+  // Get name from data
+  const session = allSessions.find(s => s.id === id);
+  const currentName = session ? session.name : nameEl.textContent;
+  _renameState = { id, currentName };
+
+  const wrapper = nameEl.closest('.session-info');
+  nameEl.innerHTML = `<input type="text" class="session-name-edit" value="${escAttr(currentName)}" onclick="event.stopPropagation()" onkeydown="handleRenameKey(event)">`;
+  wrapper.insertAdjacentHTML('beforeend',
+    `<div class="session-edit-actions" onclick="event.stopPropagation()">` +
+    `<button class="btn-edit-save" type="button" onclick="event.stopPropagation();saveRename()">Save</button>` +
+    `<button class="btn-edit-cancel" type="button" onclick="event.stopPropagation();cancelRename()">Cancel</button>` +
+    `</div>`);
+  const input = nameEl.querySelector('.session-name-edit');
   input.focus(); input.select();
+}
+
+function handleRenameKey(e) {
+  e.stopPropagation();
+  if (e.key === 'Enter') { e.preventDefault(); saveRename(); }
+  if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+}
+
+function clearRenameUI() {
+  document.querySelectorAll('#session-list .session-edit-actions').forEach(el => el.remove());
+  document.querySelectorAll('#session-list .session-name-edit').forEach(el => el.remove());
+}
+
+async function saveRename() {
+  if (!_renameState) return;
+  const { id, currentName } = _renameState;
+  const input = document.querySelector('#session-list .session-name-edit');
+  const newName = input ? input.value.trim() : '';
+  _renameState = null;
+  clearRenameUI();
+  if (newName && newName !== currentName) {
+    await apiCall('/api/sessions/' + id + '/rename', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName }),
+    });
+    if (id === selectedSessionId) document.getElementById('session-title').textContent = newName;
+  }
+  refreshSessionList();
+}
+
+function cancelRename() {
+  _renameState = null;
+  clearRenameUI();
+  refreshSessionList();
 }
 
 // Rename from detail view title
@@ -1390,16 +1498,22 @@ async function clearNotes() {
   renderNotesView('');
 }
 
-function exportSession() {
+async function exportSession(btn) {
   if (!selectedSessionId) return;
-  const box = document.getElementById('session-transcript');
-  const text = box.innerText;
-  const blob = new Blob([text], { type: 'text/plain' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'transcript.txt';
-  a.click();
-  URL.revokeObjectURL(a.href);
+  const origHTML = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Saving...';
+  try {
+    const res = await apiCall('/api/sessions/' + selectedSessionId + '/export', { method: 'POST' });
+    if (res.ok) {
+      const name = res.path ? res.path.split('/').pop() : '';
+      btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> Saved to Downloads';
+      setTimeout(() => { btn.innerHTML = origHTML; btn.disabled = false; }, 3000);
+    } else {
+      showError(res.error || 'Export failed');
+      btn.innerHTML = origHTML; btn.disabled = false;
+    }
+  } catch (e) { showError('Export failed: ' + e.message); btn.innerHTML = origHTML; btn.disabled = false; }
 }
 
 async function generateSessionNotes() {
@@ -1407,7 +1521,7 @@ async function generateSessionNotes() {
   const btn = document.getElementById('btn-session-notes');
   const promptVal = document.getElementById('session-prompt-input').value.trim();
   const notesInput = document.getElementById('session-notes-input');
-  btn.classList.add('loading'); btn.textContent = 'Generating...';
+  btn.classList.add('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:white;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
   try {
     const res = await apiCall('/api/sessions/' + selectedSessionId + '/generate-notes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1420,14 +1534,14 @@ async function generateSessionNotes() {
       renderNotesView(notesInput.value);
     } else showError(res.error || 'Failed to generate notes');
   } catch (e) { showError('Error: ' + e.message); }
-  finally { btn.classList.remove('loading'); btn.textContent = 'Generate Notes'; }
+  finally { btn.classList.remove('loading'); btn.innerHTML = 'Generate Notes'; }
 }
 
 async function generateNotes() {
   const btn = document.getElementById('btn-notes');
   const out = document.getElementById('notes-output');
   const promptVal = document.getElementById('prompt-input').value.trim();
-  btn.classList.add('loading'); btn.textContent = 'Generating...';
+  btn.classList.add('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:white;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
   out.className = 'visible'; out.textContent = 'Thinking...';
   try {
     const res = await apiCall('/api/notes', {
@@ -1437,7 +1551,7 @@ async function generateNotes() {
     if (res.ok) { out.innerHTML = renderMarkdown(res.notes); out.classList.add('notes-rendered'); }
     else out.textContent = 'Error: ' + (res.error || 'Unknown');
   } catch (e) { out.textContent = 'Error: ' + e.message; }
-  finally { btn.classList.remove('loading'); btn.textContent = 'Generate Notes'; }
+  finally { btn.classList.remove('loading'); btn.innerHTML = 'Generate Notes'; }
 }
 
 // --- Markdown rendering ---
@@ -1570,7 +1684,7 @@ async function refreshModels(silent) {
   const sel = document.getElementById('s-summary-model');
   const currentVal = sel.value;
   btn.disabled = true;
-  btn.textContent = '...';
+  btn.innerHTML = '<svg class="icon" viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>';
   try {
     const res = await fetch('/api/models').then(r => r.json());
     if (!res.ok) { showSettingsBanner('Failed to fetch models: ' + (res.error || 'unknown'), 'error'); return; }
@@ -1607,7 +1721,7 @@ async function refreshModels(silent) {
     showSettingsBanner('Error refreshing models: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '\u21bb';
+    btn.innerHTML = '<svg class="icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
   }
 }
 
@@ -1617,7 +1731,7 @@ async function downloadModel() {
   const sel = document.getElementById('s-summary-model');
   const model = sel.value;
   btn.disabled = true;
-  btn.textContent = '⏳ Downloading...';
+  btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Downloading...';
   status.style.display = '';
   status.textContent = 'Starting download...';
   try {
@@ -1629,7 +1743,7 @@ async function downloadModel() {
     if (!res.ok) {
       status.textContent = 'Error: ' + (res.error || 'unknown');
       btn.disabled = false;
-      btn.textContent = '⬇ Download';
+      btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download';
       return;
     }
     status.textContent = 'Downloading ' + (res.model || 'model') + '...';
@@ -1646,7 +1760,7 @@ async function downloadModel() {
             status.textContent = 'Download failed: ' + (s.result.error || 'unknown');
           }
           btn.disabled = false;
-          btn.textContent = '⬇ Download';
+          btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download';
           setTimeout(() => { status.style.display = 'none'; }, 5000);
         } else if (s.downloading) {
           status.textContent = 'Downloading ' + s.downloading + '...';
@@ -1656,7 +1770,7 @@ async function downloadModel() {
   } catch (e) {
     status.textContent = 'Error: ' + e.message;
     btn.disabled = false;
-    btn.textContent = '⬇ Download';
+    btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download';
   }
 }
 
@@ -1857,7 +1971,7 @@ async function retranscribeSession() {
   if (!confirm('Re-transcribe this session from the saved audio? This will replace the current transcript.')) return;
   hideError();
   const btn = document.getElementById('btn-retranscribe');
-  btn.disabled = true; btn.textContent = 'Transcribing...';
+  btn.disabled = true; btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Transcribing...';
   try {
     const res = await apiCall('/api/sessions/' + selectedSessionId + '/retranscribe', { method: 'POST' });
     if (res.ok) { btn.textContent = res.segment_count + ' segments'; await selectSession(selectedSessionId); }
@@ -1901,7 +2015,7 @@ async function checkAiAvailability() {
     const text = document.getElementById('ai-banner-text');
     if (res.ok && !res.ai_available) {
       text.textContent = res.ai_unavailable_reason || 'AI features unavailable.';
-      banner.style.display = '';
+      banner.style.display = 'flex';
     } else {
       banner.style.display = 'none';
     }

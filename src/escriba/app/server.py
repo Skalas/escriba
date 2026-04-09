@@ -106,6 +106,9 @@ class _Handler(BaseHTTPRequestHandler):
             session_id = path.split("/api/sessions/")[1].rsplit("/notes", 1)[0]
             body = self._read_body()
             self._json_response(self._save_notes(session_id, body))
+        elif path.startswith("/api/sessions/") and path.endswith("/export"):
+            session_id = path.split("/api/sessions/")[1].rsplit("/export", 1)[0]
+            self._json_response(self._export_session(session_id))
         elif path == "/api/download-model":
             body = self._read_body()
             self._json_response(self._download_model(body))
@@ -162,6 +165,54 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
         self.wfile.write(content)
+
+    def _export_session(self, session_id: str) -> dict:
+        """Save transcript + notes to ~/Downloads as a text file."""
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+        session = db.get_session(session_id)
+        if not session:
+            return {"ok": False, "error": "Session not found"}
+        segments = db.get_segments(session_id)
+
+        lines: list[str] = []
+        lines.append(f"# {session.get('name', 'Session')}")
+        if session.get("started_at"):
+            lines.append(f"Date: {session['started_at']}")
+        lines.append("")
+
+        if session.get("notes_text"):
+            lines.append("## Notes")
+            lines.append(session["notes_text"])
+            lines.append("")
+
+        lines.append("## Transcript")
+        for seg in segments:
+            ts = seg.get("start_time", 0)
+            h, rem = divmod(int(ts), 3600)
+            m, s = divmod(rem, 60)
+            timestamp = f"{h:02d}:{m:02d}:{s:02d}"
+            speaker = f"[{seg['speaker']}] " if seg.get("speaker") else ""
+            lines.append(f"{timestamp}  {speaker}{seg.get('text', '')}")
+
+        content = "\n".join(lines)
+        safe_name = "".join(
+            c if c.isalnum() or c in " -_" else "_"
+            for c in session.get("name", "transcript")
+        )
+        filename = f"{safe_name.strip()}.txt"
+
+        downloads = Path.home() / "Downloads"
+        downloads.mkdir(exist_ok=True)
+        out_path = downloads / filename
+        # Avoid overwriting
+        counter = 1
+        while out_path.exists():
+            out_path = downloads / f"{safe_name.strip()} ({counter}).txt"
+            counter += 1
+        out_path.write_text(content, encoding="utf-8")
+        return {"ok": True, "path": str(out_path)}
 
     def _serve_audio(self, session_id: str):
         """Serve the WAV audio file for a session with HTTP Range support."""
