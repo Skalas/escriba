@@ -57,6 +57,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._json_response(self._get_folders())
         elif path == "/api/models":
             self._json_response(self._list_models())
+        elif path == "/api/download-model/status":
+            downloading = self.app_state.get("_downloading_model")
+            result = self.app_state.pop("_download_result", None)
+            self._json_response({"ok": True, "downloading": downloading, "result": result})
         elif path.startswith("/api/sessions/") and path.endswith("/audio"):
             session_id = path.split("/api/sessions/")[1].rsplit("/audio", 1)[0]
             self._serve_audio(session_id)
@@ -102,6 +106,9 @@ class _Handler(BaseHTTPRequestHandler):
             session_id = path.split("/api/sessions/")[1].rsplit("/notes", 1)[0]
             body = self._read_body()
             self._json_response(self._save_notes(session_id, body))
+        elif path == "/api/download-model":
+            body = self._read_body()
+            self._json_response(self._download_model(body))
         else:
             self._json_response({"ok": False, "error": "Not found"}, status=404)
 
@@ -408,8 +415,10 @@ class _Handler(BaseHTTPRequestHandler):
         if not segments:
             return {"ok": False, "error": "No segments in this session"}
         transcript = " ".join(s["text"] for s in segments)
-        prompt = body.get("prompt", "").strip() or "Summarize the key points, decisions, and action items. Respond in the same language as the transcript."
-        model = body.get("model", "gemini")
+        prompt = (body.get("prompt") or "").strip() or "Summarize the key points, decisions, and action items. Respond in the same language as the transcript."
+        config = self.app_state.get("config")
+        default_model = config.streaming.summary_model if config else "auto"
+        model = body.get("model", default_model)
         try:
             from escriba.app.session import _generate_custom_notes
             notes = _generate_custom_notes(transcript, prompt, model=model)
@@ -423,11 +432,46 @@ class _Handler(BaseHTTPRequestHandler):
     def _list_models(self) -> dict:
         try:
             from escriba.summarize.llm_summary import list_available_models
-            models = list_available_models()
-            return {"ok": True, "models": models}
+            result = list_available_models()
+            return {"ok": True, **result}
         except Exception as e:
             logger.error("Error listing models: %s", e, exc_info=True)
             return {"ok": False, "error": str(e)}
+
+    def _download_model(self, body: dict) -> dict:
+        """Download a local LLM model in the background."""
+        from escriba.summarize.llm_summary import recommend_model
+
+        model_id = (body.get("model") or "").strip()
+        if not model_id or model_id == "auto":
+            model_id = recommend_model()
+        if not model_id:
+            return {"ok": False, "error": "No local model available for this hardware"}
+
+        # Track download state on the app_state so the UI can poll
+        if self.app_state.get("_downloading_model"):
+            return {"ok": False, "error": "A download is already in progress"}
+
+        self.app_state["_downloading_model"] = model_id
+
+        import threading
+
+        def _do_download():
+            try:
+                from mlx_lm import load
+
+                logger.info("Downloading model: %s", model_id)
+                load(model_id)
+                logger.info("Model download complete: %s", model_id)
+                self.app_state["_download_result"] = {"ok": True, "model": model_id}
+            except Exception as e:
+                logger.error("Model download failed: %s", e, exc_info=True)
+                self.app_state["_download_result"] = {"ok": False, "error": str(e)}
+            finally:
+                self.app_state["_downloading_model"] = None
+
+        threading.Thread(target=_do_download, daemon=True).start()
+        return {"ok": True, "message": f"Downloading {model_id}...", "model": model_id}
 
     def _get_config(self) -> dict:
         from escriba.config import AppConfig, config_to_dict

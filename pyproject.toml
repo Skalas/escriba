@@ -18,6 +18,7 @@ dependencies = [
   "google-genai>=1.0.0",
   "tomli_w>=1.0.0",
   "pywebview>=5.0",
+  "mlx-lm>=0.20.0",
 ]
 
 [project.optional-dependencies]

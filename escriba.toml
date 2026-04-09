@@ -9,7 +9,7 @@ language = "auto"
 backend = "mlx-whisper"
 chunk_duration = 30
 vad_enabled = false
-summary_model = "gemini"
+summary_model = "mlx-community/gemma-4-26b-a4b-it-4bit"
 
 [speaker]
 mode = "pyannote"
@@ -18,16 +18,6 @@ threshold = 0.3
 [vad]
 min_silence_ms = 500
 threshold = 0.3
-
-[auto_record]
-enabled = true              # Detect mic activation and prompt to record
-cooldown_seconds = 60        # Seconds to wait after dismissing before prompting again
-poll_interval = 3            # Seconds between mic state checks
-
-[auto_name]
-enabled = true               # Auto-generate session titles via LLM
-min_segments = 5             # Minimum segments before first title attempt
-max_snippet_words = 500      # Max words sent to LLM for naming
 
 [whisper]
 condition_on_previous_text = false
