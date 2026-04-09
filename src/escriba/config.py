@@ -262,6 +262,24 @@ class StreamingConfig:
 
 
 @dataclass(frozen=True)
+class AutoRecordConfig:
+    """Mic-activation detection: prompt user to record when mic is active."""
+
+    enabled: bool = False
+    cooldown_seconds: int = 60
+    poll_interval: int = 3
+
+
+@dataclass(frozen=True)
+class AutoNameConfig:
+    """Automatic session naming via LLM."""
+
+    enabled: bool = True
+    min_segments: int = 5
+    max_snippet_words: int = 500
+
+
+@dataclass(frozen=True)
 class AudioConfig:
     """
     Audio capture configuration.
@@ -293,6 +311,8 @@ class AppConfig:
     vad: VADConfig = field(default_factory=VADConfig)
     hallucination: HallucinationConfig = field(default_factory=HallucinationConfig)
     dictionary: DictionaryConfig = field(default_factory=DictionaryConfig)
+    auto_record: AutoRecordConfig = field(default_factory=AutoRecordConfig)
+    auto_name: AutoNameConfig = field(default_factory=AutoNameConfig)
 
     config_path: Path | None = None
 
@@ -431,6 +451,28 @@ class AppConfig:
             logprob_threshold=_resolve(logprob_thresh, lambda: get_float_env("WHISPER_LOGPROB_THRESHOLD", -1.0, max_value=0.0)),
         )
 
+        # Auto-record (mic activation detection)
+        ar_section = _get_section(toml_data, "auto_record")
+        ar_enabled = _get_toml_bool(ar_section, "enabled")
+        ar_cooldown = _get_toml_int(ar_section, "cooldown_seconds")
+        ar_poll = _get_toml_int(ar_section, "poll_interval")
+        auto_record_cfg = AutoRecordConfig(
+            enabled=ar_enabled if ar_enabled is not None else False,
+            cooldown_seconds=ar_cooldown if ar_cooldown is not None else 60,
+            poll_interval=ar_poll if ar_poll is not None else 3,
+        )
+
+        # Auto-name (LLM session naming)
+        an_section = _get_section(toml_data, "auto_name")
+        an_enabled = _get_toml_bool(an_section, "enabled")
+        an_min_seg = _get_toml_int(an_section, "min_segments")
+        an_max_words = _get_toml_int(an_section, "max_snippet_words")
+        auto_name_cfg = AutoNameConfig(
+            enabled=an_enabled if an_enabled is not None else True,
+            min_segments=an_min_seg if an_min_seg is not None else 5,
+            max_snippet_words=an_max_words if an_max_words is not None else 500,
+        )
+
         # Dictionary (custom vocabulary)
         dict_section = _get_section(toml_data, "dictionary")
         dict_terms = _get_toml_str_list(dict_section, "terms") or []
@@ -448,6 +490,8 @@ class AppConfig:
             vad=vad_cfg,
             hallucination=hallucination_cfg,
             dictionary=dict_cfg,
+            auto_record=auto_record_cfg,
+            auto_name=auto_name_cfg,
             config_path=resolved_path,
         )
 
@@ -508,5 +552,15 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
         "dictionary": {
             "terms": list(cfg.dictionary.terms),
             "replacements": dict(cfg.dictionary.replacements),
+        },
+        "auto_record": {
+            "enabled": cfg.auto_record.enabled,
+            "cooldown_seconds": cfg.auto_record.cooldown_seconds,
+            "poll_interval": cfg.auto_record.poll_interval,
+        },
+        "auto_name": {
+            "enabled": cfg.auto_name.enabled,
+            "min_segments": cfg.auto_name.min_segments,
+            "max_snippet_words": cfg.auto_name.max_snippet_words,
         },
     }

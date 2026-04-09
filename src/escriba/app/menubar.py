@@ -7,6 +7,7 @@ import os
 import plistlib
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import rumps
@@ -119,8 +120,16 @@ class TranscriberMenuBar(rumps.App):
 
         self.app_state["reload_config"] = self._do_reload
 
+        # Mic activation detection state
+        self._mic_was_running: bool = False
+        self._prompt_cooldown_until: float = 0
+        self._last_detected_app: str | None = None
+        self._call_item = rumps.MenuItem("", callback=self._record_detected_call)
+        self._call_item.hidden = True
+
         self._recording_item = rumps.MenuItem("Start Recording", callback=self.toggle_recording)
         self.menu = [
+            self._call_item,
             self._recording_item,
             None,
             rumps.MenuItem("Open Escriba", callback=self.open_dashboard),
@@ -160,6 +169,88 @@ class TranscriberMenuBar(rumps.App):
             self._recording_item.title = "Start Recording"
             self.title = "\u3030"
 
+    @rumps.timer(3)
+    def _check_mic_activation(self, _):
+        """Poll CoreAudio to detect mic activation and prompt user."""
+        if not self.config.auto_record.enabled:
+            return
+        session: TranscriptionSession | None = self.app_state.get("session")
+        if session and session.is_active:
+            if not self._call_item.hidden:
+                self._call_item.hidden = True
+            # Auto-stop when mic deactivates during recording
+            try:
+                from escriba.audio.mic_monitor import is_mic_running
+
+                running = is_mic_running()
+                if not running and self._mic_was_running:
+                    logger.info("Mic deactivated, auto-stopping recording")
+                    self.toggle_recording(self._recording_item)
+                self._mic_was_running = running
+            except Exception:
+                logger.debug("Mic check during recording failed", exc_info=True)
+            return
+        if time.time() < self._prompt_cooldown_until:
+            return
+
+        try:
+            from escriba.audio.mic_monitor import is_mic_running, identify_mic_app
+
+            running = is_mic_running()
+            was_running = self._mic_was_running
+            self._mic_was_running = running
+
+            if running and not was_running:
+                app_name = identify_mic_app()
+                self._last_detected_app = app_name
+                context = f" ({app_name})" if app_name else ""
+                self._call_item.title = f"Record Call{context}"
+                self._call_item.hidden = False
+                logger.info("Mic activation detected, prompting user")
+                import threading
+
+                threading.Thread(
+                    target=self._show_call_dialog,
+                    args=(app_name,),
+                    daemon=True,
+                ).start()
+            elif not running and was_running:
+                # Mic stopped — hide the item after cooldown
+                self._call_item.hidden = True
+        except Exception:
+            logger.debug("Mic activation check failed", exc_info=True)
+
+    def _show_call_dialog(self, app_name: str | None):
+        """Show a system dialog via osascript (runs in background thread)."""
+        try:
+            context = f" by {app_name}" if app_name else ""
+            script = (
+                f'display dialog "Mic activated{context}. Start recording?" '
+                f'buttons {{"Dismiss", "Record"}} default button "Record" '
+                f'with title "Escriba" giving up after 30'
+            )
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=35,
+            )
+            if "Record" in result.stdout:
+                self._call_item.hidden = True
+                self.toggle_recording(self._recording_item)
+            else:
+                self._prompt_cooldown_until = (
+                    time.time() + self.config.auto_record.cooldown_seconds
+                )
+                self._call_item.hidden = True
+        except Exception:
+            logger.debug("Call dialog failed, menu item still available", exc_info=True)
+
+    def _record_detected_call(self, _):
+        """User clicked the 'Record Call' menu item."""
+        self._call_item.hidden = True
+        self.toggle_recording(self._recording_item)
+
     def reload_config(self, _):
         self._do_reload()
 
@@ -173,6 +264,8 @@ class TranscriberMenuBar(rumps.App):
             _notify("Escriba", "Recording stopped", "Transcript saved.")
         else:
             session = TranscriptionSession(self.config, database=self.db)
+            session.detected_app = self._last_detected_app
+            self._last_detected_app = None
             session.start()
             self.app_state["session"] = session
 

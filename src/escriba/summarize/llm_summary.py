@@ -215,6 +215,75 @@ def _generate_summary_claude(
         return None
 
 
+def generate_session_title(
+    transcript_snippet: str,
+    app_name: str | None = None,
+    model: str = "gemini",
+) -> str | None:
+    """Generate a short descriptive title (3-7 words) for a session.
+
+    Returns the title string or None on failure.
+    """
+    if not transcript_snippet.strip():
+        return None
+
+    context = app_name or "meeting"
+    prompt = (
+        f"Given this transcript snippet from a {context}, "
+        "generate a short descriptive title (3-7 words). "
+        "Respond in the SAME LANGUAGE as the transcript. "
+        "Respond with ONLY the title, no quotes or extra text.\n\n"
+        f"Transcript:\n{transcript_snippet}"
+    )
+
+    provider, model_id = resolve_provider_and_model(model)
+    try:
+        if provider == "gemini":
+            title = _call_llm_gemini(prompt, model_id)
+        elif provider == "claude":
+            title = _call_llm_claude(prompt, model_id)
+        else:
+            return None
+
+        if title:
+            title = title.strip().strip('"').strip("'").strip()
+            return title[:60] if title else None
+        return None
+    except Exception:
+        logger.debug("Failed to generate session title", exc_info=True)
+        return None
+
+
+def _call_llm_gemini(prompt: str, model_id: str) -> str | None:
+    try:
+        from google import genai
+    except ImportError:
+        return None
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return None
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(model=model_id, contents=prompt)
+    return response.text.strip() if response.text else None
+
+
+def _call_llm_claude(prompt: str, model_id: str) -> str | None:
+    try:
+        from anthropic import Anthropic
+    except ImportError:
+        return None
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+    client = Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model=model_id,
+        max_tokens=100,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text.strip() if message.content else None
+
+
 def list_available_models() -> dict[str, list[str]]:
     """Fetch available model IDs from configured providers.
 

@@ -42,6 +42,9 @@ class TranscriptionSession:
         self.error: str | None = None
         self._audio_file: Path | None = None
         self._audio_writer: wave.Wave_write | None = None
+        self.detected_app: str | None = None
+        self._title_generated: bool = False
+        self._title_refined: bool = False
 
     def _open_audio_file(self):
         """Open a WAV file to record the session audio."""
@@ -202,6 +205,9 @@ class TranscriptionSession:
         # Export transcript
         self._export()
 
+        # Refined title generation (uses full transcript)
+        self._refine_title()
+
         # Update DB
         if self.db and self.db_session_id:
             status = "error" if self.error else "completed"
@@ -354,6 +360,64 @@ class TranscriptionSession:
         if new_segments:
             self.db.add_segments(self.db_session_id, new_segments)
             self._last_segment_count = len(segments)
+            self._maybe_generate_title()
+
+    def _maybe_generate_title(self):
+        """Trigger preliminary title generation once enough segments exist."""
+        if self._title_generated or not self.config.auto_name.enabled:
+            return
+        segments = self.get_segments()
+        if len(segments) < self.config.auto_name.min_segments:
+            return
+        self._title_generated = True
+        threading.Thread(target=self._generate_title_async, daemon=True).start()
+
+    def _generate_title_async(self):
+        """Background: generate a short title from the first transcript segments."""
+        try:
+            segments = self.get_segments()
+            words = " ".join(s.get("text", "") for s in segments[:20]).split()
+            snippet = " ".join(words[: self.config.auto_name.max_snippet_words])
+            if not snippet.strip():
+                return
+
+            from escriba.summarize.llm_summary import generate_session_title
+
+            title = generate_session_title(
+                snippet,
+                app_name=self.detected_app,
+                model=self.config.streaming.summary_model,
+            )
+            if title and self.db and self.db_session_id:
+                self.db.rename_session(self.db_session_id, title)
+                logger.info("Auto-named session: %s", title)
+        except Exception:
+            logger.debug("Preliminary title generation failed", exc_info=True)
+
+    def _refine_title(self):
+        """Generate a refined title using the full transcript (called on stop)."""
+        if self._title_refined or not self.config.auto_name.enabled:
+            return
+        self._title_refined = True
+        transcript = self.get_transcript()
+        if not transcript.strip():
+            return
+        try:
+            words = transcript.split()
+            snippet = " ".join(words[: self.config.auto_name.max_snippet_words])
+
+            from escriba.summarize.llm_summary import generate_session_title
+
+            title = generate_session_title(
+                snippet,
+                app_name=self.detected_app,
+                model=self.config.streaming.summary_model,
+            )
+            if title and self.db and self.db_session_id:
+                self.db.rename_session(self.db_session_id, title)
+                logger.info("Refined session title: %s", title)
+        except Exception:
+            logger.debug("Refined title generation failed", exc_info=True)
 
     def get_transcript(self) -> str:
         if self.transcriber:
