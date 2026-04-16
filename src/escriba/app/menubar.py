@@ -255,13 +255,22 @@ class TranscriberMenuBar(rumps.App):
         self._do_reload()
 
     def toggle_recording(self, sender):
+        import threading
+
         session: TranscriptionSession | None = self.app_state.get("session")
 
         if session and session.is_active:
-            session.stop()
             sender.title = "Start Recording"
             self.title = "\u3030"
-            _notify("Escriba", "Recording stopped", "Transcript saved.")
+
+            def _stop_async():
+                try:
+                    session.stop()
+                except Exception:
+                    logger.exception("Session stop failed")
+                _notify("Escriba", "Recording stopped", "Transcript saved.")
+
+            threading.Thread(target=_stop_async, daemon=True).start()
         else:
             session = TranscriptionSession(self.config, database=self.db)
             session.detected_app = self._last_detected_app
@@ -301,10 +310,16 @@ class TranscriberMenuBar(rumps.App):
             logger.debug("Dashboard termination failed", exc_info=True)
 
     def quit_app(self, _):
+        import threading
+
         self._terminate_dashboard()
         session: TranscriptionSession | None = self.app_state.get("session")
         if session and session.is_active:
-            session.stop()
+            stop_thread = threading.Thread(target=session.stop, daemon=True)
+            stop_thread.start()
+            stop_thread.join(timeout=5)
+            if stop_thread.is_alive():
+                logger.warning("Session stop still running at quit — proceeding anyway")
         if self.server:
             self.server.shutdown()
         self.db.close()

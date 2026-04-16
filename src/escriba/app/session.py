@@ -186,9 +186,7 @@ class TranscriptionSession:
         self._stop_event.set()
 
         if self._mic_stream is not None:
-            self._mic_stream.stop()
-            self._mic_stream.close()
-            self._mic_stream = None
+            self._close_mic_stream_safely()
 
         if self.screen_capture:
             self.screen_capture.stop()
@@ -214,6 +212,32 @@ class TranscriptionSession:
             self.db.stop_session(self.db_session_id, status=status)
 
         logger.info("Session stopped: %s", self.session_id)
+
+    def _close_mic_stream_safely(self, timeout: float = 3.0):
+        """Stop/close the mic stream off-thread with a timeout.
+
+        PortAudio's AudioOutputUnitStop can deadlock on a CoreAudio HAL mutex
+        (observed with PaMacCore err=-50). We leak the stream rather than freeze.
+        """
+        stream = self._mic_stream
+        self._mic_stream = None
+        done = threading.Event()
+
+        def _close():
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                logger.exception("Mic stream close failed")
+            finally:
+                done.set()
+
+        threading.Thread(target=_close, daemon=True).start()
+        if not done.wait(timeout=timeout):
+            logger.warning(
+                "Mic stream stop timed out after %.1fs — leaking PortAudio stream",
+                timeout,
+            )
 
     def _start_mic_capture(self, mix_mode: bool = False):
         """Start capturing audio from the microphone via sounddevice."""
