@@ -279,9 +279,13 @@
   .session-name {
     font-size: 13px;
     font-weight: 600;
-    white-space: nowrap;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
+    word-break: break-word;
+    overflow-wrap: anywhere;
   }
   .session-rename-btn {
     display: none; background: none; border: none; padding: 2px;
@@ -296,16 +300,31 @@
   .session-meta {
     font-size: 11px;
     color: var(--text-secondary);
-    margin-top: 2px;
+    margin-top: 3px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .session-badge {
-    font-size: 10px; font-weight: 600; padding: 2px 6px;
-    border-radius: 4px; text-transform: uppercase; white-space: nowrap;
+  .session-indicator {
+    width: 6px; height: 6px; border-radius: 50%;
+    flex-shrink: 0; margin-top: 7px;
   }
-  .badge-active { background: var(--badge-active); color: var(--success); }
-  .badge-completed { background: var(--badge-completed); color: var(--accent); }
-  .badge-merged { background: var(--badge-merged); color: #af52de; }
-  .badge-error { background: var(--badge-error); color: var(--danger); }
+  .session-indicator.active {
+    background: var(--success);
+    box-shadow: 0 0 0 0 rgba(52,199,89,0.55);
+    animation: sessionPulse 1.6s ease-out infinite;
+  }
+  .session-indicator.error { background: var(--danger); }
+  .session-indicator.merged { background: #af52de; }
+  @media (prefers-reduced-motion: reduce) {
+    .session-indicator.active { animation: none; }
+  }
+  @keyframes sessionPulse {
+    0%   { box-shadow: 0 0 0 0 rgba(52,199,89,0.5); }
+    70%  { box-shadow: 0 0 0 6px rgba(52,199,89,0); }
+    100% { box-shadow: 0 0 0 0 rgba(52,199,89,0); }
+  }
 
   .session-name-edit {
     font-size: 13px; font-weight: 600;
@@ -988,11 +1007,15 @@ async function toggleRecording() {
   const btn = document.getElementById('btn-record');
   if (btn.classList.contains('recording')) {
     btn.disabled = true;
-    await apiCall('/api/recording/stop', { method: 'POST' });
+    const res = await apiCall('/api/recording/stop', { method: 'POST' });
     btn.disabled = false;
     await syncStatus();
-    await pollTranscript();
-    refreshSessionList();
+    await refreshSessionList();
+    if (res && res.session_id) {
+      await selectSession(res.session_id);
+    } else {
+      showEmptyView();
+    }
   } else {
     hideError();
     btn.disabled = true;
@@ -1151,16 +1174,20 @@ function renderSessionItem(s) {
   const dur = s.duration_seconds ? formatDuration(s.duration_seconds) : '-';
   const checked = checkedSessions.has(s.id) ? 'checked' : '';
   const sel = s.id === selectedSessionId ? ' selected' : '';
-  const badgeClass = 'badge-' + (s.status || 'completed');
+  const status = s.status || 'completed';
+  let indicator = '';
+  if (status === 'active') indicator = '<span class="session-indicator active" aria-label="Recording" title="Recording"></span>';
+  else if (status === 'error') indicator = '<span class="session-indicator error" aria-label="Error" title="Error"></span>';
+  else if (status === 'merged') indicator = '<span class="session-indicator merged" aria-label="Merged" title="Merged"></span>';
   return `<div class="session-item${sel}" data-id="${escAttr(s.id)}" onclick="handleSessionClick('${escAttr(s.id)}', event)">
     <input type="checkbox" class="session-checkbox" data-session-id="${escAttr(s.id)}" ${checked}
       onclick="event.stopPropagation();toggleCheck('${escAttr(s.id)}', this.checked, event)">
+    ${indicator}
     <div class="session-info">
-      <div class="session-name" data-session-id="${escAttr(s.id)}">${escHtml(s.name)}</div>
+      <div class="session-name" data-session-id="${escAttr(s.id)}" title="${escAttr(s.name)}">${escHtml(s.name)}</div>
       <div class="session-meta">${date} ${time} &middot; ${dur} &middot; ${s.segment_count || 0} segs</div>
     </div>
     <button class="session-rename-btn" onclick="event.stopPropagation();startRenameById('${escAttr(s.id)}')" title="Rename" aria-label="Rename session"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg></button>
-    <span class="session-badge ${badgeClass}">${escHtml(s.status || 'completed')}</span>
   </div>`;
 }
 

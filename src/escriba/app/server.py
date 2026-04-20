@@ -361,8 +361,9 @@ class _Handler(BaseHTTPRequestHandler):
         if not session or not session.is_active:
             return {"ok": False, "error": "Not recording"}
 
+        db_session_id = session.db_session_id
         session.stop()
-        return {"ok": True}
+        return {"ok": True, "session_id": db_session_id}
 
     def _generate_notes(self, body: dict) -> dict:
         session: TranscriptionSession | None = self.app_state.get("session")

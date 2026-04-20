@@ -45,6 +45,7 @@ class TranscriptionSession:
         self.detected_app: str | None = None
         self._title_generated: bool = False
         self._title_refined: bool = False
+        self._title_thread: threading.Thread | None = None
 
     def _open_audio_file(self):
         """Open a WAV file to record the session audio."""
@@ -203,13 +204,22 @@ class TranscriptionSession:
         # Export transcript
         self._export()
 
-        # Refined title generation (uses full transcript)
-        self._refine_title()
-
-        # Update DB
+        # Mark session completed in DB before the LLM title refinement —
+        # otherwise the sidebar keeps showing an ACTIVE badge for the full
+        # duration of the (unbounded) title-generation call.
+        # Keep _refine_title synchronous: running it on a background thread
+        # races with the screen-capture read thread's Metal cleanup and
+        # crashes the process (observed: IOGPUMetalCommandBuffer assertion).
         if self.db and self.db_session_id:
             status = "error" if self.error else "completed"
             self.db.stop_session(self.db_session_id, status=status)
+
+        # Wait for the preliminary title thread — running two mlx-lm
+        # generations concurrently crashes Metal.
+        if self._title_thread and self._title_thread.is_alive():
+            self._title_thread.join(timeout=30)
+
+        self._refine_title()
 
         logger.info("Session stopped: %s", self.session_id)
 
@@ -394,7 +404,10 @@ class TranscriptionSession:
         if len(segments) < self.config.auto_name.min_segments:
             return
         self._title_generated = True
-        threading.Thread(target=self._generate_title_async, daemon=True).start()
+        self._title_thread = threading.Thread(
+            target=self._generate_title_async, daemon=True
+        )
+        self._title_thread.start()
 
     def _generate_title_async(self):
         """Background: generate a short title from the first transcript segments."""
@@ -415,6 +428,11 @@ class TranscriptionSession:
             if title and self.db and self.db_session_id:
                 self.db.rename_session(self.db_session_id, title)
                 logger.info("Auto-named session: %s", title)
+                # Preliminary title succeeded — skip the refined pass on stop.
+                # Running two mlx-lm generations per session is (a) redundant
+                # for most meetings, (b) makes stop() block for ~10s, and (c)
+                # widens the window for MLX-concurrency crashes.
+                self._title_refined = True
         except Exception:
             logger.debug("Preliminary title generation failed", exc_info=True)
 

@@ -445,33 +445,38 @@ def _call_llm_local(
     max_tokens: int = 256,
     enable_thinking: bool = True,
 ) -> str | None:
-    """Call a local MLX model via the hybrid cache."""
+    """Call a local MLX model via the hybrid cache.
+
+    Serializes `generate()` on the cache lock — concurrent MLX Metal calls
+    crash the process (IOGPUMetalCommandBuffer assertion).
+    """
     model, tokenizer = _model_cache.get(model_id)
     if model is None:
         return None
-    try:
-        from mlx_lm import generate
-
-        messages = [{"role": "user", "content": prompt}]
-        template_kwargs: dict = {
-            "add_generation_prompt": True,
-            "tokenize": False,
-            "enable_thinking": enable_thinking,
-        }
+    with _model_cache._lock:
         try:
-            chat_prompt = tokenizer.apply_chat_template(messages, **template_kwargs)
-        except TypeError:
-            # Tokenizer doesn't support enable_thinking kwarg
-            template_kwargs.pop("enable_thinking", None)
-            chat_prompt = tokenizer.apply_chat_template(messages, **template_kwargs)
+            from mlx_lm import generate
 
-        result = generate(model, tokenizer, prompt=chat_prompt, max_tokens=max_tokens)
-        if not result:
+            messages = [{"role": "user", "content": prompt}]
+            template_kwargs: dict = {
+                "add_generation_prompt": True,
+                "tokenize": False,
+                "enable_thinking": enable_thinking,
+            }
+            try:
+                chat_prompt = tokenizer.apply_chat_template(messages, **template_kwargs)
+            except TypeError:
+                template_kwargs.pop("enable_thinking", None)
+                chat_prompt = tokenizer.apply_chat_template(messages, **template_kwargs)
+
+            result = generate(model, tokenizer, prompt=chat_prompt, max_tokens=max_tokens)
+            _model_cache._last_used = time.time()
+            if not result:
+                return None
+            return _extract_response(result)
+        except Exception:
+            logger.error("Local model generation failed", exc_info=True)
             return None
-        return _extract_response(result)
-    except Exception:
-        logger.error("Local model generation failed", exc_info=True)
-        return None
 
 
 def generate_session_title(
