@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -25,6 +26,101 @@ else:
     STATIC_DIR = Path(__file__).parent / "static"
 
 PORT = 19876
+
+
+def _concat_wav(
+    sources: list[tuple[Path | None, float, float]], out_path: Path
+) -> None:
+    """Concatenate WAV files into `out_path`, filling silence where needed.
+
+    `sources` is a list of ``(audio_path, offset_seconds, duration_seconds)``
+    tuples, ordered chronologically. Sessions with no audio_path (or a
+    missing file) are represented by silence of `duration_seconds`.
+    Raises ``ValueError`` if source formats disagree.
+    """
+    import wave
+
+    fmt: tuple[int, int, int] | None = None
+    for p, _offset, _dur in sources:
+        if p and Path(p).exists():
+            with wave.open(str(p), "rb") as src:
+                fmt = (
+                    src.getnchannels(),
+                    src.getsampwidth(),
+                    src.getframerate(),
+                )
+            break
+    if fmt is None:
+        return
+    nchannels, sampwidth, framerate = fmt
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out_path), "wb") as dst:
+        dst.setnchannels(nchannels)
+        dst.setsampwidth(sampwidth)
+        dst.setframerate(framerate)
+
+        for audio_path, _offset, dur in sources:
+            src_path = Path(audio_path) if audio_path else None
+            if src_path and src_path.exists():
+                with wave.open(str(src_path), "rb") as src:
+                    if (
+                        src.getnchannels(),
+                        src.getsampwidth(),
+                        src.getframerate(),
+                    ) != fmt:
+                        raise ValueError(
+                            f"Audio format mismatch in {src_path}: "
+                            f"cannot merge across different sample rates "
+                            f"or channel counts"
+                        )
+                    dst.writeframes(src.readframes(src.getnframes()))
+            elif dur > 0:
+                # Fill with silence to keep the audio timeline aligned
+                # with the rebased segment timestamps.
+                n_frames = int(dur * framerate)
+                dst.writeframes(b"\x00" * (n_frames * nchannels * sampwidth))
+
+
+def _slice_wav(
+    source: Path, split_at_seconds: float, out_first: Path, out_second: Path
+) -> None:
+    """Write two WAV files from `source`, cut at `split_at_seconds`.
+
+    Uses the stdlib `wave` module. Preserves the original format
+    (channels, sample width, framerate). Raises if the cut is outside
+    the file or the file can't be read.
+    """
+    import wave
+
+    with wave.open(str(source), "rb") as src:
+        nchannels = src.getnchannels()
+        sampwidth = src.getsampwidth()
+        framerate = src.getframerate()
+        total_frames = src.getnframes()
+
+        split_frame = int(split_at_seconds * framerate)
+        if split_frame <= 0 or split_frame >= total_frames:
+            raise ValueError(
+                f"Split at {split_at_seconds}s is outside the audio "
+                f"(file has {total_frames / framerate:.2f}s)"
+            )
+
+        first_frames = src.readframes(split_frame)
+        second_frames = src.readframes(total_frames - split_frame)
+
+    out_first.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out_first), "wb") as dst:
+        dst.setnchannels(nchannels)
+        dst.setsampwidth(sampwidth)
+        dst.setframerate(framerate)
+        dst.writeframes(first_frames)
+
+    with wave.open(str(out_second), "wb") as dst:
+        dst.setnchannels(nchannels)
+        dst.setsampwidth(sampwidth)
+        dst.setframerate(framerate)
+        dst.writeframes(second_frames)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -98,6 +194,10 @@ class _Handler(BaseHTTPRequestHandler):
         elif path.startswith("/api/sessions/") and path.endswith("/retranscribe"):
             session_id = path.split("/api/sessions/")[1].rsplit("/retranscribe", 1)[0]
             self._json_response(self._retranscribe_session(session_id))
+        elif path.startswith("/api/sessions/") and path.endswith("/split"):
+            session_id = path.split("/api/sessions/")[1].rsplit("/split", 1)[0]
+            body = self._read_body()
+            self._json_response(self._split_session(session_id, body))
         elif path.startswith("/api/sessions/") and path.endswith("/generate-notes"):
             session_id = path.split("/api/sessions/")[1].rsplit("/generate-notes", 1)[0]
             body = self._read_body()
@@ -393,8 +493,193 @@ class _Handler(BaseHTTPRequestHandler):
         name = body.get("name", "Merged Session")
         if len(session_ids) < 2:
             return {"ok": False, "error": "Need at least 2 sessions to merge"}
-        merged_id = db.merge_sessions(session_ids, name)
+
+        try:
+            merged_id, sources = db.merge_sessions(session_ids, name)
+        except Exception as e:
+            logger.error("Merge DB step failed: %s", e, exc_info=True)
+            return {"ok": False, "error": "Merge failed"}
+
+        # Concatenate WAVs (skip silently on failure — the merged session
+        # is still valid as a transcript-only session, same as before).
+        audio_dir = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Escriba"
+            / "audio"
+        )
+        has_any_audio = any(p for p, _off, _d in sources if p)
+        if has_any_audio:
+            merged_audio = audio_dir / f"{merged_id}.wav"
+            try:
+                _concat_wav(sources, merged_audio)
+                db.update_audio_path(merged_id, str(merged_audio))
+            except ValueError as e:
+                logger.warning(
+                    "Merge audio skipped: %s", e,
+                )
+            except Exception:
+                logger.error("Merge audio concat failed", exc_info=True)
+
+        # Regenerate the merged session's title from its transcript —
+        # matches split symmetry; user's manually-typed name is replaced
+        # if the LLM returns a better one.
+        self._regenerate_title(db, merged_id)
+
         return {"ok": True, "session_id": merged_id}
+
+    def _split_session(self, session_id: str, body: dict) -> dict:
+        """Split a session into two at an existing segment boundary.
+
+        Ordering matters for safety:
+          1. Validate request + look up split_time from the chosen segment.
+          2. Slice the original WAV to two *temp* files.
+          3. Run the DB transaction (moves segments, creates new row).
+          4. Atomic-rename the temp files into place.
+        If step 2 fails → nothing changed. If step 3 fails → delete temps.
+        If step 4 fails after step 3 succeeded we still end up with a valid
+        DB state and the original WAV unchanged (only the second half is
+        missing); we log and recover the audio_path pointer.
+        """
+        db = self._get_db()
+        if not db:
+            return {"ok": False, "error": "Database not available"}
+
+        segment_id = body.get("segment_id")
+        if segment_id is None:
+            return {"ok": False, "error": "segment_id is required"}
+        try:
+            segment_id = int(segment_id)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "segment_id must be an integer"}
+
+        session = db.get_session(session_id)
+        if not session:
+            return {"ok": False, "error": "Session not found"}
+        if session.get("status") == "active":
+            return {
+                "ok": False,
+                "error": "Cannot split an active (recording) session",
+            }
+
+        orig_audio_path = session.get("audio_path")
+
+        # Pre-compute split_time so we can slice the WAV *before* touching
+        # the DB. The DB method re-validates this before it writes.
+        segment_row = db.get_segment(segment_id)
+        if not segment_row or segment_row.get("session_id") != session_id:
+            return {"ok": False, "error": "Segment not in this session"}
+        split_time = float(segment_row.get("start_time") or 0.0)
+        if split_time <= 0:
+            return {"ok": False, "error": "Cannot split at the first segment"}
+
+        audio_dir = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Escriba"
+            / "audio"
+        )
+        new_id_preview = str(uuid.uuid4())  # used only for temp filenames
+        part1_tmp = None
+        part2_tmp = None
+
+        if orig_audio_path:
+            orig_path = Path(orig_audio_path)
+            if not orig_path.exists():
+                orig_audio_path = None  # treat as "no audio"
+            else:
+                try:
+                    part1_tmp = audio_dir / f".split-{new_id_preview}.part1.wav"
+                    part2_tmp = audio_dir / f".split-{new_id_preview}.part2.wav"
+                    _slice_wav(orig_path, split_time, part1_tmp, part2_tmp)
+                except Exception as e:
+                    logger.error("WAV slice failed: %s", e, exc_info=True)
+                    for p in (part1_tmp, part2_tmp):
+                        if p and p.exists():
+                            p.unlink(missing_ok=True)
+                    return {"ok": False, "error": f"Audio split failed: {e}"}
+
+        try:
+            new_id, split_time, _ = db.split_session(session_id, segment_id)
+        except ValueError as e:
+            for p in (part1_tmp, part2_tmp):
+                if p and p.exists():
+                    p.unlink(missing_ok=True)
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            logger.error("Split DB step failed: %s", e, exc_info=True)
+            for p in (part1_tmp, part2_tmp):
+                if p and p.exists():
+                    p.unlink(missing_ok=True)
+            return {"ok": False, "error": "Split failed"}
+
+        # Move temp audio files into their final paths.
+        if orig_audio_path and part1_tmp and part2_tmp:
+            new_audio_path = audio_dir / f"{new_id}.wav"
+            try:
+                part2_tmp.replace(new_audio_path)
+                db.update_audio_path(new_id, str(new_audio_path))
+            except Exception:
+                logger.error(
+                    "Could not finalize second-half WAV", exc_info=True,
+                )
+            try:
+                part1_tmp.replace(Path(orig_audio_path))
+            except Exception:
+                logger.error(
+                    "Could not finalize first-half WAV", exc_info=True,
+                )
+
+        # Regenerate titles for both halves — splits usually separate two
+        # unrelated meetings, so "(part 1)"/"(part 2)" is rarely right.
+        # Synchronous on purpose: the mlx-lm cache lock protects us from
+        # gemma-gemma races, and keeping this inline avoids the
+        # whisper-race that a new recording could trigger.
+        self._regenerate_title(db, session_id)
+        self._regenerate_title(db, new_id)
+
+        return {
+            "ok": True,
+            "first_session_id": session_id,
+            "second_session_id": new_id,
+            "split_at_seconds": split_time,
+        }
+
+    def _regenerate_title(self, db, session_id: str) -> None:
+        """Run `generate_session_title` against a session's transcript.
+
+        Silent on failure — the caller doesn't block on the title and the
+        session always has a valid fallback name ("(part 1)"/"(part 2)").
+        """
+        config: AppConfig | None = self.app_state.get("config")
+        if not config or not getattr(config.auto_name, "enabled", True):
+            return
+
+        segments = db.get_segments(session_id)
+        if not segments:
+            return
+
+        words = " ".join((s.get("text") or "") for s in segments[:40]).split()
+        max_words = getattr(config.auto_name, "max_snippet_words", 500)
+        snippet = " ".join(words[:max_words])
+        if not snippet.strip():
+            return
+
+        try:
+            from escriba.summarize.llm_summary import generate_session_title
+
+            title = generate_session_title(
+                snippet,
+                app_name=None,
+                model=config.streaming.summary_model,
+            )
+            if title:
+                db.rename_session(session_id, title)
+                logger.info("Post-split title for %s: %s", session_id, title)
+        except Exception:
+            logger.debug("Post-split title generation failed", exc_info=True)
 
     def _move_sessions(self, body: dict) -> dict:
         db = self._get_db()

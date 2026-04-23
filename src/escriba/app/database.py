@@ -7,7 +7,7 @@ import logging
 import shutil
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -171,6 +171,12 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_segment(self, segment_id: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM segments WHERE id = ?", (segment_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
     def get_segments(self, session_id: str) -> list[dict]:
         rows = self._conn.execute(
             "SELECT * FROM segments WHERE session_id = ? ORDER BY start_time ASC, id ASC",
@@ -223,33 +229,184 @@ class Database:
         self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         self._conn.commit()
 
-    def merge_sessions(self, session_ids: list[str], name: str) -> str:
+    def split_session(
+        self, session_id: str, segment_id: int
+    ) -> tuple[str, float, str | None]:
+        """Split a session into two at the start of `segment_id`.
+
+        Returns ``(new_session_id, split_time_seconds, original_audio_path)``.
+        The caller is responsible for physically slicing the WAV file —
+        this method only rearranges DB rows, atomically in one transaction.
+
+        Raises ``ValueError`` if the session or segment can't be split
+        (missing, not completed, segment not in session, split at index 0).
+        """
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        if session.get("status") == "active":
+            raise ValueError("Cannot split an active (recording) session")
+
+        segment_row = self._conn.execute(
+            "SELECT id, session_id, start_time FROM segments WHERE id = ?",
+            (segment_id,),
+        ).fetchone()
+        if not segment_row or segment_row["session_id"] != session_id:
+            raise ValueError(
+                f"Segment {segment_id} not found in session {session_id}"
+            )
+
+        split_time = float(segment_row["start_time"] or 0.0)
+        if split_time <= 0:
+            raise ValueError("Cannot split at the first segment")
+
+        # Confirm there's at least one segment on each side.
+        before = self._conn.execute(
+            "SELECT COUNT(*) FROM segments WHERE session_id = ? AND start_time < ?",
+            (session_id, split_time),
+        ).fetchone()[0]
+        after = self._conn.execute(
+            "SELECT COUNT(*) FROM segments WHERE session_id = ? AND start_time >= ?",
+            (session_id, split_time),
+        ).fetchone()[0]
+        if before == 0 or after == 0:
+            raise ValueError("Split would leave one side empty")
+
+        new_id = str(uuid.uuid4())
+        orig_name = session.get("name") or "Session"
+        orig_audio_path = session.get("audio_path")
+        part1_name = f"{orig_name} (part 1)"
+        part2_name = f"{orig_name} (part 2)"
+
+        # Derive timestamps for the second half.
+        started_at_iso = session.get("started_at")
+        try:
+            orig_started = datetime.fromisoformat(started_at_iso)
+        except (TypeError, ValueError):
+            orig_started = datetime.now(timezone.utc)
+        part2_started_iso = (
+            orig_started + timedelta(seconds=split_time)
+        ).isoformat()
+
+        orig_duration = session.get("duration_seconds")
+        if orig_duration is None:
+            orig_duration = max(split_time, split_time + 1.0)
+        part2_duration = max(float(orig_duration) - split_time, 0.0)
+
+        try:
+            with self._conn:
+                # Create the second-half session row.
+                self._conn.execute(
+                    "INSERT INTO sessions ("
+                    "id, name, started_at, stopped_at, duration_seconds, "
+                    "model, language, backend, status, folder_id"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)",
+                    (
+                        new_id,
+                        part2_name,
+                        part2_started_iso,
+                        session.get("stopped_at"),
+                        part2_duration,
+                        session.get("model"),
+                        session.get("language"),
+                        session.get("backend"),
+                        session.get("folder_id"),
+                    ),
+                )
+
+                # Move the tail segments onto the new session and rebase their
+                # timestamps so both halves start at 0.
+                self._conn.execute(
+                    "UPDATE segments SET "
+                    "session_id = ?, "
+                    "start_time = start_time - ?, "
+                    "end_time = CASE WHEN end_time IS NULL THEN NULL "
+                    "                ELSE end_time - ? END "
+                    "WHERE session_id = ? AND start_time >= ?",
+                    (new_id, split_time, split_time, session_id, split_time),
+                )
+
+                # Rename and shorten the original (which keeps its notes).
+                self._conn.execute(
+                    "UPDATE sessions SET name = ?, duration_seconds = ? WHERE id = ?",
+                    (part1_name, split_time, session_id),
+                )
+        except Exception:
+            # `with self._conn:` already rolled back.
+            raise
+
+        return new_id, split_time, orig_audio_path
+
+    def merge_sessions(
+        self, session_ids: list[str], name: str
+    ) -> tuple[str, list[tuple[str | None, float, float]]]:
+        """Merge `session_ids` into a new `merged`-status session.
+
+        Returns ``(merged_id, sources)``. ``sources`` is a list, ordered by
+        `started_at`, of ``(audio_path, offset_seconds, duration_seconds)``.
+        The caller uses it to concatenate the physical WAV files with the
+        same offsets used to rebase segment timestamps.
+        """
         merged_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
-        # Gather all segments from source sessions, sorted by time
+        # Sort source sessions by start time so the merged timeline is
+        # chronological and matches the order the user recorded them.
         placeholders = ",".join("?" for _ in session_ids)
-        rows = self._conn.execute(
-            f"SELECT start_time, end_time, text, speaker FROM segments "
-            f"WHERE session_id IN ({placeholders}) ORDER BY start_time ASC, id ASC",
+        src_rows = self._conn.execute(
+            f"SELECT id, started_at, duration_seconds, audio_path "
+            f"FROM sessions WHERE id IN ({placeholders}) "
+            f"ORDER BY started_at ASC",
             session_ids,
         ).fetchall()
 
-        self._conn.execute(
-            "INSERT INTO sessions (id, name, started_at, status, parent_session_ids) "
-            "VALUES (?, ?, ?, 'merged', ?)",
-            (merged_id, name, now, json.dumps(session_ids)),
-        )
+        offsets: list[tuple[str | None, float, float]] = []
+        cumulative = 0.0
+        for row in src_rows:
+            dur = float(row["duration_seconds"] or 0.0)
+            offsets.append((row["audio_path"], cumulative, dur))
+            cumulative += dur
 
-        if rows:
-            self._conn.executemany(
-                "INSERT INTO segments (session_id, start_time, end_time, text, speaker) "
-                "VALUES (?, ?, ?, ?, ?)",
-                [(merged_id, r["start_time"], r["end_time"], r["text"], r["speaker"]) for r in rows],
-            )
+        merged_started_iso = src_rows[0]["started_at"] if src_rows else now
 
-        self._conn.commit()
-        return merged_id
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO sessions ("
+                    "id, name, started_at, duration_seconds, "
+                    "status, parent_session_ids"
+                    ") VALUES (?, ?, ?, ?, 'merged', ?)",
+                    (
+                        merged_id,
+                        name,
+                        merged_started_iso,
+                        cumulative or None,
+                        json.dumps(session_ids),
+                    ),
+                )
+
+                # Rebase each source session's segments by that session's
+                # offset so the merged timeline is continuous from 0.
+                for src_id, offset, _dur in [
+                    (row["id"], off, dur)
+                    for row, (_ap, off, dur) in zip(src_rows, offsets)
+                ]:
+                    self._conn.execute(
+                        "INSERT INTO segments "
+                        "(session_id, start_time, end_time, text, speaker) "
+                        "SELECT ?, "
+                        "       start_time + ?, "
+                        "       CASE WHEN end_time IS NULL THEN NULL "
+                        "            ELSE end_time + ? END, "
+                        "       text, speaker "
+                        "FROM segments WHERE session_id = ? "
+                        "ORDER BY start_time ASC, id ASC",
+                        (merged_id, offset, offset, src_id),
+                    )
+        except Exception:
+            raise
+
+        return merged_id, offsets
 
     def save_notes(self, session_id: str, notes_text: str):
         self._conn.execute(
