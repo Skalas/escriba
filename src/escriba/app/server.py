@@ -182,6 +182,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/notes":
             body = self._read_body()
             self._json_response(self._generate_notes(body))
+        elif path == "/api/prompts/enhance":
+            body = self._read_body()
+            self._json_response(self._enhance_prompt(body))
         elif path == "/api/sessions/merge":
             body = self._read_body()
             self._json_response(self._merge_sessions(body))
@@ -485,6 +488,24 @@ class _Handler(BaseHTTPRequestHandler):
             logger.error("Error generating notes: %s", e, exc_info=True)
             return {"ok": False, "error": str(e)}
 
+    def _enhance_prompt(self, body: dict) -> dict:
+        text = (body.get("text") or "").strip()
+        if not text:
+            return {"ok": False, "error": "Nothing to enhance"}
+        config = self.app_state.get("config")
+        default_model = config.streaming.summary_model if config else "auto"
+        model = body.get("model") or default_model
+        preserve = bool(body.get("preserve_placeholders"))
+        try:
+            from escriba.summarize.llm_summary import enhance_prompt
+            improved = enhance_prompt(text, model=model, preserve_placeholders=preserve)
+            if improved:
+                return {"ok": True, "prompt": improved}
+            return {"ok": False, "error": "Could not enhance prompt (check AI model / API key)"}
+        except Exception as e:
+            logger.error("Error enhancing prompt: %s", e, exc_info=True)
+            return {"ok": False, "error": str(e)}
+
     def _merge_sessions(self, body: dict) -> dict:
         db = self._get_db()
         if not db:
@@ -756,9 +777,12 @@ class _Handler(BaseHTTPRequestHandler):
         config = self.app_state.get("config")
         default_model = config.streaming.summary_model if config else "auto"
         model = body.get("model", default_model)
+        system_prompt = config.prompts.effective_system_prompt if config else None
         try:
             from escriba.app.session import _generate_custom_notes
-            notes = _generate_custom_notes(transcript, prompt, model=model)
+            notes = _generate_custom_notes(
+                transcript, prompt, model=model, system_prompt=system_prompt
+            )
             if notes:
                 return {"ok": True, "notes": notes}
             return {"ok": False, "error": "Failed to generate notes"}
@@ -831,7 +855,7 @@ class _Handler(BaseHTTPRequestHandler):
             AppConfig,
             config_to_dict,
             resolve_config_path,
-            save_config_to_toml,
+            update_config_toml,
         )
 
         env_updates = {}
@@ -846,6 +870,13 @@ class _Handler(BaseHTTPRequestHandler):
                 os.environ[k] = v
 
         toml_data = {k: v for k, v in body.items() if k not in env_key_names}
+        # Drop read-only fields surfaced by config_to_dict for the UI.
+        if isinstance(toml_data.get("prompts"), dict):
+            toml_data["prompts"] = {
+                k: v
+                for k, v in toml_data["prompts"].items()
+                if k in ("system_prompt", "templates")
+            }
         if toml_data:
             current_config = self.app_state.get("config")
             config_path = (
@@ -853,7 +884,7 @@ class _Handler(BaseHTTPRequestHandler):
                 if isinstance(current_config, AppConfig) and current_config.config_path
                 else resolve_config_path() or Path("escriba.toml")
             )
-            save_config_to_toml(toml_data, config_path)
+            update_config_toml(toml_data, config_path)
 
         reload_fn = self.app_state.get("reload_config")
         if reload_fn:

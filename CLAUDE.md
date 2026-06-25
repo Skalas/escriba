@@ -107,6 +107,7 @@ Single-file SPA at `src/escriba/app/static/index.html`. Contains all CSS, HTML, 
 | POST | `/api/sessions/merge` | Merge multiple sessions |
 | POST | `/api/sessions/move` | Move sessions to folder |
 | POST | `/api/sessions/:id/generate-notes` | AI-generate notes |
+| POST | `/api/prompts/enhance` | AI-refine a user's prompt text |
 | POST | `/api/sessions/:id/retranscribe` | Re-transcribe from WAV |
 | PUT | `/api/config` | Update config + env keys |
 | PUT | `/api/sessions/:id/rename` | Rename session |
@@ -118,6 +119,8 @@ Single-file SPA at `src/escriba/app/static/index.html`. Contains all CSS, HTML, 
 - `escriba.toml` in project root — all app settings
 - `.env` for API keys (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `HUGGINGFACE_TOKEN`)
 - Never put inline comments on `.env` values — python-dotenv parses them as part of the value
+- `[prompts]` section holds the user-customizable AI `system_prompt` (must keep the `{transcript}` and `{prompt}` placeholders) and `[[prompts.templates]]` quick-prompt chips; empty values fall back to `DEFAULT_SYSTEM_PROMPT` / `DEFAULT_PROMPT_TEMPLATES` in `config.py`
+- `PUT /api/config` deep-merges into existing `escriba.toml` (via `update_config_toml`), so partial saves no longer overwrite other sections
 
 ## Dependencies
 

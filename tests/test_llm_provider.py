@@ -214,3 +214,36 @@ class TestListAvailableModels:
 
         assert result["ai_available"] is False
         assert result["ai_unavailable_reason"] is not None
+
+
+def test_enhance_prompt_empty_returns_none():
+    from escriba.summarize.llm_summary import enhance_prompt
+
+    assert enhance_prompt("") is None
+    assert enhance_prompt("   ") is None
+
+
+def test_build_enhance_prompt_wraps_instruction():
+    from escriba.summarize.llm_summary import _build_enhance_prompt
+
+    out = _build_enhance_prompt("summarize the call")
+    assert "<instruction>" in out and "summarize the call" in out
+    assert "ONLY the improved instruction" in out
+
+
+def test_build_enhance_prompt_preserves_placeholders():
+    from escriba.summarize.llm_summary import _build_enhance_prompt
+
+    out = _build_enhance_prompt("Do {prompt} on {transcript}", preserve_placeholders=True)
+    assert "<system_prompt>" in out
+    assert "{transcript}" in out and "{prompt}" in out
+    assert "MUST keep the literal placeholders" in out
+
+
+def test_summary_prompt_keeps_json_contract():
+    from escriba.summarize.llm_summary import _build_summary_prompt
+
+    out = _build_summary_prompt("transcripción de prueba")
+    for key in ("summary", "key_points", "action_items", "decisions", "topics"):
+        assert f'"{key}"' in out
+    assert "<transcript>" in out and "transcripción de prueba" in out

@@ -186,29 +186,34 @@ def _resolve_auto_remote() -> tuple[str, str | None]:
 
 
 def _build_summary_prompt(transcript: str) -> str:
-    return f"""Analyze this meeting/call transcript and generate a structured summary as JSON.
+    return f"""You are an expert meeting and call analyst. Read the transcript and produce a structured summary.
 
-IMPORTANT: Respond in the SAME LANGUAGE as the transcript.
-
-Transcript:
+<transcript>
 {transcript}
+</transcript>
 
-Generate a JSON with this structure (use the transcript's language for all values):
+<instructions>
+- Base every value strictly on the transcript; do not invent details.
+- Write all values in the SAME LANGUAGE as the transcript. If it is in Spanish, use correct orthography: acentos (á, é, í, ó, ú), ñ, ü, and the opening signs ¿ and ¡.
+- Leave an array empty ([]) when the transcript has no relevant items for it.
+</instructions>
+
+<output_format>
+Respond with ONLY a valid JSON object — no markdown, no code fences, no commentary — using exactly this shape:
 {{
   "summary": "Executive summary in 3-5 sentences",
-  "key_points": ["key point 1", "key point 2", ...],
+  "key_points": ["key point 1", "key point 2"],
   "action_items": [
     {{
       "task": "task description",
-      "assignee": "person if mentioned",
-      "due_date": "date if mentioned"
+      "assignee": "person if mentioned, else empty string",
+      "due_date": "date if mentioned, else empty string"
     }}
   ],
-  "decisions": ["decision 1", "decision 2", ...],
-  "topics": ["topic 1", "topic 2", ...]
+  "decisions": ["decision 1", "decision 2"],
+  "topics": ["topic 1", "topic 2"]
 }}
-
-Respond ONLY with the JSON, no additional text."""
+</output_format>"""
 
 
 def generate_summary(
@@ -535,7 +540,7 @@ def _call_llm_gemini(prompt: str, model_id: str) -> str | None:
     return response.text.strip() if response.text else None
 
 
-def _call_llm_claude(prompt: str, model_id: str) -> str | None:
+def _call_llm_claude(prompt: str, model_id: str, max_tokens: int = 100) -> str | None:
     try:
         from anthropic import Anthropic
     except ImportError:
@@ -546,10 +551,87 @@ def _call_llm_claude(prompt: str, model_id: str) -> str | None:
     client = Anthropic(api_key=api_key)
     message = client.messages.create(
         model=model_id,
-        max_tokens=100,
+        max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text.strip() if message.content else None
+
+
+def _build_enhance_prompt(text: str, preserve_placeholders: bool = False) -> str:
+    """Meta-prompt: ask the model to refine a prompt used for transcript notes."""
+    if preserve_placeholders:
+        target = (
+            "Improve the SYSTEM PROMPT below. It is a reusable template that wraps "
+            "a transcript and a task instruction before an AI writes notes."
+        )
+        placeholder_rule = (
+            "- It MUST keep the literal placeholders {transcript} and {prompt} "
+            "exactly as written, including the curly braces. Do not rename, remove, "
+            "translate, or duplicate them.\n"
+        )
+        tag = "system_prompt"
+    else:
+        target = (
+            "Improve the INSTRUCTION below so that, when applied to a meeting or "
+            "call transcript, an AI produces clearer, more useful notes."
+        )
+        placeholder_rule = ""
+        tag = "instruction"
+
+    return (
+        f"You are a prompt engineer. {target}\n\n"
+        "Requirements:\n"
+        "- Preserve the author's intent, and respond in the SAME LANGUAGE as the "
+        "input.\n"
+        "- Make it specific about scope, desired output format, and level of detail.\n"
+        f"{placeholder_rule}"
+        "- Do not answer or perform it; only rewrite it.\n"
+        f"- Return ONLY the improved {tag.replace('_', ' ')} text — no preamble, "
+        "quotes, or explanation.\n\n"
+        f"<{tag}>\n"
+        f"{text}\n"
+        f"</{tag}>"
+    )
+
+
+def enhance_prompt(
+    text: str, model: str = "auto", preserve_placeholders: bool = False
+) -> str | None:
+    """Rewrite a user's prompt into a sharper version via the LLM.
+
+    When ``preserve_placeholders`` is set, the result is only returned if it
+    still contains the required ``{transcript}`` and ``{prompt}`` placeholders.
+    """
+    if not text or not text.strip():
+        return None
+
+    meta_prompt = _build_enhance_prompt(text.strip(), preserve_placeholders)
+    provider, model_id = resolve_provider_and_model(model)
+    try:
+        if provider == "local":
+            result = _call_llm_local(
+                meta_prompt, model_id, max_tokens=600, enable_thinking=False
+            )
+        elif provider == "gemini":
+            result = _call_llm_gemini(meta_prompt, model_id)
+        elif provider == "claude":
+            result = _call_llm_claude(meta_prompt, model_id, max_tokens=600)
+        else:
+            return None
+        if not result:
+            return None
+        result = result.strip().strip('"').strip("'").strip()
+        if not result:
+            return None
+        if preserve_placeholders and (
+            "{transcript}" not in result or "{prompt}" not in result
+        ):
+            logger.debug("Enhanced system prompt lost a placeholder; discarding")
+            return None
+        return result
+    except Exception:
+        logger.debug("Failed to enhance prompt", exc_info=True)
+        return None
 
 
 def list_available_models() -> dict[str, Any]:

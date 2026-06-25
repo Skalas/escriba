@@ -508,7 +508,12 @@ class TranscriptionSession:
         effective_model = model or self.config.streaming.summary_model
 
         if prompt:
-            return _generate_custom_notes(transcript, prompt, effective_model)
+            return _generate_custom_notes(
+                transcript,
+                prompt,
+                effective_model,
+                system_prompt=self.config.prompts.effective_system_prompt,
+            )
 
         from escriba.summarize import generate_summary
 
@@ -538,20 +543,35 @@ def _build_wav(pcm_data: bytes, sample_rate: int, channels: int) -> bytes:
     return header + pcm_data
 
 
+def _build_custom_prompt(
+    transcript: str, prompt: str, system_prompt: str | None = None
+) -> str:
+    """
+    Render the system-prompt template with the transcript and user instruction.
+
+    ``system_prompt`` may contain ``{transcript}`` and ``{prompt}`` placeholders.
+    Falls back to the built-in default if it is empty or malformed.
+    """
+    from escriba.config import DEFAULT_SYSTEM_PROMPT
+
+    template = (system_prompt or "").strip() or DEFAULT_SYSTEM_PROMPT
+    try:
+        return template.format(transcript=transcript, prompt=prompt)
+    except (KeyError, IndexError, ValueError):
+        logger.warning("Invalid system prompt template; using default")
+        return DEFAULT_SYSTEM_PROMPT.format(transcript=transcript, prompt=prompt)
+
+
 def _generate_custom_notes(
-    transcript: str, prompt: str, model: str = "gemini"
+    transcript: str,
+    prompt: str,
+    model: str = "gemini",
+    system_prompt: str | None = None,
 ) -> str | None:
     """Generate notes from transcript with a custom user prompt."""
     from escriba.summarize.llm_summary import resolve_provider_and_model
 
-    full_prompt = (
-        "Here is a transcript from a meeting/call:\n\n"
-        f"{transcript}\n\n"
-        "Based on the above transcript, please do the following:\n"
-        f"{prompt}\n\n"
-        "IMPORTANT: Respond in the SAME LANGUAGE as the transcript.\n"
-        "Respond in a clear, well-structured format."
-    )
+    full_prompt = _build_custom_prompt(transcript, prompt, system_prompt)
 
     provider, model_id = resolve_provider_and_model(model)
 
