@@ -289,25 +289,41 @@ class LocalLLMConfig:
 
 # Default AI-notes system prompt. {transcript} and {prompt} are required
 # placeholders: the transcript text and the user's per-notes instruction.
+# XML tags delimit the inputs so the model never confuses transcript content
+# with instructions.
 DEFAULT_SYSTEM_PROMPT = (
-    "Here is a transcript from a meeting/call:\n\n"
-    "{transcript}\n\n"
-    "Based on the above transcript, please do the following:\n"
-    "{prompt}\n\n"
-    "IMPORTANT: Respond in the SAME LANGUAGE as the transcript.\n"
-    "Respond in a clear, well-structured format."
+    "You are an expert meeting and call notetaker. You turn raw transcripts "
+    "into accurate, clearly structured notes.\n\n"
+    "<transcript>\n"
+    "{transcript}\n"
+    "</transcript>\n\n"
+    "<task>\n"
+    "{prompt}\n"
+    "</task>\n\n"
+    "<instructions>\n"
+    "- Base every statement strictly on the transcript. Never invent names, "
+    "numbers, decisions, or events that are not present.\n"
+    "- If the transcript lacks the information the task needs, say so plainly "
+    "instead of guessing.\n"
+    "- Write in the SAME LANGUAGE as the transcript. If it is in Spanish, use "
+    "natural, fluent Spanish with correct orthography: acentos (á, é, í, ó, ú), "
+    "ñ, ü, and the opening signs ¿ and ¡.\n"
+    "- Format with clean Markdown (headings, bullet or numbered lists, bold for "
+    "key terms). Do not wrap the whole reply in a code block.\n"
+    "- Be concise and skimmable. Omit filler and meta-commentary about the task.\n"
+    "</instructions>"
 )
 
 # Default quick-prompt templates shown as chips in the dashboard.
 DEFAULT_PROMPT_TEMPLATES: list[dict[str, str]] = [
-    {"id": "summary", "label": "Executive Summary", "prompt": "Write an executive summary in 3-5 sentences. State the purpose of the conversation, the key topics covered, the main conclusions reached, and any agreed-upon next steps. Use clear, direct language."},
-    {"id": "actions", "label": "Action Items", "prompt": "Extract every action item, task, and commitment made. Format as a markdown checklist. For each item include: what needs to be done, who owns it (if stated), and the deadline or timeframe (if mentioned). Group by owner when possible."},
-    {"id": "decisions", "label": "Decisions", "prompt": "List every decision made during this conversation. For each decision, state: (1) what was decided, (2) the rationale or context behind it, and (3) any alternatives that were discussed and rejected."},
-    {"id": "questions", "label": "Open Questions", "prompt": "List all unresolved questions, open items, and topics that need follow-up. For each, note who raised it (if mentioned) and what information or action is needed to resolve it."},
-    {"id": "keypoints", "label": "Key Points", "prompt": "Summarize the most important points, insights, and takeaways as a bulleted list. Focus on substance. Capture specific data points, names, and figures mentioned."},
-    {"id": "blockers", "label": "Risks & Blockers", "prompt": "Identify all risks, blockers, dependencies, and concerns raised. For each, note: what the issue is, who flagged it, and any proposed mitigation or workaround discussed."},
-    {"id": "minutes", "label": "Meeting Minutes", "prompt": "Write structured meeting minutes with these sections: Attendees, Agenda Topics, Key Discussion Points, Decisions Made, Action Items, and Next Steps. Use markdown formatting."},
-    {"id": "followup", "label": "Follow-up Email", "prompt": "Draft a concise follow-up email summarizing this conversation. Include: a brief recap, decisions made, action items with owners, and next steps. Start with \"Hi team,\" and end with a clear call to action."},
+    {"id": "summary", "label": "Executive Summary", "prompt": "Write an executive summary in 3-5 sentences covering the purpose of the conversation, the main topics, the key conclusions, and any agreed next steps. Use clear, direct prose — no lists."},
+    {"id": "actions", "label": "Action Items", "prompt": "Extract every action item, task, and commitment as a Markdown checklist. For each, include the action, the owner (if stated), and the deadline or timeframe (if mentioned). Group by owner when possible. If no action items were discussed, state that clearly."},
+    {"id": "decisions", "label": "Decisions", "prompt": "List every decision that was made. For each, give: (1) what was decided, (2) the rationale or context, and (3) any alternatives discussed and rejected. If no decisions were reached, say so."},
+    {"id": "questions", "label": "Open Questions", "prompt": "List all unresolved questions, open items, and topics that need follow-up. For each, note who raised it (if mentioned) and what information or action is needed to resolve it. If nothing is open, state that."},
+    {"id": "keypoints", "label": "Key Points", "prompt": "Summarize the most important points, insights, and takeaways as a bulleted list. Capture specific figures, names, and data mentioned. Focus on substance, not a chronological recap."},
+    {"id": "blockers", "label": "Risks & Blockers", "prompt": "Identify all risks, blockers, dependencies, and concerns raised. For each, note the issue, who flagged it, and any proposed mitigation or workaround. If none were raised, state that."},
+    {"id": "minutes", "label": "Meeting Minutes", "prompt": "Write structured meeting minutes in Markdown with these sections: **Attendees**, **Agenda**, **Discussion**, **Decisions**, **Action Items**, **Next Steps**. Omit a section only if there is genuinely nothing to record under it."},
+    {"id": "followup", "label": "Follow-up Email", "prompt": "Draft a concise, professional follow-up email: a one-line recap, the decisions made, action items with owners, and next steps. Open with a greeting and close with a clear call to action."},
 ]
 
 

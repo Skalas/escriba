@@ -182,6 +182,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/notes":
             body = self._read_body()
             self._json_response(self._generate_notes(body))
+        elif path == "/api/prompts/enhance":
+            body = self._read_body()
+            self._json_response(self._enhance_prompt(body))
         elif path == "/api/sessions/merge":
             body = self._read_body()
             self._json_response(self._merge_sessions(body))
@@ -483,6 +486,23 @@ class _Handler(BaseHTTPRequestHandler):
             }
         except Exception as e:
             logger.error("Error generating notes: %s", e, exc_info=True)
+            return {"ok": False, "error": str(e)}
+
+    def _enhance_prompt(self, body: dict) -> dict:
+        text = (body.get("text") or "").strip()
+        if not text:
+            return {"ok": False, "error": "Nothing to enhance"}
+        config = self.app_state.get("config")
+        default_model = config.streaming.summary_model if config else "auto"
+        model = body.get("model") or default_model
+        try:
+            from escriba.summarize.llm_summary import enhance_prompt
+            improved = enhance_prompt(text, model=model)
+            if improved:
+                return {"ok": True, "prompt": improved}
+            return {"ok": False, "error": "Could not enhance prompt (check AI model / API key)"}
+        except Exception as e:
+            logger.error("Error enhancing prompt: %s", e, exc_info=True)
             return {"ok": False, "error": str(e)}
 
     def _merge_sessions(self, body: dict) -> dict:

@@ -107,6 +107,7 @@ Single-file SPA at `src/escriba/app/static/index.html`. Contains all CSS, HTML, 
 | POST | `/api/sessions/merge` | Merge multiple sessions |
 | POST | `/api/sessions/move` | Move sessions to folder |
 | POST | `/api/sessions/:id/generate-notes` | AI-generate notes |
+| POST | `/api/prompts/enhance` | AI-refine a user's prompt text |
 | POST | `/api/sessions/:id/retranscribe` | Re-transcribe from WAV |
 | PUT | `/api/config` | Update config + env keys |
 | PUT | `/api/sessions/:id/rename` | Rename session |
