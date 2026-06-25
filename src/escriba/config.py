@@ -287,6 +287,46 @@ class LocalLLMConfig:
     cache_ttl: int = 300  # seconds to keep model loaded after last use
 
 
+# Default AI-notes system prompt. {transcript} and {prompt} are required
+# placeholders: the transcript text and the user's per-notes instruction.
+DEFAULT_SYSTEM_PROMPT = (
+    "Here is a transcript from a meeting/call:\n\n"
+    "{transcript}\n\n"
+    "Based on the above transcript, please do the following:\n"
+    "{prompt}\n\n"
+    "IMPORTANT: Respond in the SAME LANGUAGE as the transcript.\n"
+    "Respond in a clear, well-structured format."
+)
+
+# Default quick-prompt templates shown as chips in the dashboard.
+DEFAULT_PROMPT_TEMPLATES: list[dict[str, str]] = [
+    {"id": "summary", "label": "Executive Summary", "prompt": "Write an executive summary in 3-5 sentences. State the purpose of the conversation, the key topics covered, the main conclusions reached, and any agreed-upon next steps. Use clear, direct language."},
+    {"id": "actions", "label": "Action Items", "prompt": "Extract every action item, task, and commitment made. Format as a markdown checklist. For each item include: what needs to be done, who owns it (if stated), and the deadline or timeframe (if mentioned). Group by owner when possible."},
+    {"id": "decisions", "label": "Decisions", "prompt": "List every decision made during this conversation. For each decision, state: (1) what was decided, (2) the rationale or context behind it, and (3) any alternatives that were discussed and rejected."},
+    {"id": "questions", "label": "Open Questions", "prompt": "List all unresolved questions, open items, and topics that need follow-up. For each, note who raised it (if mentioned) and what information or action is needed to resolve it."},
+    {"id": "keypoints", "label": "Key Points", "prompt": "Summarize the most important points, insights, and takeaways as a bulleted list. Focus on substance. Capture specific data points, names, and figures mentioned."},
+    {"id": "blockers", "label": "Risks & Blockers", "prompt": "Identify all risks, blockers, dependencies, and concerns raised. For each, note: what the issue is, who flagged it, and any proposed mitigation or workaround discussed."},
+    {"id": "minutes", "label": "Meeting Minutes", "prompt": "Write structured meeting minutes with these sections: Attendees, Agenda Topics, Key Discussion Points, Decisions Made, Action Items, and Next Steps. Use markdown formatting."},
+    {"id": "followup", "label": "Follow-up Email", "prompt": "Draft a concise follow-up email summarizing this conversation. Include: a brief recap, decisions made, action items with owners, and next steps. Start with \"Hi team,\" and end with a clear call to action."},
+]
+
+
+@dataclass(frozen=True)
+class PromptsConfig:
+    """User-customizable AI prompts: the system prompt and quick templates."""
+
+    system_prompt: str = ""  # empty => fall back to DEFAULT_SYSTEM_PROMPT
+    templates: tuple[dict[str, str], ...] = ()  # empty => DEFAULT_PROMPT_TEMPLATES
+
+    @property
+    def effective_system_prompt(self) -> str:
+        return self.system_prompt.strip() or DEFAULT_SYSTEM_PROMPT
+
+    @property
+    def effective_templates(self) -> list[dict[str, str]]:
+        return [dict(t) for t in self.templates] if self.templates else list(DEFAULT_PROMPT_TEMPLATES)
+
+
 @dataclass(frozen=True)
 class AudioConfig:
     """
@@ -322,6 +362,7 @@ class AppConfig:
     auto_record: AutoRecordConfig = field(default_factory=AutoRecordConfig)
     auto_name: AutoNameConfig = field(default_factory=AutoNameConfig)
     local_llm: LocalLLMConfig = field(default_factory=LocalLLMConfig)
+    prompts: PromptsConfig = field(default_factory=PromptsConfig)
 
     config_path: Path | None = None
 
@@ -502,6 +543,26 @@ class AppConfig:
             }
         dict_cfg = DictionaryConfig(terms=dict_terms, replacements=dict_replacements)
 
+        # Prompts (custom AI system prompt + quick templates)
+        prompts_section = _get_section(toml_data, "prompts")
+        p_system = _get_toml_str(prompts_section, "system_prompt")
+        p_templates_raw = prompts_section.get("templates", [])
+        p_templates: list[dict[str, str]] = []
+        if isinstance(p_templates_raw, list):
+            for item in p_templates_raw:
+                if isinstance(item, dict) and item.get("label") and item.get("prompt"):
+                    p_templates.append(
+                        {
+                            "id": str(item.get("id") or item["label"]),
+                            "label": str(item["label"]),
+                            "prompt": str(item["prompt"]),
+                        }
+                    )
+        prompts_cfg = PromptsConfig(
+            system_prompt=p_system or "",
+            templates=tuple(p_templates),
+        )
+
         return cls(
             audio=audio_cfg,
             streaming=streaming_cfg,
@@ -511,6 +572,7 @@ class AppConfig:
             auto_record=auto_record_cfg,
             auto_name=auto_name_cfg,
             local_llm=local_llm_cfg,
+            prompts=prompts_cfg,
             config_path=resolved_path,
         )
 
@@ -523,6 +585,38 @@ def save_config_to_toml(config_dict: dict[str, Any], path: Path) -> None:
     writable = {k: v for k, v in config_dict.items() if k != "config_path"}
     path.write_bytes(tomli_w.dumps(writable).encode("utf-8"))
     logger.info("Saved config to %s", path)
+
+
+def _deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge ``updates`` into ``base`` (returns a new dict)."""
+    result = dict(base)
+    for key, value in updates.items():
+        if (
+            key in result
+            and isinstance(result[key], dict)
+            and isinstance(value, dict)
+        ):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def update_config_toml(updates: dict[str, Any], path: Path) -> None:
+    """
+    Merge ``updates`` into the existing TOML file and write it back.
+
+    Unlike :func:`save_config_to_toml`, this preserves sections that are not
+    present in ``updates`` instead of overwriting the whole file.
+    """
+    existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            existing = _load_toml(path)
+        except Exception:
+            logger.warning("Could not parse existing config at %s; rewriting", path)
+    merged = _deep_merge(existing, {k: v for k, v in updates.items() if k != "config_path"})
+    save_config_to_toml(merged, path)
 
 
 def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
@@ -585,5 +679,11 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
         "local_llm": {
             "model": cfg.local_llm.model,
             "cache_ttl": cfg.local_llm.cache_ttl,
+        },
+        "prompts": {
+            "system_prompt": cfg.prompts.effective_system_prompt,
+            "templates": cfg.prompts.effective_templates,
+            "default_system_prompt": DEFAULT_SYSTEM_PROMPT,
+            "default_templates": list(DEFAULT_PROMPT_TEMPLATES),
         },
     }

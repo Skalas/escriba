@@ -118,6 +118,8 @@ Single-file SPA at `src/escriba/app/static/index.html`. Contains all CSS, HTML, 
 - `escriba.toml` in project root — all app settings
 - `.env` for API keys (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `HUGGINGFACE_TOKEN`)
 - Never put inline comments on `.env` values — python-dotenv parses them as part of the value
+- `[prompts]` section holds the user-customizable AI `system_prompt` (must keep the `{transcript}` and `{prompt}` placeholders) and `[[prompts.templates]]` quick-prompt chips; empty values fall back to `DEFAULT_SYSTEM_PROMPT` / `DEFAULT_PROMPT_TEMPLATES` in `config.py`
+- `PUT /api/config` deep-merges into existing `escriba.toml` (via `update_config_toml`), so partial saves no longer overwrite other sections
 
 ## Dependencies
 

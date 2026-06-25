@@ -756,9 +756,12 @@ class _Handler(BaseHTTPRequestHandler):
         config = self.app_state.get("config")
         default_model = config.streaming.summary_model if config else "auto"
         model = body.get("model", default_model)
+        system_prompt = config.prompts.effective_system_prompt if config else None
         try:
             from escriba.app.session import _generate_custom_notes
-            notes = _generate_custom_notes(transcript, prompt, model=model)
+            notes = _generate_custom_notes(
+                transcript, prompt, model=model, system_prompt=system_prompt
+            )
             if notes:
                 return {"ok": True, "notes": notes}
             return {"ok": False, "error": "Failed to generate notes"}
@@ -831,7 +834,7 @@ class _Handler(BaseHTTPRequestHandler):
             AppConfig,
             config_to_dict,
             resolve_config_path,
-            save_config_to_toml,
+            update_config_toml,
         )
 
         env_updates = {}
@@ -846,6 +849,13 @@ class _Handler(BaseHTTPRequestHandler):
                 os.environ[k] = v
 
         toml_data = {k: v for k, v in body.items() if k not in env_key_names}
+        # Drop read-only fields surfaced by config_to_dict for the UI.
+        if isinstance(toml_data.get("prompts"), dict):
+            toml_data["prompts"] = {
+                k: v
+                for k, v in toml_data["prompts"].items()
+                if k in ("system_prompt", "templates")
+            }
         if toml_data:
             current_config = self.app_state.get("config")
             config_path = (
@@ -853,7 +863,7 @@ class _Handler(BaseHTTPRequestHandler):
                 if isinstance(current_config, AppConfig) and current_config.config_path
                 else resolve_config_path() or Path("escriba.toml")
             )
-            save_config_to_toml(toml_data, config_path)
+            update_config_toml(toml_data, config_path)
 
         reload_fn = self.app_state.get("reload_config")
         if reload_fn:

@@ -753,6 +753,30 @@
   .theme-swatch-dot { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.08); }
   .theme-swatch-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
 
+  /* Prompt template editor */
+  .tmpl-row { border: 1px solid var(--border-light); border-radius: var(--radius-sm); padding: 10px; margin-bottom: 8px; background: var(--bg); }
+  .tmpl-row-top { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .tmpl-row-top input {
+    flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: 13px; font-weight: 600; font-family: inherit;
+    background: var(--card); color: var(--text);
+  }
+  .tmpl-row textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 12px; font-family: inherit; line-height: 1.5; background: var(--card);
+    color: var(--text); resize: vertical;
+  }
+  .tmpl-row-top input:focus, .tmpl-row textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+  .tmpl-actions { display: flex; gap: 2px; flex-shrink: 0; }
+  .tmpl-actions button {
+    padding: 5px; background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text-secondary); cursor: pointer; line-height: 0; display: inline-flex;
+    align-items: center; justify-content: center; transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+  }
+  .tmpl-actions button:hover:not(:disabled) { color: var(--text); background: var(--border-light); }
+  .tmpl-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .tmpl-actions .tmpl-del:hover { color: var(--danger); border-color: var(--danger); background: var(--badge-error); }
+
   /* In-app modal (replaces native confirm/prompt) */
   .modal-overlay {
     position: fixed; inset: 0; z-index: 2000;
@@ -1087,6 +1111,25 @@
         </div>
       </div>
 
+      <div class="card settings-card">
+        <h3>AI Prompts</h3>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+          <span class="settings-label" style="min-width:0;">System prompt</span>
+          <button type="button" class="btn-secondary" onclick="resetSystemPrompt()" style="font-size:11px;padding:4px 10px;">Reset to default</button>
+        </div>
+        <textarea id="s-system-prompt" rows="6" spellcheck="false" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;font-family:'SF Mono',Menlo,monospace;background:var(--bg);color:var(--text);resize:vertical;line-height:1.5;"></textarea>
+        <p class="theme-swatch-desc" style="margin-top:6px;">Wraps every AI-notes request. Must contain the <code>{transcript}</code> and <code>{prompt}</code> placeholders.</p>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:16px 0 8px;">
+          <span class="settings-label" style="min-width:0;">Quick prompts</span>
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn-secondary" onclick="resetTemplates()" style="font-size:11px;padding:4px 10px;">Restore defaults</button>
+            <button type="button" class="btn-start" onclick="addTemplate()" style="font-size:11px;padding:4px 10px;">Add prompt</button>
+          </div>
+        </div>
+        <div id="template-editor"></div>
+      </div>
+
       <details class="advanced-settings">
         <summary>Advanced</summary>
         <div class="card settings-card" style="margin-top:8px;">
@@ -1248,7 +1291,8 @@ function promptDialog(opts) { return _openModal(Object.assign({ prompt: true, da
 // Keyboard shortcuts (user-configurable, stored in localStorage)
 let shortcuts = JSON.parse(localStorage.getItem('escriba-shortcuts') || '{}');
 
-const PROMPT_TEMPLATES = [
+// Built-in defaults; the live list comes from server config (user-customizable).
+const DEFAULT_PROMPT_TEMPLATES = [
   { id: 'summary', label: 'Executive Summary', prompt: 'Write an executive summary in 3-5 sentences. State the purpose of the conversation, the key topics covered, the main conclusions reached, and any agreed-upon next steps. Use clear, direct language.' },
   { id: 'actions', label: 'Action Items', prompt: 'Extract every action item, task, and commitment made. Format as a markdown checklist. For each item include: what needs to be done, who owns it (if stated), and the deadline or timeframe (if mentioned). Group by owner when possible.' },
   { id: 'decisions', label: 'Decisions', prompt: 'List every decision made during this conversation. For each decision, state: (1) what was decided, (2) the rationale or context behind it, and (3) any alternatives that were discussed and rejected.' },
@@ -1259,14 +1303,17 @@ const PROMPT_TEMPLATES = [
   { id: 'followup', label: 'Follow-up Email', prompt: 'Draft a concise follow-up email summarizing this conversation. Include: a brief recap, decisions made, action items with owners, and next steps. Start with "Hi team," and end with a clear call to action.' },
 ];
 
+// Working copy of templates, replaced by server config when it loads.
+let promptTemplates = DEFAULT_PROMPT_TEMPLATES.map(t => ({ ...t }));
+
 let activePrompts = { live: new Set(), session: new Set() };
 
 function renderChips(containerId, context) {
   const container = document.getElementById(containerId);
-  container.innerHTML = PROMPT_TEMPLATES.map(t => {
+  container.innerHTML = promptTemplates.map(t => {
     const isActive = activePrompts[context].has(t.id);
     return `<span class="prompt-chip${isActive ? ' active' : ''}"
-      onclick="togglePrompt('${t.id}', '${context}', '${containerId}')">${t.label}</span>`;
+      onclick="togglePrompt('${escAttr(t.id)}', '${context}', '${containerId}')">${escHtml(t.label)}</span>`;
   }).join('');
 }
 
@@ -1279,11 +1326,92 @@ function togglePrompt(id, context, containerId) {
 
 function updatePromptTextarea(context) {
   const textareaId = context === 'live' ? 'prompt-input' : 'session-prompt-input';
-  const selected = PROMPT_TEMPLATES.filter(t => activePrompts[context].has(t.id));
+  const selected = promptTemplates.filter(t => activePrompts[context].has(t.id));
   if (selected.length === 0) { document.getElementById(textareaId).value = ''; return; }
   document.getElementById(textareaId).value = selected.map((t, i) =>
     `${i + 1}. ${t.label}: ${t.prompt}`
   ).join('\n\n');
+}
+
+// --- Prompt customization (system prompt + quick templates) ---
+let editingTemplates = [];
+let promptDefaults = { system_prompt: '', templates: [] };
+
+function setPromptTemplatesFromConfig(cfg) {
+  const t = cfg && cfg.prompts && cfg.prompts.templates;
+  if (Array.isArray(t) && t.length) {
+    promptTemplates = t.map(x => ({ id: x.id, label: x.label, prompt: x.prompt }));
+  }
+}
+
+function slugifyId(label, i) {
+  const base = (label || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return base || ('prompt-' + (i + 1));
+}
+
+function loadPromptsIntoSettings(cfg) {
+  const p = (cfg && cfg.prompts) || {};
+  promptDefaults = {
+    system_prompt: p.default_system_prompt || '',
+    templates: (p.default_templates || []).map(t => ({ ...t })),
+  };
+  document.getElementById('s-system-prompt').value = p.system_prompt || promptDefaults.system_prompt;
+  editingTemplates = (p.templates && p.templates.length ? p.templates : promptDefaults.templates).map(t => ({ ...t }));
+  renderTemplateEditor();
+}
+
+const _icoUp = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"></polyline></svg>';
+const _icoDown = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+const _icoTrash = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+
+function renderTemplateEditor() {
+  const c = document.getElementById('template-editor');
+  if (!c) return;
+  if (!editingTemplates.length) {
+    c.innerHTML = '<p class="theme-swatch-desc">No quick prompts. Add one or restore defaults.</p>';
+    return;
+  }
+  c.innerHTML = editingTemplates.map((t, i) => `
+    <div class="tmpl-row">
+      <div class="tmpl-row-top">
+        <input type="text" value="${escAttr(t.label || '')}" placeholder="Label (e.g. Action Items)"
+          oninput="updateTemplateField(${i}, 'label', this.value)">
+        <div class="tmpl-actions">
+          <button type="button" title="Move up" aria-label="Move up" ${i === 0 ? 'disabled' : ''} onclick="moveTemplate(${i}, -1)">${_icoUp}</button>
+          <button type="button" title="Move down" aria-label="Move down" ${i === editingTemplates.length - 1 ? 'disabled' : ''} onclick="moveTemplate(${i}, 1)">${_icoDown}</button>
+          <button type="button" class="tmpl-del" title="Delete" aria-label="Delete prompt" onclick="deleteTemplate(${i})">${_icoTrash}</button>
+        </div>
+      </div>
+      <textarea rows="2" placeholder="Prompt instruction sent to the AI"
+        oninput="updateTemplateField(${i}, 'prompt', this.value)">${escHtml(t.prompt || '')}</textarea>
+    </div>`).join('');
+}
+
+function updateTemplateField(i, field, val) {
+  if (editingTemplates[i]) editingTemplates[i][field] = val;
+}
+function addTemplate() {
+  editingTemplates.push({ id: '', label: '', prompt: '' });
+  renderTemplateEditor();
+  const rows = document.querySelectorAll('#template-editor .tmpl-row input');
+  if (rows.length) rows[rows.length - 1].focus();
+}
+function deleteTemplate(i) {
+  editingTemplates.splice(i, 1);
+  renderTemplateEditor();
+}
+function moveTemplate(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= editingTemplates.length) return;
+  [editingTemplates[i], editingTemplates[j]] = [editingTemplates[j], editingTemplates[i]];
+  renderTemplateEditor();
+}
+function resetSystemPrompt() {
+  document.getElementById('s-system-prompt').value = promptDefaults.system_prompt;
+}
+function resetTemplates() {
+  editingTemplates = promptDefaults.templates.map(t => ({ ...t }));
+  renderTemplateEditor();
 }
 
 async function apiCall(path, opts) {
@@ -2062,6 +2190,11 @@ async function loadSettings() {
     document.getElementById('shortcut-record').value = shortcuts.record || '';
     document.getElementById('shortcut-settings').value = shortcuts.settings || '';
     document.getElementById('shortcut-sidebar').value = shortcuts.sidebar || '';
+    // Prompts: populate editor and refresh live chips from config
+    loadPromptsIntoSettings(c);
+    setPromptTemplatesFromConfig(c);
+    renderChips('live-prompt-chips', 'live');
+    renderChips('session-prompt-chips', 'session');
     updateSettingsSaveState();
   } catch (e) { showSettingsBanner('Failed to load settings', 'error'); }
 }
@@ -2205,6 +2338,25 @@ async function saveSettings() {
       logprob_threshold: parseFloat(document.getElementById('s-logprob').value),
     },
   };
+  // Prompts: validate system prompt placeholders, clean up templates
+  const systemPrompt = document.getElementById('s-system-prompt').value;
+  if (!systemPrompt.includes('{transcript}') || !systemPrompt.includes('{prompt}')) {
+    showSettingsBanner('System prompt must include both {transcript} and {prompt} placeholders', 'error');
+    return;
+  }
+  const cleanTemplates = [];
+  const seenIds = new Set();
+  editingTemplates.forEach((t, i) => {
+    const label = (t.label || '').trim();
+    const prompt = (t.prompt || '').trim();
+    if (!label || !prompt) return;
+    let id = (t.id || '').trim() || slugifyId(label, i);
+    while (seenIds.has(id)) id = id + '-' + i;
+    seenIds.add(id);
+    cleanTemplates.push({ id, label, prompt });
+  });
+  body.prompts = { system_prompt: systemPrompt, templates: cleanTemplates };
+
   const geminiKey = document.getElementById('s-gemini-key').value;
   const anthropicKey = document.getElementById('s-anthropic-key').value;
   const hfToken = document.getElementById('s-hf-token').value;
@@ -2452,8 +2604,16 @@ async function checkAiAvailability() {
   } catch (e) { /* ignore on init */ }
 }
 
+async function loadPromptTemplates() {
+  try {
+    const res = await apiCall('/api/config');
+    if (res.ok) setPromptTemplatesFromConfig(res.config);
+  } catch (e) { /* fall back to built-in defaults */ }
+}
+
 (async function init() {
   restoreSidebarState();
+  await loadPromptTemplates();
   renderChips('live-prompt-chips', 'live');
   renderChips('session-prompt-chips', 'session');
   registerShortcuts();
