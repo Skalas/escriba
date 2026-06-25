@@ -495,9 +495,10 @@ class _Handler(BaseHTTPRequestHandler):
         config = self.app_state.get("config")
         default_model = config.streaming.summary_model if config else "auto"
         model = body.get("model") or default_model
+        preserve = bool(body.get("preserve_placeholders"))
         try:
             from escriba.summarize.llm_summary import enhance_prompt
-            improved = enhance_prompt(text, model=model)
+            improved = enhance_prompt(text, model=model, preserve_placeholders=preserve)
             if improved:
                 return {"ok": True, "prompt": improved}
             return {"ok": False, "error": "Could not enhance prompt (check AI model / API key)"}

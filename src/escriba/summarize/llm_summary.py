@@ -557,32 +557,55 @@ def _call_llm_claude(prompt: str, model_id: str, max_tokens: int = 100) -> str |
     return message.content[0].text.strip() if message.content else None
 
 
-def _build_enhance_prompt(text: str) -> str:
-    """Meta-prompt: ask the model to refine a user's notes instruction."""
+def _build_enhance_prompt(text: str, preserve_placeholders: bool = False) -> str:
+    """Meta-prompt: ask the model to refine a prompt used for transcript notes."""
+    if preserve_placeholders:
+        target = (
+            "Improve the SYSTEM PROMPT below. It is a reusable template that wraps "
+            "a transcript and a task instruction before an AI writes notes."
+        )
+        placeholder_rule = (
+            "- It MUST keep the literal placeholders {transcript} and {prompt} "
+            "exactly as written, including the curly braces. Do not rename, remove, "
+            "translate, or duplicate them.\n"
+        )
+        tag = "system_prompt"
+    else:
+        target = (
+            "Improve the INSTRUCTION below so that, when applied to a meeting or "
+            "call transcript, an AI produces clearer, more useful notes."
+        )
+        placeholder_rule = ""
+        tag = "instruction"
+
     return (
-        "You are a prompt engineer. Improve the INSTRUCTION below so that, when "
-        "applied to a meeting or call transcript, an AI produces clearer, more "
-        "useful, better-structured notes.\n\n"
+        f"You are a prompt engineer. {target}\n\n"
         "Requirements:\n"
         "- Preserve the author's intent, and respond in the SAME LANGUAGE as the "
-        "instruction.\n"
+        "input.\n"
         "- Make it specific about scope, desired output format, and level of detail.\n"
-        "- Keep it concise: one short paragraph or a few bullet points.\n"
-        "- Do not answer or perform the instruction; only rewrite it.\n"
-        "- Return ONLY the improved instruction text — no preamble, quotes, or "
-        "explanation.\n\n"
-        "<instruction>\n"
+        f"{placeholder_rule}"
+        "- Do not answer or perform it; only rewrite it.\n"
+        f"- Return ONLY the improved {tag.replace('_', ' ')} text — no preamble, "
+        "quotes, or explanation.\n\n"
+        f"<{tag}>\n"
         f"{text}\n"
-        "</instruction>"
+        f"</{tag}>"
     )
 
 
-def enhance_prompt(text: str, model: str = "auto") -> str | None:
-    """Rewrite a user's notes instruction into a sharper version via the LLM."""
+def enhance_prompt(
+    text: str, model: str = "auto", preserve_placeholders: bool = False
+) -> str | None:
+    """Rewrite a user's prompt into a sharper version via the LLM.
+
+    When ``preserve_placeholders`` is set, the result is only returned if it
+    still contains the required ``{transcript}`` and ``{prompt}`` placeholders.
+    """
     if not text or not text.strip():
         return None
 
-    meta_prompt = _build_enhance_prompt(text.strip())
+    meta_prompt = _build_enhance_prompt(text.strip(), preserve_placeholders)
     provider, model_id = resolve_provider_and_model(model)
     try:
         if provider == "local":
@@ -595,9 +618,17 @@ def enhance_prompt(text: str, model: str = "auto") -> str | None:
             result = _call_llm_claude(meta_prompt, model_id, max_tokens=600)
         else:
             return None
-        if result:
-            return result.strip().strip('"').strip("'").strip() or None
-        return None
+        if not result:
+            return None
+        result = result.strip().strip('"').strip("'").strip()
+        if not result:
+            return None
+        if preserve_placeholders and (
+            "{transcript}" not in result or "{prompt}" not in result
+        ):
+            logger.debug("Enhanced system prompt lost a placeholder; discarding")
+            return None
+        return result
     except Exception:
         logger.debug("Failed to enhance prompt", exc_info=True)
         return None

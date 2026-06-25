@@ -889,10 +889,7 @@
         <h3>Generate Notes (AI)</h3>
         <div class="prompt-chips" id="live-prompt-chips"></div>
         <textarea id="prompt-input" placeholder="Select prompts above and/or type your own..." rows="2"></textarea>
-        <div class="controls-row" style="margin-bottom:0;">
-          <button class="btn-secondary" id="btn-enhance-live" onclick="enhancePrompt('live')" title="Improve this prompt with AI"><svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="5" y1="19" x2="19" y2="5"></line><path d="M16 3l1.2 2.8L20 7l-2.8 1.2L16 11l-1.2-2.8L12 7z"></path></svg> Enhance</button>
-          <button class="btn-generate" id="btn-notes" onclick="generateNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes</button>
-        </div>
+        <button class="btn-generate" id="btn-notes" onclick="generateNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes</button>
         <div id="notes-output"></div>
       </div>
     </div>
@@ -937,10 +934,7 @@
         <div class="prompt-chips" id="session-prompt-chips"></div>
         <textarea id="session-prompt-input" placeholder="Select prompts above and/or type your own..." rows="2"
           style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;"></textarea>
-        <div class="controls-row" style="margin-bottom:0;">
-          <button class="btn-secondary" id="btn-enhance-session" onclick="enhancePrompt('session')" title="Improve this prompt with AI"><svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="5" y1="19" x2="19" y2="5"></line><path d="M16 3l1.2 2.8L20 7l-2.8 1.2L16 11l-1.2-2.8L12 7z"></path></svg> Enhance</button>
-          <button class="btn-generate" id="btn-session-notes" onclick="generateSessionNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes</button>
-        </div>
+        <button class="btn-generate" id="btn-session-notes" onclick="generateSessionNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes</button>
       </div>
       <div class="card">
         <h3>Transcript</h3>
@@ -1121,7 +1115,10 @@
         <h3>AI Prompts</h3>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
           <span class="settings-label" style="min-width:0;">System prompt</span>
-          <button type="button" class="btn-secondary" onclick="resetSystemPrompt()" style="font-size:11px;padding:4px 10px;">Reset to default</button>
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn-secondary" id="btn-enhance-system" onclick="enhanceSystemPrompt()" title="Improve this prompt with AI (keeps placeholders)" style="font-size:11px;padding:4px 10px;display:inline-flex;align-items:center;gap:4px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="5" y1="19" x2="19" y2="5"></line><path d="M16 3l1.2 2.8L20 7l-2.8 1.2L16 11l-1.2-2.8L12 7z"></path></svg> Enhance</button>
+            <button type="button" class="btn-secondary" onclick="resetSystemPrompt()" style="font-size:11px;padding:4px 10px;">Reset to default</button>
+          </div>
         </div>
         <textarea id="s-system-prompt" rows="6" spellcheck="false" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;font-family:'SF Mono',Menlo,monospace;background:var(--bg);color:var(--text);resize:vertical;line-height:1.5;"></textarea>
         <p class="theme-swatch-desc" style="margin-top:6px;">Wraps every AI-notes request. Must contain the <code>{transcript}</code> and <code>{prompt}</code> placeholders.</p>
@@ -1340,32 +1337,49 @@ function updatePromptTextarea(context) {
   ).join('\n\n');
 }
 
-async function enhancePrompt(context) {
-  const textareaId = context === 'live' ? 'prompt-input' : 'session-prompt-input';
-  const btnId = context === 'live' ? 'btn-enhance-live' : 'btn-enhance-session';
-  const chipsId = context === 'live' ? 'live-prompt-chips' : 'session-prompt-chips';
-  const ta = document.getElementById(textareaId);
+// --- Prompt enhancement (used while configuring prompts in Settings) ---
+const _spinnerSvg = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:currentColor;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>';
+
+async function callEnhance(text, preservePlaceholders) {
+  const res = await apiCall('/api/prompts/enhance', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, preserve_placeholders: !!preservePlaceholders }),
+  });
+  return res;
+}
+
+async function enhanceSystemPrompt() {
+  const ta = document.getElementById('s-system-prompt');
   const text = (ta.value || '').trim();
-  if (!text) { showError('Type or select a prompt first, then Enhance it.'); return; }
-  const btn = document.getElementById(btnId);
-  const orig = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:currentColor;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Enhancing...';
+  if (!text) { showSettingsBanner('Write a system prompt first, then enhance it', 'error'); return; }
+  const btn = document.getElementById('btn-enhance-system');
+  const orig = btn.innerHTML; btn.disabled = true; btn.innerHTML = _spinnerSvg + ' Enhancing...';
   try {
-    const res = await apiCall('/api/prompts/enhance', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    });
+    const res = await callEnhance(text, true);
     if (res.ok && res.prompt) {
-      ta.value = res.prompt;
-      // The text is now custom — clear chip selection so chips don't overwrite it.
-      activePrompts[context].clear();
-      renderChips(chipsId, context);
-    } else {
-      showError(res.error || 'Could not enhance prompt');
-    }
-  } catch (e) { showError('Error: ' + e.message); }
+      if (!res.prompt.includes('{transcript}') || !res.prompt.includes('{prompt}')) {
+        showSettingsBanner('Enhancement dropped a required placeholder — kept your version', 'error');
+      } else {
+        ta.value = res.prompt;
+        showSettingsBanner('System prompt enhanced — review and Save to keep it', 'success');
+      }
+    } else { showSettingsBanner(res.error || 'Could not enhance prompt', 'error'); }
+  } catch (e) { showSettingsBanner('Error: ' + e.message, 'error'); }
   finally { btn.disabled = false; btn.innerHTML = orig; }
+}
+
+async function enhanceTemplate(i, btn) {
+  const text = (editingTemplates[i] && editingTemplates[i].prompt || '').trim();
+  if (!text) { showSettingsBanner('Write a prompt for this template first', 'error'); return; }
+  const orig = btn.innerHTML; btn.disabled = true; btn.innerHTML = _spinnerSvg;
+  try {
+    const res = await callEnhance(text, false);
+    if (res.ok && res.prompt) {
+      editingTemplates[i].prompt = res.prompt;
+      renderTemplateEditor();
+    } else { showSettingsBanner(res.error || 'Could not enhance prompt', 'error'); }
+  } catch (e) { showSettingsBanner('Error: ' + e.message, 'error'); }
+  finally { if (btn.isConnected) { btn.disabled = false; btn.innerHTML = orig; } }
 }
 
 // --- Prompt customization (system prompt + quick templates) ---
@@ -1398,6 +1412,7 @@ function loadPromptsIntoSettings(cfg) {
 const _icoUp = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"></polyline></svg>';
 const _icoDown = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>';
 const _icoTrash = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+const _icoWand = '<svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="5" y1="19" x2="19" y2="5"></line><path d="M16 3l1.2 2.8L20 7l-2.8 1.2L16 11l-1.2-2.8L12 7z"></path></svg>';
 
 function renderTemplateEditor() {
   const c = document.getElementById('template-editor');
@@ -1412,6 +1427,7 @@ function renderTemplateEditor() {
         <input type="text" value="${escAttr(t.label || '')}" placeholder="Label (e.g. Action Items)"
           oninput="updateTemplateField(${i}, 'label', this.value)">
         <div class="tmpl-actions">
+          <button type="button" title="Enhance with AI" aria-label="Enhance prompt" onclick="enhanceTemplate(${i}, this)">${_icoWand}</button>
           <button type="button" title="Move up" aria-label="Move up" ${i === 0 ? 'disabled' : ''} onclick="moveTemplate(${i}, -1)">${_icoUp}</button>
           <button type="button" title="Move down" aria-label="Move down" ${i === editingTemplates.length - 1 ? 'disabled' : ''} onclick="moveTemplate(${i}, 1)">${_icoDown}</button>
           <button type="button" class="tmpl-del" title="Delete" aria-label="Delete prompt" onclick="deleteTemplate(${i})">${_icoTrash}</button>

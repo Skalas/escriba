@@ -231,6 +231,15 @@ def test_build_enhance_prompt_wraps_instruction():
     assert "ONLY the improved instruction" in out
 
 
+def test_build_enhance_prompt_preserves_placeholders():
+    from escriba.summarize.llm_summary import _build_enhance_prompt
+
+    out = _build_enhance_prompt("Do {prompt} on {transcript}", preserve_placeholders=True)
+    assert "<system_prompt>" in out
+    assert "{transcript}" in out and "{prompt}" in out
+    assert "MUST keep the literal placeholders" in out
+
+
 def test_summary_prompt_keeps_json_contract():
     from escriba.summarize.llm_summary import _build_summary_prompt
 
