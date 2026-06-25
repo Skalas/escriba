@@ -385,6 +385,8 @@
     display: none; gap: 1px; flex-shrink: 0; margin-top: 1px; align-items: flex-start;
   }
   .session-item:hover .session-actions { display: inline-flex; }
+  /* In multi-select mode the bulk-action bar owns deletion — hide per-row actions */
+  body.selecting .session-item:hover .session-actions { display: none; }
   .session-action-btn {
     background: none; border: none; padding: 5px;
     cursor: pointer; color: var(--text-secondary); line-height: 0;
@@ -1793,6 +1795,7 @@ function updateFooterButtons() {
   // isn't a second always-visible Delete next to the per-row trash.
   const hasSelection = checkedSessions.size > 0;
   document.getElementById('sidebar-footer').style.display = hasSelection ? 'flex' : 'none';
+  document.body.classList.toggle('selecting', hasSelection);
   document.getElementById('btn-merge').disabled = checkedSessions.size < 2;
   document.getElementById('btn-delete').disabled = !hasSelection;
   document.getElementById('btn-move').disabled = !hasSelection;
