@@ -558,9 +558,9 @@
   }
 
   button {
-    padding: 10px 20px; border: none; border-radius: 10px;
+    padding: 10px 20px; border: 1px solid transparent; border-radius: 10px;
     font-size: 14px; font-weight: 600; cursor: pointer;
-    transition: background var(--transition-fast), transform 80ms ease, opacity var(--transition-fast), box-shadow var(--transition-fast);
+    transition: background var(--transition-fast), border-color var(--transition-fast), transform 80ms ease, opacity var(--transition-fast), box-shadow var(--transition-fast);
   }
   button:active:not(:disabled) { transform: scale(0.97); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -568,8 +568,8 @@
   .btn-start:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 2px 8px var(--accent-glow); }
   .btn-stop { background: var(--danger); color: white; }
   .btn-stop:hover:not(:disabled) { background: var(--danger-hover); box-shadow: 0 2px 8px rgba(255, 59, 48, 0.25); }
-  .btn-secondary { background: var(--code-bg); color: var(--text); }
-  .btn-secondary:hover:not(:disabled) { background: var(--border-light); }
+  .btn-secondary { background: var(--code-bg); color: var(--text); border-color: var(--border); }
+  .btn-secondary:hover:not(:disabled) { background: var(--border-light); border-color: var(--text-secondary); }
   .btn-danger-outline { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
   .btn-danger-outline:hover:not(:disabled) { background: var(--badge-error); }
 
