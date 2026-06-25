@@ -853,7 +853,7 @@
   <div class="session-list" id="session-list">
     <!-- Populated by JS -->
   </div>
-  <div class="sidebar-footer">
+  <div class="sidebar-footer" id="sidebar-footer" style="display:none;">
     <button class="btn-secondary" id="btn-merge" onclick="mergeSelected()" disabled>Merge</button>
     <div class="move-dropdown">
       <button class="btn-secondary" id="btn-move" onclick="toggleMoveDropdown()" disabled>Move to...</button>
@@ -1789,9 +1789,13 @@ function syncSelectAllCheckbox() {
 }
 
 function updateFooterButtons() {
+  // The bulk-action bar only appears in selection mode (>=1 checked), so it
+  // isn't a second always-visible Delete next to the per-row trash.
+  const hasSelection = checkedSessions.size > 0;
+  document.getElementById('sidebar-footer').style.display = hasSelection ? 'flex' : 'none';
   document.getElementById('btn-merge').disabled = checkedSessions.size < 2;
-  document.getElementById('btn-delete').disabled = checkedSessions.size === 0;
-  document.getElementById('btn-move').disabled = checkedSessions.size === 0;
+  document.getElementById('btn-delete').disabled = !hasSelection;
+  document.getElementById('btn-move').disabled = !hasSelection;
   syncSelectAllCheckbox();
 }
 
