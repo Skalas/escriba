@@ -492,6 +492,13 @@
     justify-content: space-between;
     margin-bottom: 20px;
     gap: 12px;
+    container-type: inline-size;
+  }
+  /* When the header gets tight, collapse action buttons to icon-only so the
+     title keeps its room instead of being crushed. */
+  @container (max-width: 520px) {
+    header .btn-label { display: none; }
+    header .controls-row button { padding-left: 11px; padding-right: 11px; }
   }
   header h2 {
     font-size: 22px; font-weight: 700; cursor: default;
@@ -902,8 +909,8 @@
       <h2 id="session-title" class="editable" ondblclick="startTitleRename()">Session</h2>
       <div class="controls-row" style="margin-bottom:0;">
         <button class="btn-start" id="btn-back-to-live" onclick="backToLive()" style="display:none;">Back to Live</button>
-        <button class="btn-secondary" id="btn-retranscribe" onclick="retranscribeSession()" style="display:none;">Re-transcribe</button>
-        <button class="btn-secondary" id="btn-export" onclick="exportSession(this)" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download</button>
+        <button class="btn-secondary" id="btn-retranscribe" onclick="retranscribeSession()" aria-label="Re-transcribe" title="Re-transcribe" style="display:none;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg> <span class="btn-label">Re-transcribe</span></button>
+        <button class="btn-secondary" id="btn-export" onclick="exportSession(this)" aria-label="Download" title="Download" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> <span class="btn-label">Download</span></button>
       </div>
     </header>
     <div class="info-bar">
@@ -1710,7 +1717,7 @@ async function selectSession(id) {
     const audioEl = document.getElementById('session-audio');
     const hasAudio = !!s.audio_path;
     audioCard.style.display = hasAudio ? '' : 'none';
-    document.getElementById('btn-retranscribe').style.display = hasAudio ? '' : 'none';
+    document.getElementById('btn-retranscribe').style.display = hasAudio ? 'inline-flex' : 'none';
     if (hasAudio) {
       audioEl.src = '/api/sessions/' + id + '/audio';
       currentSessionSegments = res.segments || [];
