@@ -143,6 +143,142 @@
       --badge-error: rgba(248, 113, 113, 0.20);
     }
   }
+
+  /* Indigo theme — cool indigo primary with a warm amber accent */
+  [data-theme="indigo"] {
+    --bg: #f5f5fb;
+    --card: #ffffff;
+    --text: #1c1a2e;
+    --text-secondary: #635e7a;
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
+    --on-accent: #ffffff;
+    --accent-subtle: rgba(79, 70, 229, 0.08);
+    --accent-glow: rgba(79, 70, 229, 0.18);
+    --coral: #f59e0b;
+    --coral-fill: #f59e0b;
+    --coral-fill-hover: #d97706;
+    --on-coral: #3a2206;
+    --coral-subtle: rgba(245, 158, 11, 0.12);
+    --danger: #ef4444;
+    --danger-hover: #dc2626;
+    --success: #16a34a;
+    --warning: #b45309;
+    --warning-subtle: rgba(180, 83, 9, 0.12);
+    --border: #e0e0ee;
+    --border-light: #ececf6;
+    --code-bg: #f1f0fa;
+    --sidebar-bg: #eeedf8;
+    --shadow-sm: 0 1px 2px rgba(30,27,46,0.05);
+    --shadow-md: 0 2px 8px rgba(30,27,46,0.07), 0 1px 2px rgba(30,27,46,0.05);
+    --shadow-lg: 0 4px 16px rgba(30,27,46,0.10), 0 2px 4px rgba(30,27,46,0.05);
+    --badge-active: rgba(22, 163, 74, 0.18);
+    --badge-completed: rgba(79, 70, 229, 0.16);
+    --badge-merged: rgba(245, 158, 11, 0.18);
+    --badge-error: rgba(239, 68, 68, 0.16);
+  }
+  @media (prefers-color-scheme: dark) {
+    [data-theme="indigo"] {
+      --bg: #14131f;
+      --card: #1e1c2e;
+      --text: #e9e7f5;
+      --text-secondary: #a09bbb;
+      --accent: #818cf8;
+      --accent-hover: #a5b4fc;
+      --on-accent: #161427;
+      --accent-subtle: rgba(129, 140, 248, 0.16);
+      --accent-glow: rgba(129, 140, 248, 0.22);
+      --coral: #fbbf24;
+      --coral-fill: #fbbf24;
+      --coral-fill-hover: #f59e0b;
+      --on-coral: #2b1d05;
+      --coral-subtle: rgba(251, 191, 36, 0.16);
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --warning-subtle: rgba(251, 191, 36, 0.14);
+      --border: #322e48;
+      --border-light: #2a2740;
+      --code-bg: #241f36;
+      --sidebar-bg: #181527;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow-md: 0 2px 8px rgba(0,0,0,0.36), 0 1px 2px rgba(0,0,0,0.24);
+      --shadow-lg: 0 4px 16px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.24);
+      --badge-active: rgba(52, 211, 153, 0.20);
+      --badge-completed: rgba(129, 140, 248, 0.18);
+      --badge-merged: rgba(251, 191, 36, 0.18);
+      --badge-error: rgba(248, 113, 113, 0.20);
+    }
+  }
+
+  /* Graphite theme — neutral monochrome UI with a blue AI accent */
+  [data-theme="graphite"] {
+    --bg: #f4f4f5;
+    --card: #ffffff;
+    --text: #18181b;
+    --text-secondary: #71717a;
+    --accent: #3f3f46;
+    --accent-hover: #27272a;
+    --on-accent: #ffffff;
+    --accent-subtle: rgba(63, 63, 70, 0.08);
+    --accent-glow: rgba(63, 63, 70, 0.16);
+    --coral: #2563eb;
+    --coral-fill: #2563eb;
+    --coral-fill-hover: #1d4ed8;
+    --on-coral: #ffffff;
+    --coral-subtle: rgba(37, 99, 235, 0.12);
+    --danger: #dc2626;
+    --danger-hover: #b91c1c;
+    --success: #16a34a;
+    --warning: #b45309;
+    --warning-subtle: rgba(180, 83, 9, 0.12);
+    --border: #e4e4e7;
+    --border-light: #f0f0f1;
+    --code-bg: #f4f4f5;
+    --sidebar-bg: #ededee;
+    --shadow-sm: 0 1px 2px rgba(24,24,27,0.05);
+    --shadow-md: 0 2px 8px rgba(24,24,27,0.07), 0 1px 2px rgba(24,24,27,0.05);
+    --shadow-lg: 0 4px 16px rgba(24,24,27,0.10), 0 2px 4px rgba(24,24,27,0.05);
+    --badge-active: rgba(22, 163, 74, 0.16);
+    --badge-completed: rgba(63, 63, 70, 0.14);
+    --badge-merged: rgba(37, 99, 235, 0.16);
+    --badge-error: rgba(220, 38, 38, 0.14);
+  }
+  @media (prefers-color-scheme: dark) {
+    [data-theme="graphite"] {
+      --bg: #18181b;
+      --card: #232327;
+      --text: #f4f4f5;
+      --text-secondary: #a1a1aa;
+      --accent: #d4d4d8;
+      --accent-hover: #e4e4e7;
+      --on-accent: #1c1c1f;
+      --accent-subtle: rgba(212, 212, 216, 0.14);
+      --accent-glow: rgba(212, 212, 216, 0.20);
+      --coral: #60a5fa;
+      --coral-fill: #60a5fa;
+      --coral-fill-hover: #93c5fd;
+      --on-coral: #0a1f3d;
+      --coral-subtle: rgba(96, 165, 250, 0.16);
+      --danger: #f87171;
+      --danger-hover: #ef4444;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --warning-subtle: rgba(251, 191, 36, 0.14);
+      --border: #3f3f46;
+      --border-light: #2e2e33;
+      --code-bg: #27272a;
+      --sidebar-bg: #1d1d20;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow-md: 0 2px 8px rgba(0,0,0,0.36), 0 1px 2px rgba(0,0,0,0.24);
+      --shadow-lg: 0 4px 16px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.24);
+      --badge-active: rgba(52, 211, 153, 0.20);
+      --badge-completed: rgba(212, 212, 216, 0.18);
+      --badge-merged: rgba(96, 165, 250, 0.18);
+      --badge-error: rgba(248, 113, 113, 0.20);
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;
@@ -828,7 +964,7 @@
   // Apply saved theme before first paint to avoid a flash of the wrong palette
   (function () {
     try {
-      var t = localStorage.getItem('escriba-theme') || 'teal';
+      var t = localStorage.getItem('escriba-theme') || 'ink';
       document.documentElement.setAttribute('data-theme', t);
     } catch (e) { document.documentElement.setAttribute('data-theme', 'teal'); }
   })();
@@ -979,6 +1115,24 @@
               <span class="theme-swatch-dot" style="background:#faf9f6;"></span>
             </span>
             <span class="theme-swatch-desc">Calm, writerly. Slate ink on warm paper with an ochre highlight.</span>
+          </button>
+          <button type="button" class="theme-swatch" data-theme-value="indigo" onclick="setTheme('indigo')">
+            <span class="theme-swatch-name">Indigo</span>
+            <span class="theme-swatch-dots">
+              <span class="theme-swatch-dot" style="background:#4f46e5;"></span>
+              <span class="theme-swatch-dot" style="background:#f59e0b;"></span>
+              <span class="theme-swatch-dot" style="background:#f5f5fb;"></span>
+            </span>
+            <span class="theme-swatch-desc">Cool and premium. Indigo primary with a warm amber AI accent.</span>
+          </button>
+          <button type="button" class="theme-swatch" data-theme-value="graphite" onclick="setTheme('graphite')">
+            <span class="theme-swatch-name">Graphite</span>
+            <span class="theme-swatch-dots">
+              <span class="theme-swatch-dot" style="background:#3f3f46;"></span>
+              <span class="theme-swatch-dot" style="background:#2563eb;"></span>
+              <span class="theme-swatch-dot" style="background:#f4f4f5;"></span>
+            </span>
+            <span class="theme-swatch-desc">Minimal monochrome. Neutral graphite UI with a blue AI accent.</span>
           </button>
         </div>
         <p class="theme-swatch-desc" style="margin-top:10px;">Light or dark variant follows your macOS appearance automatically.</p>
@@ -2189,7 +2343,7 @@ async function showSettingsView() {
 
 // --- Theme switching (cosmetic, stored client-side) ---
 function getTheme() {
-  try { return localStorage.getItem('escriba-theme') || 'teal'; } catch (e) { return 'teal'; }
+  try { return localStorage.getItem('escriba-theme') || 'ink'; } catch (e) { return 'ink'; }
 }
 function setTheme(name) {
   document.documentElement.setAttribute('data-theme', name);
