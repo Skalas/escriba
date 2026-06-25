@@ -5,48 +5,142 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Escriba</title>
 <style>
-  :root {
-    --bg: #f5f5f7;
+  :root, [data-theme="teal"] {
+    /* Teal + coral palette — teal = primary/neutral, coral = AI/highlight */
+    --bg: #eef3f2;
     --card: #ffffff;
-    --text: #1d1d1f;
-    --text-secondary: #86868b;
-    --accent: #007aff;
-    --accent-hover: #0056b3;
-    --accent-subtle: rgba(0, 122, 255, 0.08);
-    --danger: #ff3b30;
-    --danger-hover: #d32f2f;
-    --success: #34c759;
-    --border: #d2d2d7;
-    --border-light: #e8e8ed;
-    --code-bg: #f0f0f2;
-    --sidebar-bg: #f0f0f2;
-    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
-    --shadow-md: 0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
-    --shadow-lg: 0 4px 16px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+    --text: #16201e;
+    --text-secondary: #5d716d;
+    --accent: #0f766e;
+    --accent-hover: #115e59;
+    --on-accent: #ffffff;
+    --accent-subtle: rgba(15, 118, 110, 0.08);
+    --accent-glow: rgba(15, 118, 110, 0.18);
+    --coral: #f97316;
+    --coral-fill: #f97316;
+    --coral-fill-hover: #ea580c;
+    --on-coral: #3a1705;
+    --coral-subtle: rgba(249, 115, 22, 0.10);
+    --danger: #ef4444;
+    --danger-hover: #dc2626;
+    --success: #16a34a;
+    --warning: #b45309;
+    --warning-subtle: rgba(180, 83, 9, 0.12);
+    --border: #d3e1de;
+    --border-light: #e6efed;
+    --code-bg: #eef4f2;
+    --sidebar-bg: #e7f0ee;
+    --shadow-sm: 0 1px 2px rgba(15,40,36,0.05);
+    --shadow-md: 0 2px 8px rgba(15,40,36,0.07), 0 1px 2px rgba(15,40,36,0.05);
+    --shadow-lg: 0 4px 16px rgba(15,40,36,0.10), 0 2px 4px rgba(15,40,36,0.05);
     --radius: 12px;
     --radius-sm: 8px;
-    --badge-active: #34c75930;
-    --badge-completed: #007aff20;
-    --badge-merged: #af52de20;
-    --badge-error: #ff3b3020;
-    --sidebar-width: 300px;
+    --badge-active: rgba(22, 163, 74, 0.18);
+    --badge-completed: rgba(15, 118, 110, 0.16);
+    --badge-merged: rgba(249, 115, 22, 0.16);
+    --badge-error: rgba(239, 68, 68, 0.16);
+    --sidebar-width: 328px;
     --transition-fast: 150ms ease;
     --transition-normal: 200ms ease;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #1c1c1e;
-      --card: #2c2c2e;
-      --text: #f5f5f7;
-      --text-secondary: #98989d;
-      --border: #48484a;
-      --border-light: #3a3a3c;
-      --code-bg: #3a3a3c;
-      --sidebar-bg: #252527;
-      --accent-subtle: rgba(0, 122, 255, 0.12);
-      --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
-      --shadow-md: 0 2px 8px rgba(0,0,0,0.24), 0 1px 2px rgba(0,0,0,0.16);
-      --shadow-lg: 0 4px 16px rgba(0,0,0,0.32), 0 2px 4px rgba(0,0,0,0.16);
+    :root, [data-theme="teal"] {
+      --bg: #0f1a19;
+      --card: #182624;
+      --text: #e7efed;
+      --text-secondary: #93a8a4;
+      --accent: #2dd4bf;
+      --accent-hover: #5eead4;
+      --on-accent: #062b27;
+      --accent-subtle: rgba(45, 212, 191, 0.14);
+      --accent-glow: rgba(45, 212, 191, 0.22);
+      --coral: #fb923c;
+      --coral-fill: #fb923c;
+      --coral-fill-hover: #f97316;
+      --on-coral: #2b1206;
+      --coral-subtle: rgba(251, 146, 60, 0.16);
+      --success: #34d399;
+      --warning: #fbbf24;
+      --warning-subtle: rgba(251, 191, 36, 0.14);
+      --border: #2c3e3b;
+      --border-light: #243431;
+      --code-bg: #1d2c2a;
+      --sidebar-bg: #13201e;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow-md: 0 2px 8px rgba(0,0,0,0.36), 0 1px 2px rgba(0,0,0,0.24);
+      --shadow-lg: 0 4px 16px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.24);
+      --badge-active: rgba(52, 211, 153, 0.20);
+      --badge-completed: rgba(45, 212, 191, 0.18);
+      --badge-merged: rgba(251, 146, 60, 0.18);
+      --badge-error: rgba(248, 113, 113, 0.20);
+    }
+  }
+
+  /* Ink editorial theme — slate ink on warm paper, ochre highlight (scribe) */
+  [data-theme="ink"] {
+    --bg: #faf9f6;
+    --card: #ffffff;
+    --text: #1f1d1a;
+    --text-secondary: #6b6358;
+    --accent: #334155;
+    --accent-hover: #1e293b;
+    --on-accent: #ffffff;
+    --accent-subtle: rgba(51, 65, 85, 0.07);
+    --accent-glow: rgba(51, 65, 85, 0.18);
+    --coral: #b45309;
+    --coral-fill: #b45309;
+    --coral-fill-hover: #92400e;
+    --on-coral: #ffffff;
+    --coral-subtle: rgba(180, 83, 9, 0.10);
+    --danger: #dc2626;
+    --danger-hover: #b91c1c;
+    --success: #15803d;
+    --warning: #b45309;
+    --warning-subtle: rgba(180, 83, 9, 0.12);
+    --border: #e7e2d8;
+    --border-light: #f0ece3;
+    --code-bg: #f3f0e9;
+    --sidebar-bg: #f4f1ea;
+    --shadow-sm: 0 1px 2px rgba(60,50,35,0.06);
+    --shadow-md: 0 2px 8px rgba(60,50,35,0.08), 0 1px 2px rgba(60,50,35,0.06);
+    --shadow-lg: 0 4px 16px rgba(60,50,35,0.12), 0 2px 4px rgba(60,50,35,0.06);
+    --badge-active: rgba(21, 128, 61, 0.16);
+    --badge-completed: rgba(51, 65, 85, 0.14);
+    --badge-merged: rgba(180, 83, 9, 0.16);
+    --badge-error: rgba(220, 38, 38, 0.14);
+  }
+  @media (prefers-color-scheme: dark) {
+    [data-theme="ink"] {
+      --bg: #1a1917;
+      --card: #252320;
+      --text: #ece7dd;
+      --text-secondary: #a89f90;
+      --accent: #94a3b8;
+      --accent-hover: #cbd5e1;
+      --on-accent: #1a1917;
+      --accent-subtle: rgba(148, 163, 184, 0.16);
+      --accent-glow: rgba(148, 163, 184, 0.22);
+      --coral: #d97706;
+      --coral-fill: #d97706;
+      --coral-fill-hover: #f59e0b;
+      --on-coral: #2a1705;
+      --coral-subtle: rgba(217, 119, 6, 0.16);
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --success: #4ade80;
+      --warning: #fbbf24;
+      --warning-subtle: rgba(251, 191, 36, 0.14);
+      --border: #3a362f;
+      --border-light: #2f2c26;
+      --code-bg: #2c2925;
+      --sidebar-bg: #1f1d1a;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow-md: 0 2px 8px rgba(0,0,0,0.36), 0 1px 2px rgba(0,0,0,0.24);
+      --shadow-lg: 0 4px 16px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.24);
+      --badge-active: rgba(74, 222, 128, 0.20);
+      --badge-completed: rgba(148, 163, 184, 0.18);
+      --badge-merged: rgba(217, 119, 6, 0.18);
+      --badge-error: rgba(248, 113, 113, 0.20);
     }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -134,7 +228,7 @@
     color: var(--text);
     margin-bottom: 8px;
   }
-  .search-box:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,122,255,0.12); }
+  .search-box:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
 
   /* Settings */
   .settings-card { margin-bottom: 16px; }
@@ -160,7 +254,7 @@
     background: var(--bg);
     color: var(--text);
   }
-  .settings-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,122,255,0.12); }
+  .settings-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
   .settings-toggle { position: relative; width: 44px; height: 24px; }
   .settings-toggle input { opacity: 0; width: 0; height: 0; }
   .settings-toggle .slider {
@@ -173,12 +267,12 @@
   .settings-toggle input:checked + .slider { background: var(--accent); }
   .settings-toggle input:checked + .slider::before { transform: translateX(20px); }
   .settings-banner { padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
-  .settings-banner.success { background: #34c75920; color: var(--success); }
-  .settings-banner.error { background: #ff3b3018; color: var(--danger); }
-  .settings-banner.warning { background: #ff990020; color: #ff9900; }
+  .settings-banner.success { background: var(--badge-active); color: var(--success); }
+  .settings-banner.error { background: var(--badge-error); color: var(--danger); }
+  .settings-banner.warning { background: var(--warning-subtle); color: var(--warning); }
   .env-status { font-size: 11px; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
-  .env-set { background: #34c75920; color: var(--success); }
-  .env-unset { background: #ff3b3018; color: var(--danger); }
+  .env-set { background: var(--badge-active); color: var(--success); }
+  .env-unset { background: var(--badge-error); color: var(--danger); }
   details.advanced-settings summary {
     font-size: 14px; font-weight: 600; color: var(--text-secondary); cursor: pointer;
     padding: 8px 0; text-transform: uppercase; letter-spacing: 0.5px;
@@ -264,9 +358,9 @@
     gap: 10px;
   }
   .session-item:hover { background: var(--accent-subtle); }
-  .session-item.selected { background: var(--accent); color: white; box-shadow: var(--shadow-sm); }
+  .session-item.selected { background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-sm); }
   .session-item.selected .session-meta,
-  .session-item.selected .session-badge { color: rgba(255,255,255,0.8); }
+  .session-item.selected .session-badge { color: var(--on-accent); opacity: 0.78; }
   .session-checkbox {
     margin-top: 3px;
     width: 18px;
@@ -287,16 +381,21 @@
     word-break: break-word;
     overflow-wrap: anywhere;
   }
-  .session-rename-btn {
-    display: none; background: none; border: none; padding: 2px;
-    cursor: pointer; color: var(--text-secondary); line-height: 0;
-    border-radius: 4px; transition: color var(--transition-fast);
-    flex-shrink: 0;
+  .session-actions {
+    display: none; gap: 1px; flex-shrink: 0; margin-top: 1px; align-items: flex-start;
   }
-  .session-rename-btn:hover { color: var(--accent); }
-  .session-item:hover .session-rename-btn { display: inline-flex; }
-  .session-item.selected .session-rename-btn { display: inline-flex; color: rgba(255,255,255,0.7); }
-  .session-item.selected .session-rename-btn:hover { color: white; }
+  .session-item:hover .session-actions { display: inline-flex; }
+  .session-action-btn {
+    background: none; border: none; padding: 5px;
+    cursor: pointer; color: var(--text-secondary); line-height: 0;
+    border-radius: 6px; transition: color var(--transition-fast), background var(--transition-fast);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .session-rename-btn:hover { color: var(--accent); background: var(--accent-subtle); }
+  .session-delete-btn:hover { color: var(--danger); background: var(--badge-error); }
+  .session-item.selected .session-action-btn { color: var(--on-accent); opacity: 0.65; }
+  .session-item.selected .session-rename-btn:hover { opacity: 1; background: rgba(255,255,255,0.14); }
+  .session-item.selected .session-delete-btn:hover { opacity: 1; color: #ffd9d4; background: rgba(255,255,255,0.14); }
   .session-meta {
     font-size: 11px;
     color: var(--text-secondary);
@@ -338,7 +437,7 @@
     padding: 3px 6px; font-size: 11px; font-weight: 600; border-radius: 4px;
     line-height: 1;
   }
-  .btn-edit-save { background: var(--accent); color: white; }
+  .btn-edit-save { background: var(--accent); color: var(--on-accent); }
   .btn-edit-save:hover { background: var(--accent-hover); }
   .btn-edit-cancel { background: var(--code-bg); color: var(--text-secondary); }
   .btn-edit-cancel:hover { background: var(--border-light); }
@@ -353,26 +452,29 @@
   .sidebar-footer button { flex: 1; font-size: 12px; padding: 8px 8px; min-width: 0; font-weight: 600; }
 
   /* Sidebar collapse toggle (in main area) */
+  /* Expand handle — only visible when the sidebar is collapsed, docked top-left */
   .sidebar-toggle {
     position: fixed;
-    left: 4px;
-    top: 50%;
-    transform: translateY(-50%);
+    left: 12px;
+    top: 14px;
     z-index: 100;
-    background: var(--sidebar-bg);
+    background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 0 8px 8px 0;
-    padding: 12px 6px;
+    border-radius: var(--radius-sm);
+    padding: 8px;
     cursor: pointer;
     color: var(--text-secondary);
-    transition: left var(--transition-normal), background var(--transition-fast), color var(--transition-fast);
+    box-shadow: var(--shadow-sm);
+    transition: background var(--transition-fast), color var(--transition-fast);
     line-height: 0;
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
   }
   .sidebar-toggle:hover { background: var(--border-light); color: var(--text); }
-  .sidebar-toggle.open { left: calc(var(--sidebar-width) - 1px); }
+  body.sidebar-collapsed .sidebar-toggle { display: flex; }
+  body.sidebar-collapsed .main { padding-left: 60px; }
+  .header-actions { display: inline-flex; align-items: center; gap: 2px; }
 
   /* Main area */
   .main {
@@ -424,7 +526,7 @@
   }
 
   #error-banner {
-    background: #ff3b3018; color: var(--danger); padding: 12px 16px;
+    background: var(--badge-error); color: var(--danger); padding: 12px 16px;
     border-radius: 10px; margin-bottom: 16px; font-size: 14px; display: none;
     border-left: 3px solid var(--danger);
   }
@@ -460,8 +562,8 @@
   }
   button:active:not(:disabled) { transform: scale(0.97); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-start { background: var(--accent); color: white; }
-  .btn-start:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 2px 8px rgba(0, 122, 255, 0.25); }
+  .btn-start { background: var(--accent); color: var(--on-accent); }
+  .btn-start:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 2px 8px var(--accent-glow); }
   .btn-stop { background: var(--danger); color: white; }
   .btn-stop:hover:not(:disabled) { background: var(--danger-hover); box-shadow: 0 2px 8px rgba(255, 59, 48, 0.25); }
   .btn-secondary { background: var(--code-bg); color: var(--text); }
@@ -500,7 +602,7 @@
   }
   .segment.clickable { cursor: pointer; }
   .segment.clickable:hover { background: var(--accent-subtle); }
-  .segment.playing { background: rgba(0, 122, 255, 0.08); border-left: 3px solid var(--accent); padding-left: 29px; }
+  .segment.playing { background: var(--accent-subtle); border-left: 3px solid var(--accent); padding-left: 29px; }
   .segment-time {
     color: var(--accent); font-size: 12px; font-weight: 600;
     font-variant-numeric: tabular-nums; margin-right: 8px;
@@ -538,10 +640,10 @@
     resize: vertical; min-height: 60px; margin-bottom: 12px;
   }
   #prompt-input::placeholder { color: var(--text-secondary); }
-  #prompt-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15); }
+  #prompt-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
 
-  .btn-generate { background: var(--success); color: white; display: inline-flex; align-items: center; gap: 8px; }
-  .btn-generate:hover:not(:disabled) { background: #2db84d; box-shadow: 0 2px 8px rgba(52, 199, 89, 0.25); }
+  .btn-generate { background: var(--coral-fill); color: var(--on-coral); display: inline-flex; align-items: center; gap: 8px; }
+  .btn-generate:hover:not(:disabled) { background: var(--coral-fill-hover); box-shadow: 0 2px 8px var(--coral-subtle); }
   .btn-generate.loading { pointer-events: none; opacity: 0.7; }
 
   #notes-output {
@@ -564,7 +666,7 @@
     color: var(--text); transition: all var(--transition-fast); user-select: none;
   }
   .prompt-chip:hover { border-color: var(--accent); background: var(--accent-subtle); }
-  .prompt-chip.active { background: var(--accent); color: white; border-color: var(--accent); box-shadow: 0 1px 4px rgba(0, 122, 255, 0.2); }
+  .prompt-chip.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); box-shadow: 0 1px 4px var(--accent-glow); }
 
   /* Markdown rendered notes */
   .notes-rendered {
@@ -635,23 +737,85 @@
     background: var(--bg); color: var(--text); width: 140px; text-align: center;
   }
   .shortcut-input:focus { outline: none; border-color: var(--accent); }
+
+  /* Theme picker (Appearance settings) */
+  .theme-options { display: flex; gap: 10px; flex-wrap: wrap; }
+  .theme-swatch {
+    flex: 1; min-width: 130px; cursor: pointer; border: 2px solid var(--border);
+    border-radius: var(--radius-sm); padding: 12px; background: var(--card);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    display: flex; flex-direction: column; gap: 8px; text-align: left;
+  }
+  .theme-swatch:hover { border-color: var(--accent); }
+  .theme-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+  .theme-swatch-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .theme-swatch-dots { display: flex; gap: 5px; }
+  .theme-swatch-dot { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.08); }
+  .theme-swatch-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
+
+  /* In-app modal (replaces native confirm/prompt) */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 2000;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    background: rgba(10, 15, 14, 0.45);
+    opacity: 0; pointer-events: none; transition: opacity var(--transition-normal);
+  }
+  .modal-overlay.visible { opacity: 1; pointer-events: auto; }
+  .modal {
+    background: var(--card); color: var(--text);
+    border: 1px solid var(--border-light); border-radius: var(--radius);
+    box-shadow: var(--shadow-lg); width: 100%; max-width: 420px;
+    padding: 22px 22px 18px;
+    transform: translateY(10px) scale(0.97);
+    transition: transform var(--transition-normal);
+  }
+  .modal-overlay.visible .modal { transform: none; }
+  .modal-icon {
+    width: 38px; height: 38px; border-radius: 10px; margin-bottom: 14px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--accent-subtle); color: var(--accent);
+  }
+  .modal-icon.danger { background: var(--badge-error); color: var(--danger); }
+  .modal-icon .icon { width: 20px; height: 20px; }
+  .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; letter-spacing: -0.2px; }
+  .modal p {
+    font-size: 14px; line-height: 1.55; color: var(--text-secondary);
+    margin-bottom: 18px; white-space: pre-wrap; word-break: break-word;
+  }
+  .modal-input {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); font-size: 14px; font-family: inherit;
+    background: var(--bg); color: var(--text); margin-bottom: 18px;
+  }
+  .modal-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .modal-actions button { padding: 9px 18px; }
 </style>
+<script>
+  // Apply saved theme before first paint to avoid a flash of the wrong palette
+  (function () {
+    try {
+      var t = localStorage.getItem('escriba-theme') || 'teal';
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { document.documentElement.setAttribute('data-theme', 'teal'); }
+  })();
+</script>
 </head>
 <body>
 
 <!-- AI availability banner -->
-<div id="ai-banner" style="display:none;background:#fff3cd;color:#856404;padding:10px 16px;font-size:13px;border-bottom:1px solid #ffc107;position:sticky;top:0;z-index:1000;gap:8px;align-items:center;justify-content:center;">
-  <svg class="icon" viewBox="0 0 24 24" style="stroke:#856404;flex-shrink:0;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+<div id="ai-banner" style="display:none;background:var(--warning-subtle);color:var(--warning);padding:10px 16px;font-size:13px;border-bottom:1px solid var(--warning);position:sticky;top:0;z-index:1000;gap:8px;align-items:center;justify-content:center;">
+  <svg class="icon" viewBox="0 0 24 24" style="stroke:currentColor;flex-shrink:0;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
   <span id="ai-banner-text"></span>
 </div>
 
-<!-- Sidebar toggle -->
-<button class="sidebar-toggle open" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle sidebar"><svg class="icon" viewBox="0 0 24 24" id="sidebar-toggle-icon"><polyline points="15 18 9 12 15 6"></polyline></svg></button>
+<!-- Expand handle (shown only when sidebar is collapsed) -->
+<button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Expand sidebar" title="Expand sidebar"><svg class="icon" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg></button>
 
 <!-- Sidebar -->
 <div class="sidebar" id="sidebar">
   <div class="sidebar-header">
-    <h1>Escriba <button class="btn-icon" onclick="showSettingsView()" title="Settings" aria-label="Settings"><svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg></button></h1>
+    <h1>Escriba <span class="header-actions"><button class="btn-icon" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Collapse sidebar"><svg class="icon icon-lg" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg></button><button class="btn-icon" onclick="showSettingsView()" title="Settings" aria-label="Settings"><svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg></button></span></h1>
     <div style="display:flex;justify-content:center;margin-top:10px;">
       <button class="btn-record" id="btn-record" onclick="toggleRecording()" title="Start recording" aria-label="Start recording">
         <span class="record-icon" id="record-icon"></span>
@@ -701,7 +865,7 @@
         <h3>Generate Notes (AI)</h3>
         <div class="prompt-chips" id="live-prompt-chips"></div>
         <textarea id="prompt-input" placeholder="Select prompts above and/or type your own..." rows="2"></textarea>
-        <button class="btn-generate" id="btn-notes" onclick="generateNotes()">Generate Notes</button>
+        <button class="btn-generate" id="btn-notes" onclick="generateNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes</button>
         <div id="notes-output"></div>
       </div>
     </div>
@@ -746,7 +910,7 @@
         <div class="prompt-chips" id="session-prompt-chips"></div>
         <textarea id="session-prompt-input" placeholder="Select prompts above and/or type your own..." rows="2"
           style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;"></textarea>
-        <button class="btn-generate" id="btn-session-notes" onclick="generateSessionNotes()">Generate Notes</button>
+        <button class="btn-generate" id="btn-session-notes" onclick="generateSessionNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes</button>
       </div>
       <div class="card">
         <h3>Transcript</h3>
@@ -763,6 +927,31 @@
     </header>
     <div id="settings-banner" class="settings-banner" style="display:none;"></div>
     <div class="content-area">
+      <div class="card settings-card">
+        <h3>Appearance</h3>
+        <div class="theme-options" id="theme-options">
+          <button type="button" class="theme-swatch" data-theme-value="teal" onclick="setTheme('teal')">
+            <span class="theme-swatch-name">Teal &amp; Coral</span>
+            <span class="theme-swatch-dots">
+              <span class="theme-swatch-dot" style="background:#0f766e;"></span>
+              <span class="theme-swatch-dot" style="background:#f97316;"></span>
+              <span class="theme-swatch-dot" style="background:#eef3f2;"></span>
+            </span>
+            <span class="theme-swatch-desc">Fresh, sonic, friendly. Teal primary with a coral AI accent.</span>
+          </button>
+          <button type="button" class="theme-swatch" data-theme-value="ink" onclick="setTheme('ink')">
+            <span class="theme-swatch-name">Ink Editorial</span>
+            <span class="theme-swatch-dots">
+              <span class="theme-swatch-dot" style="background:#334155;"></span>
+              <span class="theme-swatch-dot" style="background:#b45309;"></span>
+              <span class="theme-swatch-dot" style="background:#faf9f6;"></span>
+            </span>
+            <span class="theme-swatch-desc">Calm, writerly. Slate ink on warm paper with an ochre highlight.</span>
+          </button>
+        </div>
+        <p class="theme-swatch-desc" style="margin-top:10px;">Light or dark variant follows your macOS appearance automatically.</p>
+      </div>
+
       <div class="card settings-card">
         <h3>Audio</h3>
         <div class="settings-row">
@@ -971,6 +1160,20 @@
   </div>
 </div>
 
+<!-- In-app modal -->
+<div class="modal-overlay" id="app-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="app-modal-title">
+    <div class="modal-icon" id="app-modal-icon" style="display:none;"></div>
+    <h3 id="app-modal-title"></h3>
+    <p id="app-modal-message"></p>
+    <input type="text" class="modal-input" id="app-modal-input" style="display:none;">
+    <div class="modal-actions">
+      <button class="btn-secondary" id="app-modal-cancel" type="button">Cancel</button>
+      <button class="btn-start" id="app-modal-confirm" type="button">OK</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = '';
 let polling = null;
@@ -985,6 +1188,62 @@ let allSessions = [];
 let allFolders = [];
 let collapsedFolders = new Set();
 let searchQuery = '';
+
+// --- In-app modal (themed replacement for native confirm/prompt) ---
+let _modalResolve = null;
+let _modalIsPrompt = false;
+const ICON_WARNING = '<svg class="icon" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
+const ICON_QUESTION = '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
+function _modalCancelValue() { return _modalIsPrompt ? null : false; }
+function _resolveModal(result) {
+  const ov = document.getElementById('app-modal');
+  ov.classList.remove('visible');
+  document.removeEventListener('keydown', _modalKeydown);
+  const r = _modalResolve; _modalResolve = null;
+  if (r) r(result);
+}
+function _modalKeydown(e) {
+  if (e.key === 'Escape') { e.preventDefault(); _resolveModal(_modalCancelValue()); }
+  else if (e.key === 'Enter') {
+    e.preventDefault();
+    _resolveModal(_modalIsPrompt ? document.getElementById('app-modal-input').value : true);
+  }
+}
+function _openModal(opts) {
+  return new Promise(resolve => {
+    if (_modalResolve) _resolveModal(_modalCancelValue());
+    _modalResolve = resolve;
+    _modalIsPrompt = !!opts.prompt;
+    const ov = document.getElementById('app-modal');
+    const iconEl = document.getElementById('app-modal-icon');
+    if (opts.prompt) { iconEl.style.display = 'none'; }
+    else {
+      iconEl.style.display = 'flex';
+      iconEl.className = 'modal-icon' + (opts.danger ? ' danger' : '');
+      iconEl.innerHTML = opts.danger ? ICON_WARNING : ICON_QUESTION;
+    }
+    document.getElementById('app-modal-title').textContent = opts.title || '';
+    const msg = document.getElementById('app-modal-message');
+    msg.textContent = opts.message || '';
+    msg.style.display = opts.message ? '' : 'none';
+    const inp = document.getElementById('app-modal-input');
+    if (_modalIsPrompt) { inp.style.display = ''; inp.value = opts.value || ''; inp.placeholder = opts.placeholder || ''; }
+    else { inp.style.display = 'none'; }
+    const confirmBtn = document.getElementById('app-modal-confirm');
+    const cancelBtn = document.getElementById('app-modal-cancel');
+    confirmBtn.textContent = opts.confirmText || 'OK';
+    cancelBtn.textContent = opts.cancelText || 'Cancel';
+    confirmBtn.className = opts.danger ? 'btn-stop' : 'btn-start';
+    confirmBtn.onclick = () => _resolveModal(_modalIsPrompt ? inp.value : true);
+    cancelBtn.onclick = () => _resolveModal(_modalCancelValue());
+    ov.onclick = (e) => { if (e.target === ov) _resolveModal(_modalCancelValue()); };
+    ov.classList.add('visible');
+    document.addEventListener('keydown', _modalKeydown);
+    setTimeout(() => { (_modalIsPrompt ? inp : confirmBtn).focus(); }, 60);
+  });
+}
+function confirmDialog(opts) { return _openModal(Object.assign({ danger: false, confirmText: 'OK' }, opts)); }
+function promptDialog(opts) { return _openModal(Object.assign({ prompt: true, danger: false, confirmText: 'Create' }, opts || {})); }
 
 // Keyboard shortcuts (user-configurable, stored in localStorage)
 let shortcuts = JSON.parse(localStorage.getItem('escriba-shortcuts') || '{}');
@@ -1034,17 +1293,15 @@ async function apiCall(path, opts) {
 
 // --- Sidebar ---
 function toggleSidebar() {
-  const sidebar = document.getElementById('sidebar');
-  const toggle = document.getElementById('sidebar-toggle');
-  sidebar.classList.toggle('collapsed');
-  const icon = document.getElementById('sidebar-toggle-icon');
-  if (sidebar.classList.contains('collapsed')) {
-    toggle.classList.remove('open');
-    icon.innerHTML = '<polyline points="9 18 15 12 9 6"></polyline>';
-  } else {
-    toggle.classList.add('open');
-    icon.innerHTML = '<polyline points="15 18 9 12 15 6"></polyline>';
-  }
+  const collapsed = document.getElementById('sidebar').classList.toggle('collapsed');
+  document.body.classList.toggle('sidebar-collapsed', collapsed);
+  try { localStorage.setItem('escriba-sidebar-collapsed', collapsed ? '1' : '0'); } catch (e) {}
+}
+function restoreSidebarState() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem('escriba-sidebar-collapsed') === '1'; } catch (e) {}
+  document.getElementById('sidebar').classList.toggle('collapsed', collapsed);
+  document.body.classList.toggle('sidebar-collapsed', collapsed);
 }
 
 // --- Recording ---
@@ -1231,7 +1488,10 @@ function renderSessionItem(s) {
       <div class="session-name" data-session-id="${escAttr(s.id)}" title="${escAttr(s.name)}">${escHtml(s.name)}</div>
       <div class="session-meta">${date} ${time} &middot; ${dur} &middot; ${s.segment_count || 0} segs</div>
     </div>
-    <button class="session-rename-btn" onclick="event.stopPropagation();startRenameById('${escAttr(s.id)}')" title="Rename" aria-label="Rename session"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg></button>
+    <div class="session-actions">
+      <button class="session-action-btn session-rename-btn" onclick="event.stopPropagation();startRenameById('${escAttr(s.id)}')" title="Rename" aria-label="Rename session"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg></button>
+      <button class="session-action-btn session-delete-btn" onclick="event.stopPropagation();deleteSessionById('${escAttr(s.id)}')" title="Delete" aria-label="Delete session"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
+    </div>
   </div>`;
 }
 
@@ -1392,7 +1652,7 @@ async function moveToFolder(folderId) {
 
 async function createFolderAndMove() {
   document.getElementById('move-dropdown').classList.remove('visible');
-  const name = prompt('Folder name:');
+  const name = await promptDialog({ title: 'New folder', placeholder: 'Folder name', confirmText: 'Create' });
   if (!name || !name.trim()) return;
   const res = await apiCall('/api/folders', {
     method: 'POST',
@@ -1436,7 +1696,7 @@ function startFolderRename(folderId, headerEl) {
 }
 
 async function deleteFolder(folderId) {
-  if (!confirm('Delete this folder? Sessions will be moved to Unfiled.')) return;
+  if (!await confirmDialog({ title: 'Delete folder?', message: 'Sessions in this folder will be moved to Unfiled.', confirmText: 'Delete', danger: true })) return;
   await apiCall('/api/folders/' + folderId, { method: 'DELETE' });
   refreshSessionList();
 }
@@ -1545,7 +1805,7 @@ function startTitleRename() {
 async function mergeSelected() {
   if (checkedSessions.size < 2) return;
   const n = checkedSessions.size;
-  if (!confirm(`Merge ${n} sessions into one?\n\nTimestamps and audio will be stitched chronologically, and a new title will be generated from the combined transcript.`)) return;
+  if (!await confirmDialog({ title: `Merge ${n} recordings?`, message: 'Timestamps and audio will be stitched chronologically, and a new title will be generated from the combined transcript.', confirmText: 'Merge' })) return;
   const banner = showMergeProgress();
   try {
     const res = await apiCall('/api/sessions/merge', {
@@ -1576,9 +1836,20 @@ function showMergeProgress() {
   return el;
 }
 
+async function deleteSessionById(id) {
+  const s = allSessions.find(x => x.id === id);
+  const name = s && s.name ? `"${s.name}"` : 'this session';
+  if (!await confirmDialog({ title: 'Delete recording?', message: `${name} will be permanently deleted. This cannot be undone.`, confirmText: 'Delete', danger: true })) return;
+  const res = await apiCall('/api/sessions/' + id, { method: 'DELETE' });
+  if (res && res.ok === false) { showError(res.error || 'Failed to delete session'); return; }
+  checkedSessions.delete(id);
+  if (selectedSessionId === id) { selectedSessionId = null; showEmptyView(); }
+  refreshSessionList();
+}
+
 async function deleteSelected() {
   if (checkedSessions.size === 0) return;
-  if (!confirm(`Delete ${checkedSessions.size} session(s)?`)) return;
+  if (!await confirmDialog({ title: `Delete ${checkedSessions.size} recording(s)?`, message: 'This cannot be undone.', confirmText: 'Delete', danger: true })) return;
   for (const id of checkedSessions) await apiCall('/api/sessions/' + id, { method: 'DELETE' });
   if (checkedSessions.has(selectedSessionId)) { selectedSessionId = null; showEmptyView(); }
   checkedSessions.clear();
@@ -1597,7 +1868,7 @@ async function saveNotes() {
 
 async function clearNotes() {
   if (!selectedSessionId) return;
-  if (!confirm('Clear all notes for this session?')) return;
+  if (!await confirmDialog({ title: 'Clear notes?', message: 'All notes for this recording will be removed.', confirmText: 'Clear', danger: true })) return;
   document.getElementById('session-notes-input').value = '';
   await saveNotes();
   renderNotesView('');
@@ -1626,7 +1897,7 @@ async function generateSessionNotes() {
   const btn = document.getElementById('btn-session-notes');
   const promptVal = document.getElementById('session-prompt-input').value.trim();
   const notesInput = document.getElementById('session-notes-input');
-  btn.classList.add('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:white;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
+  btn.classList.add('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:currentColor;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
   try {
     const res = await apiCall('/api/sessions/' + selectedSessionId + '/generate-notes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1639,14 +1910,14 @@ async function generateSessionNotes() {
       renderNotesView(notesInput.value);
     } else showError(res.error || 'Failed to generate notes');
   } catch (e) { showError('Error: ' + e.message); }
-  finally { btn.classList.remove('loading'); btn.innerHTML = 'Generate Notes'; }
+  finally { btn.classList.remove('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes'; }
 }
 
 async function generateNotes() {
   const btn = document.getElementById('btn-notes');
   const out = document.getElementById('notes-output');
   const promptVal = document.getElementById('prompt-input').value.trim();
-  btn.classList.add('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:white;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
+  btn.classList.add('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:currentColor;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
   out.className = 'visible'; out.textContent = 'Thinking...';
   try {
     const res = await apiCall('/api/notes', {
@@ -1656,7 +1927,7 @@ async function generateNotes() {
     if (res.ok) { out.innerHTML = renderMarkdown(res.notes); out.classList.add('notes-rendered'); }
     else out.textContent = 'Error: ' + (res.error || 'Unknown');
   } catch (e) { out.textContent = 'Error: ' + e.message; }
-  finally { btn.classList.remove('loading'); btn.innerHTML = 'Generate Notes'; }
+  finally { btn.classList.remove('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes'; }
 }
 
 // --- Markdown rendering ---
@@ -1729,7 +2000,24 @@ async function showSettingsView() {
   document.getElementById('empty-view').style.display = 'none';
   document.getElementById('settings-view').style.display = '';
   hideSettingsBanner();
+  syncThemeSwatches();
   await loadSettings();
+}
+
+// --- Theme switching (cosmetic, stored client-side) ---
+function getTheme() {
+  try { return localStorage.getItem('escriba-theme') || 'teal'; } catch (e) { return 'teal'; }
+}
+function setTheme(name) {
+  document.documentElement.setAttribute('data-theme', name);
+  try { localStorage.setItem('escriba-theme', name); } catch (e) {}
+  syncThemeSwatches();
+}
+function syncThemeSwatches() {
+  const current = getTheme();
+  document.querySelectorAll('.theme-swatch').forEach(function (el) {
+    el.classList.toggle('active', el.getAttribute('data-theme-value') === current);
+  });
 }
 
 async function loadSettings() {
@@ -2072,7 +2360,7 @@ function hideError() { document.getElementById('error-banner').classList.remove(
 
 // --- Re-transcribe ---
 async function splitSessionHere(sessionId, segmentId, timestampLabel) {
-  if (!confirm(`Split this session at ${timestampLabel}?\n\nThe recording will be cut in two and new titles will be generated for each half.`)) return;
+  if (!await confirmDialog({ title: `Split at ${timestampLabel}?`, message: 'The recording will be cut in two and new titles will be generated for each half.', confirmText: 'Split' })) return;
   hideError();
   const banner = showSplitProgress();
   try {
@@ -2110,7 +2398,7 @@ function showSplitProgress() {
 
 async function retranscribeSession() {
   if (!selectedSessionId) return;
-  if (!confirm('Re-transcribe this session from the saved audio? This will replace the current transcript.')) return;
+  if (!await confirmDialog({ title: 'Re-transcribe recording?', message: 'This will replace the current transcript with a fresh transcription from the saved audio.', confirmText: 'Re-transcribe', danger: true })) return;
   hideError();
   const btn = document.getElementById('btn-retranscribe');
   btn.disabled = true; btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Transcribing...';
@@ -2165,6 +2453,7 @@ async function checkAiAvailability() {
 }
 
 (async function init() {
+  restoreSidebarState();
   renderChips('live-prompt-chips', 'live');
   renderChips('session-prompt-chips', 'session');
   registerShortcuts();
