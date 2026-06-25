@@ -879,9 +879,9 @@
   <div id="live-view" style="display:none;">
     <header>
       <h2>Live Recording</h2>
-      <span id="status-badge" class="recording">
+      <span id="status-badge" class="idle">
         <span id="status-dot"></span>
-        <span id="status-text">Recording</span>
+        <span id="status-text">Idle</span>
       </span>
     </header>
     <div class="info-bar">
@@ -1547,6 +1547,8 @@ async function syncStatus() {
       recordBtn.title = 'Start recording';
       stopPolling();
     }
+    // Keep "Back to Live" in sync if recording starts/stops while viewing a session
+    document.getElementById('btn-back-to-live').style.display = isRecording ? '' : 'none';
     if (lastWasRecording && !isRecording) refreshSessionList();
     if (!lastWasRecording && isRecording) refreshSessionList();
     // Refresh periodically during recording so auto-generated names appear
@@ -2354,8 +2356,7 @@ async function downloadModel() {
 }
 
 function updateSettingsSaveState() {
-  const badge = document.getElementById('status-badge');
-  const isRecording = badge && badge.className === 'recording';
+  const isRecording = lastWasRecording;
   document.getElementById('btn-save-settings').disabled = isRecording;
   document.getElementById('settings-recording-warning').style.display = isRecording ? '' : 'none';
 }
@@ -2485,8 +2486,7 @@ function handleGlobalShortcut(e) {
   const combo = shortcutFromEvent(e);
   if (combo === shortcuts.record) {
     e.preventDefault();
-    const badge = document.getElementById('status-badge');
-    if (badge.className === 'recording') stopRecording();
+    if (lastWasRecording) stopRecording();
     else startRecording();
   } else if (combo === shortcuts.settings) {
     e.preventDefault();
@@ -2523,8 +2523,8 @@ function showSessionView() {
   document.getElementById('session-view').style.display = '';
   document.getElementById('empty-view').style.display = 'none';
   document.getElementById('settings-view').style.display = 'none';
-  const badge = document.getElementById('status-badge');
-  document.getElementById('btn-back-to-live').style.display = badge.className === 'recording' ? '' : 'none';
+  // Show "Back to Live" only when a recording is actually active.
+  document.getElementById('btn-back-to-live').style.display = lastWasRecording ? '' : 'none';
 }
 function showEmptyView() {
   document.getElementById('live-view').style.display = 'none';
@@ -2672,8 +2672,13 @@ async function loadPromptTemplates() {
   registerShortcuts();
   await refreshSessionList();
   const status = await apiCall('/api/status');
-  if (status.is_active) { lastWasRecording = true; showLiveView(); startPolling(); }
-  else showEmptyView();
+  if (status.is_active) {
+    lastWasRecording = true;
+    const badge = document.getElementById('status-badge');
+    badge.className = 'recording';
+    document.getElementById('status-text').textContent = 'Recording';
+    showLiveView(); startPolling();
+  } else showEmptyView();
   startBgSync();
   checkAiAvailability();
 })();
