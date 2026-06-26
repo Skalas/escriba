@@ -47,6 +47,7 @@ class AppState:
         self._lock = threading.RLock()
         self._download_lock = threading.Lock()
         self._stop_in_progress = False
+        self._start_in_progress = False
         self.config = config
         self.db = db
         self.session: TranscriptionSession | None = None
@@ -71,13 +72,24 @@ class AppState:
             session = self.session
             if session and session.is_active:
                 return {"ok": False, "error": "Already recording"}, 409
+            if self._start_in_progress:
+                return {"ok": False, "error": "Already recording"}, 409
 
             new_session = TranscriptionSession(self.config, database=self.db)
             if detected_app:
                 new_session.detected_app = detected_app
-            new_session.start()
             self.session = new_session
+            self._start_in_progress = True
+
+        try:
+            new_session.start()
+        finally:
+            with self._lock:
+                self._start_in_progress = False
+
+        with self._lock:
             if new_session.error:
+                self.session = None
                 return {"ok": False, "error": new_session.error}, 503
             return {"ok": True}, 200
 
@@ -272,7 +284,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     # --- Routing ---
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         params = parse_qs(parsed.query)
@@ -306,15 +318,15 @@ class _Handler(BaseHTTPRequestHandler):
                 if session_id:
                     self._respond(self._get_session_detail(session_id))
                 else:
-                    self._respond({"ok": False, "error": "Not found"}, 404)
+                    self._respond(({"ok": False, "error": "Not found"}, 404))
             else:
-                self._respond({"ok": False, "error": "Not found"}, 404)
+                self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
         except Exception as exc:
             self._respond_unexpected(exc)
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
@@ -355,13 +367,13 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/download-model":
                 self._respond(self._download_model(self._parse_json_body()))
             else:
-                self._respond({"ok": False, "error": "Not found"}, 404)
+                self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
         except Exception as exc:
             self._respond_unexpected(exc)
 
-    def do_PUT(self):
+    def do_PUT(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
@@ -375,13 +387,13 @@ class _Handler(BaseHTTPRequestHandler):
                 folder_id = path.split("/api/folders/")[1].rsplit("/rename", 1)[0]
                 self._respond(self._rename_folder(folder_id, self._parse_json_body()))
             else:
-                self._respond({"ok": False, "error": "Not found"}, 404)
+                self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
         except Exception as exc:
             self._respond_unexpected(exc)
 
-    def do_DELETE(self):
+    def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
@@ -391,15 +403,15 @@ class _Handler(BaseHTTPRequestHandler):
                 if folder_id:
                     self._respond(self._delete_folder(folder_id))
                 else:
-                    self._respond({"ok": False, "error": "Not found"}, 404)
+                    self._respond(({"ok": False, "error": "Not found"}, 404))
             elif path.startswith("/api/sessions/"):
                 session_id = path.split("/api/sessions/")[1]
                 if session_id:
                     self._respond(self._delete_session(session_id))
                 else:
-                    self._respond({"ok": False, "error": "Not found"}, 404)
+                    self._respond(({"ok": False, "error": "Not found"}, 404))
             else:
-                self._respond({"ok": False, "error": "Not found"}, 404)
+                self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
         except Exception as exc:
@@ -465,30 +477,47 @@ class _Handler(BaseHTTPRequestHandler):
         out_path.write_text(content, encoding="utf-8")
         return {"ok": True, "path": str(out_path)}, 200
 
-    def _serve_audio(self, session_id: str):
+    def _serve_audio(self, session_id: str) -> None:
         """Serve the WAV audio file for a session with HTTP Range support."""
-        db = self._get_db()
-        if not db:
-            self._json_response({"ok": False, "error": "Database not available"}, status=503)
-            return
+        db = self._require_db()
         session = db.get_session(session_id)
         if not session or not session.get("audio_path"):
-            self._json_response({"ok": False, "error": "No audio for this session"}, status=404)
-            return
+            raise ApiError("No audio for this session", 404)
         audio_path = Path(session["audio_path"])
         if not audio_path.exists():
-            self._json_response({"ok": False, "error": "Audio file not found"}, status=404)
-            return
+            raise ApiError("Audio file not found", 404)
 
         file_size = audio_path.stat().st_size
+        if file_size == 0:
+            raise ApiError("Audio file is empty", 416)
+
         range_header = self.headers.get("Range")
 
         if range_header:
-            range_spec = range_header.replace("bytes=", "")
-            parts = range_spec.split("-")
-            start = int(parts[0]) if parts[0] else 0
-            end = int(parts[1]) if parts[1] else file_size - 1
-            end = min(end, file_size - 1)
+            if not range_header.startswith("bytes="):
+                raise ApiError("Invalid Range header", 416)
+            range_spec = range_header[6:]
+            if "," in range_spec:
+                raise ApiError("Multiple ranges not supported", 416)
+            parts = range_spec.split("-", 1)
+            if len(parts) != 2:
+                raise ApiError("Invalid Range header", 416)
+            try:
+                if parts[0] == "":
+                    if not parts[1]:
+                        raise ValueError("empty suffix")
+                    suffix_len = int(parts[1])
+                    if suffix_len <= 0:
+                        raise ValueError("invalid suffix")
+                    start = max(file_size - suffix_len, 0)
+                    end = file_size - 1
+                else:
+                    start = int(parts[0])
+                    end = int(parts[1]) if parts[1] else file_size - 1
+                start = max(0, min(start, file_size - 1))
+                end = max(start, min(end, file_size - 1))
+            except ValueError as exc:
+                raise ApiError("Invalid Range header", 416) from exc
             length = end - start + 1
 
             self.send_response(206)

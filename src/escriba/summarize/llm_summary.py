@@ -201,14 +201,18 @@ def _is_transient_api_error(exc: BaseException) -> bool:
 
 def _call_with_timeout(func: Callable[[], T], timeout_seconds: float) -> T:
     """Run ``func`` on a worker thread and fail fast if it exceeds the deadline."""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(func)
-        try:
-            return future.result(timeout=timeout_seconds)
-        except concurrent.futures.TimeoutError as exc:
-            raise TimeoutError(
-                f"LLM call timed out after {timeout_seconds}s"
-            ) from exc
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(func)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except concurrent.futures.TimeoutError as exc:
+        future.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise TimeoutError(
+            f"LLM call timed out after {timeout_seconds}s"
+        ) from exc
+    else:
+        pool.shutdown(wait=False)
 
 
 def _retry_cloud_call(label: str, func: Callable[[], T]) -> T:

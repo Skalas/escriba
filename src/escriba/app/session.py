@@ -570,6 +570,9 @@ def _generate_custom_notes(
     from escriba.summarize.llm_summary import (
         DEFAULT_CLAUDE_MODEL,
         DEFAULT_GEMINI_MODEL,
+        _call_llm_claude,
+        _call_llm_gemini,
+        _call_llm_local,
         recommend_model,
         resolve_provider_and_model,
     )
@@ -591,15 +594,14 @@ def _generate_custom_notes(
             if not model_id:
                 logger.error("No local model available for notes")
                 return None
-            from escriba.summarize.llm_summary import _call_llm_local
 
             return _call_llm_local(full_prompt, model_id, max_tokens=4096)
         elif provider == "gemini":
             resolved_model = model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
-            return _call_gemini(full_prompt, resolved_model)
+            return _call_llm_gemini(full_prompt, resolved_model)
         elif provider == "claude":
             resolved_model = model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
-            return _call_claude(full_prompt, resolved_model)
+            return _call_llm_claude(full_prompt, resolved_model)
         else:
             if provider == "none":
                 logger.info("No AI provider available — skipping notes")
@@ -609,32 +611,6 @@ def _generate_custom_notes(
     except Exception as e:
         logger.error("Error generating notes: %s", e, exc_info=True)
         return None
-
-
-def _call_gemini(prompt: str, model_id: str) -> str | None:
-    from google import genai
-
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return "Error: GEMINI_API_KEY not set"
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(model=model_id, contents=prompt)
-    return response.text
-
-
-def _call_claude(prompt: str, model_id: str) -> str | None:
-    from anthropic import Anthropic
-
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return "Error: ANTHROPIC_API_KEY not set"
-    client = Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model=model_id,
-        max_tokens=4000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text
 
 
 def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
