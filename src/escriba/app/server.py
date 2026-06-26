@@ -86,12 +86,16 @@ class AppState:
         finally:
             with self._lock:
                 self._start_in_progress = False
+                if new_session.error:
+                    self.session = None
+                    response: tuple[dict[str, Any], int] = (
+                        {"ok": False, "error": new_session.error},
+                        503,
+                    )
+                else:
+                    response = ({"ok": True}, 200)
 
-        with self._lock:
-            if new_session.error:
-                self.session = None
-                return {"ok": False, "error": new_session.error}, 503
-            return {"ok": True}, 200
+        return response
 
     def begin_stop_recording(
         self,

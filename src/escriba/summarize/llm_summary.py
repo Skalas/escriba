@@ -207,12 +207,11 @@ def _call_with_timeout(func: Callable[[], T], timeout_seconds: float) -> T:
         return future.result(timeout=timeout_seconds)
     except concurrent.futures.TimeoutError as exc:
         future.cancel()
-        pool.shutdown(wait=False, cancel_futures=True)
         raise TimeoutError(
             f"LLM call timed out after {timeout_seconds}s"
         ) from exc
-    else:
-        pool.shutdown(wait=False)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _retry_cloud_call(label: str, func: Callable[[], T]) -> T:
