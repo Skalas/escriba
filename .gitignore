@@ -230,3 +230,5 @@ __marimo__/
 DerivedData/
 transcripts/
 .DS_Store
+# metate session handoff
+.metate/session.json

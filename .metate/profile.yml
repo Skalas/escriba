@@ -1,0 +1,61 @@
+# .metate/profile.yml — per-repo config for the `metate` pipeline.
+# The skill engines are codebase-agnostic; everything project-specific lives here.
+
+# --- gates ---------------------------------------------------------------
+fastGate: "uv run ruff check . && uv run pytest"                 # quick loop, run after each review round
+shipGate: "uv run ruff check . && uv run mypy . && uv run pytest"  # full pre-PR gate (mirrors CI)
+
+# --- implementer (the only writer) ---------------------------------------
+implementer:
+  backend: cursor          # cursor | codex | claude | gemini
+  model: auto              # blank = adapter default
+
+sessionFile: ".metate/session.json"
+isolation: none            # none | worktree
+
+# --- review (metate-review) -----------------------------------------------
+# Real invariants for THIS codebase, drawn from ROADMAP.md guiding principles
+# and Epic #12 (backend hardening). These are the actual failure modes.
+reviewFocus: |
+  - Shared mutable state (app_state in server.py) must be guarded — no
+    unsynchronized concurrent reads/writes; recording start/stop is single-writer
+    (one active session, never two). Model-download state must be atomic.
+  - DB mutations that span rows (split_session / merge_sessions in database.py)
+    run inside a single transaction + lock — never leave sessions/segments half-moved.
+  - LLM calls never hang the UI: mlx-lm calls serialized; Gemini/Claude calls have
+    a timeout and bounded retry/backoff. Failures degrade gracefully, don't crash.
+  - Local-first: on-device transcription/summarization is the default; cloud
+    providers (Gemini/Claude) stay strictly opt-in and never required to run.
+  - No framework creep: dashboard stays a single-file stdlib SPA (no bundler);
+    server stays stdlib http.server. Don't introduce frameworks casually.
+  - Core-loop changes (server.py, database.py, session.py) ship with tests.
+  - .env values never carry inline comments (python-dotenv parses them into the value).
+
+# --- prep (metate-prep) ---------------------------------------------------
+prep:
+  baseBranch: main
+  readingOrder:            # docs to read before building, in order
+    - ROADMAP.md
+    - CLAUDE.md
+    - README.md
+  techDebtFile: "ROADMAP.md"   # backlog + Epic #12 hardening items live here
+
+# --- smoke (metate-smoke) -------------------------------------------------
+# No automated e2e suite (menubar app). Behavior proof = run the app and exercise
+# the record → transcribe → summarize loop in the dashboard.
+smoke:
+  command: "uv run escriba app"   # launch app + dashboard at http://127.0.0.1:19876
+  seedCommand: ""                 # n/a — no fixture seed
+
+# --- aftercare (metate-aftercare) -----------------------------------------
+aftercare:
+  deliverables:
+    - ROADMAP.md           # update milestone checkboxes / "Where we are"
+    - CHANGELOG.md         # create/append the release feature list
+    - README.md            # keep feature list + version current
+
+# --- ship (metate-ship) ---------------------------------------------------
+ship:
+  prTarget: main
+  commitStyle: "conventional, bisectable, one per layer"
+  issueCloseKeyword: "Closes"   # PR body keyword for auto-close
