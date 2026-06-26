@@ -30,7 +30,7 @@ def list_audio_devices() -> dict[str, list[dict[str, str]]]:
         )
 
         # Parsear salida de ffmpeg
-        devices = {"inputs": [], "outputs": []}
+        devices: dict[str, list[dict[str, str]]] = {"inputs": [], "outputs": []}
         current_section = None
 
         # Debug: mostrar stderr completo para entender el formato

@@ -4,6 +4,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -192,7 +193,7 @@ class CaptureMetrics:
                 return 0.0
             return (self.errors / self.chunks_processed) * 100.0
 
-    def get_summary(self) -> dict[str, any]:
+    def get_summary(self) -> dict[str, Any]:
         """
         Obtiene un resumen de las métricas.
 
@@ -216,7 +217,7 @@ class CaptureMetrics:
                 "total_transcription_time_seconds": self.total_transcription_time,
             }
 
-    def try_get_summary(self, timeout_seconds: float = 0.5) -> dict[str, any] | None:
+    def try_get_summary(self, timeout_seconds: float = 0.5) -> dict[str, Any] | None:
         """
         Obtiene un resumen de métricas sin bloquear indefinidamente.
 

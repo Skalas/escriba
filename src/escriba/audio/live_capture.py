@@ -29,25 +29,31 @@ if TYPE_CHECKING:
     from escriba.config import AppConfig
 
 # Intentar importar StreamingTranscriberMPS (requiere openai-whisper y torch)
+MPS_AVAILABLE = False
+StreamingTranscriberMPS: Any = None
 try:
-    from escriba.transcribe.streaming_mps import StreamingTranscriberMPS
-
-    MPS_AVAILABLE = True
-except ImportError:
-    MPS_AVAILABLE = False
-    StreamingTranscriberMPS = None
-
-# Intentar importar StreamingTranscriberMLX (requiere mlx-whisper)
-try:
-    from escriba.transcribe.streaming_mlx import (
-        StreamingTranscriberMLX,
-        MLX_AVAILABLE,
+    from escriba.transcribe.streaming_mps import (
+        StreamingTranscriberMPS as _StreamingTranscriberMPS,
     )
 
+    StreamingTranscriberMPS = _StreamingTranscriberMPS
+    MPS_AVAILABLE = True
+except ImportError:
+    pass
+
+# Intentar importar StreamingTranscriberMLX (requiere mlx-whisper)
+MLX_WHISPER_AVAILABLE = False
+StreamingTranscriberMLX: Any = None
+try:
+    from escriba.transcribe.streaming_mlx import (
+        MLX_AVAILABLE,
+        StreamingTranscriberMLX as _StreamingTranscriberMLX,
+    )
+
+    StreamingTranscriberMLX = _StreamingTranscriberMLX
     MLX_WHISPER_AVAILABLE = MLX_AVAILABLE
 except ImportError:
-    MLX_WHISPER_AVAILABLE = False
-    StreamingTranscriberMLX = None
+    pass
 
 # Intentar importar ScreenCaptureKit (CLI Swift)
 try:
@@ -433,9 +439,13 @@ def run_streaming_capture(
     sample_rate = config.audio.sample_rate
     channels = config.audio.channels
 
-    chunk_duration = float(
-        overrides.get("chunk_duration", config.streaming.chunk_duration)
+    raw_chunk_duration = overrides.get(
+        "chunk_duration", config.streaming.chunk_duration
     )
+    if isinstance(raw_chunk_duration, (int, float, str)):
+        chunk_duration = float(raw_chunk_duration)
+    else:
+        chunk_duration = float(config.streaming.chunk_duration)
     model_size = str(overrides.get("model_size", config.streaming.model_size))
     language = str(overrides.get("language", config.streaming.language))
     device = str(overrides.get("device", config.streaming.device))
@@ -708,7 +718,7 @@ def run_streaming_capture(
         )
 
         # Thread para leer stderr (logs de ffmpeg)
-        stderr_tail = deque(maxlen=50)
+        stderr_tail: deque[str] = deque(maxlen=50)
 
         def read_stderr():
             if process.stderr:
@@ -759,7 +769,11 @@ def run_streaming_capture(
                     f"Run 'ffmpeg -f avfoundation -list_devices true -i \"\"' to see available devices."
                 )
                 return
-            chunk = process.stdout.read(44 - len(wav_header))
+            stdout = process.stdout
+            if stdout is None:
+                logger.error("ffmpeg stdout pipe is unavailable")
+                return
+            chunk = stdout.read(44 - len(wav_header))
             if not chunk:
                 if stop_event.is_set():
                     return
@@ -855,8 +869,13 @@ def run_streaming_capture(
                             logger.error("Could not read ffmpeg stderr: %s", e)
                     break
 
+                stdout = process.stdout
+                if stdout is None:
+                    logger.error("ffmpeg stdout pipe is unavailable")
+                    break
+
                 # Leer datos PCM del micrófono (sin header WAV, solo datos PCM)
-                chunk = process.stdout.read(8192)
+                chunk = stdout.read(8192)
                 if chunk:
                     # El header WAV ya fue leído, estos son datos PCM puros
                     mic_audio_buffer.extend(chunk)
@@ -1192,6 +1211,8 @@ def run_streaming_capture(
                 "Speaker labels will not be applied."
             )
         if run_pyannote:
+            assert transcriber is not None
+            labeled_transcriber = transcriber
             try:
                 from escriba.speaker.diarization import (
                     assign_speakers_to_segments,
@@ -1218,18 +1239,18 @@ def run_streaming_capture(
                         )
                         turns = diarize_wav(session_wav_path)
                         # Update segments in-place for exports
-                        if hasattr(transcriber, "lock") and hasattr(
-                            transcriber, "segments"
+                        if hasattr(labeled_transcriber, "lock") and hasattr(
+                            labeled_transcriber, "segments"
                         ):
-                            lock = getattr(transcriber, "lock", None)
+                            lock = getattr(labeled_transcriber, "lock", None)
                             if lock:
                                 with lock:
-                                    transcriber.segments = assign_speakers_to_segments(  # type: ignore[attr-defined]
-                                        transcriber.segments, turns
+                                    labeled_transcriber.segments = assign_speakers_to_segments(
+                                        labeled_transcriber.segments, turns
                                     )
                             else:
-                                transcriber.segments = assign_speakers_to_segments(  # type: ignore[attr-defined]
-                                    transcriber.segments, turns
+                                labeled_transcriber.segments = assign_speakers_to_segments(
+                                    labeled_transcriber.segments, turns
                                 )
                         logger.info("Applied speaker labels from pyannote")
                 except Exception as check_error:
@@ -1240,18 +1261,18 @@ def run_streaming_capture(
                     logger.info("Running pyannote diarization on session audio...")
                     turns = diarize_wav(session_wav_path)
                     # Update segments in-place for exports
-                    if hasattr(transcriber, "lock") and hasattr(
-                        transcriber, "segments"
+                    if hasattr(labeled_transcriber, "lock") and hasattr(
+                        labeled_transcriber, "segments"
                     ):
-                        lock = getattr(transcriber, "lock", None)
+                        lock = getattr(labeled_transcriber, "lock", None)
                         if lock:
                             with lock:
-                                transcriber.segments = assign_speakers_to_segments(  # type: ignore[attr-defined]
-                                    transcriber.segments, turns
+                                labeled_transcriber.segments = assign_speakers_to_segments(
+                                    labeled_transcriber.segments, turns
                                 )
                         else:
-                            transcriber.segments = assign_speakers_to_segments(  # type: ignore[attr-defined]
-                                transcriber.segments, turns
+                            labeled_transcriber.segments = assign_speakers_to_segments(
+                                labeled_transcriber.segments, turns
                             )
                     logger.info("Applied speaker labels from pyannote")
             except RuntimeError as e:

@@ -54,7 +54,7 @@ def get_upcoming_events(minutes_ahead: int = 5) -> list[dict[str, str]]:
             return []
 
         # Parsear resultado (formato puede variar)
-        events = []
+        events: list[dict[str, str]] = []
         # Por ahora retornar lista vacía - implementación completa requeriría
         # parsing más robusto del output de osascript
         return events

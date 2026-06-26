@@ -43,3 +43,13 @@ dev = [
     "ruff>=0.15.20",
 ]
 
+[tool.mypy]
+python_version = "3.10"
+exclude = ["scripts/"]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disable_error_code = ["misc", "assignment", "attr-defined"]
+

@@ -424,12 +424,13 @@ def cmd_download_model(
     model_id = model or cfg.local_llm.model
 
     if model_id == "auto":
-        model_id = recommend_model()
-        if not model_id:
+        recommended = recommend_model()
+        if not recommended:
             ram = get_system_ram_gb()
             print(f"No local model available for {ram}GB RAM.")
             print("Set a model explicitly: escriba download-model --model mlx-community/gemma-4-e4b-it-4bit")
             raise typer.Exit(code=1)
+        model_id = recommended
 
     ram = get_system_ram_gb()
     print(f"System RAM: {ram}GB")

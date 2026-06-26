@@ -64,8 +64,8 @@ class _LocalModelCache:
     """Hybrid cache: lazy-load on first call, evict after TTL of inactivity."""
 
     def __init__(self, ttl: int = 300):
-        self._model = None
-        self._tokenizer = None
+        self._model: Any = None
+        self._tokenizer: Any = None
         self._model_id: str | None = None
         self._last_used: float = 0
         self._ttl = ttl
@@ -87,7 +87,8 @@ class _LocalModelCache:
                 from mlx_lm import load
 
                 logger.info("Loading local model: %s", model_id)
-                model, tokenizer = load(model_id)
+                loaded = load(model_id)
+                model, tokenizer = loaded[0], loaded[1]
                 self._model = model
                 self._tokenizer = tokenizer
                 self._model_id = model_id
@@ -401,9 +402,11 @@ def generate_summary(
     if provider == "local":
         return _generate_summary_local(transcript, output_path, model_id=model_id)
     elif provider == "gemini":
-        return _generate_summary_gemini(transcript, output_path, model_id=model_id)
+        gemini_model = model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        return _generate_summary_gemini(transcript, output_path, model_id=gemini_model)
     elif provider == "claude":
-        return _generate_summary_claude(transcript, output_path, model_id=model_id)
+        claude_model = model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+        return _generate_summary_claude(transcript, output_path, model_id=claude_model)
     else:
         if provider == "none":
             logger.info("No AI provider available — skipping summary")
@@ -681,14 +684,29 @@ def generate_session_title(
     )
 
     provider, model_id = resolve_provider_and_model(model)
+    if provider in ("local", "gemini", "claude") and not model_id:
+        if provider == "local":
+            model_id = recommend_model()
+        elif provider == "gemini":
+            model_id = os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        else:
+            model_id = os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
     if provider == "local":
+        if not model_id:
+            return None
         title = _call_llm_local(
             prompt, model_id, max_tokens=60, enable_thinking=False,
         )
     elif provider == "gemini":
-        title = _call_llm_gemini(prompt, model_id)
+        gemini_model: str = (
+            model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        )
+        title = _call_llm_gemini(prompt, gemini_model)
     elif provider == "claude":
-        title = _call_llm_claude(prompt, model_id)
+        claude_model: str = (
+            model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+        )
+        title = _call_llm_claude(prompt, claude_model)
     else:
         return None
 
@@ -790,14 +808,29 @@ def enhance_prompt(
 
     meta_prompt = _build_enhance_prompt(text.strip(), preserve_placeholders)
     provider, model_id = resolve_provider_and_model(model)
+    if provider in ("local", "gemini", "claude") and not model_id:
+        if provider == "local":
+            model_id = recommend_model()
+        elif provider == "gemini":
+            model_id = os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        else:
+            model_id = os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
     if provider == "local":
+        if not model_id:
+            return None
         result = _call_llm_local(
             meta_prompt, model_id, max_tokens=600, enable_thinking=False
         )
     elif provider == "gemini":
-        result = _call_llm_gemini(meta_prompt, model_id)
+        gemini_model: str = (
+            model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        )
+        result = _call_llm_gemini(meta_prompt, gemini_model)
     elif provider == "claude":
-        result = _call_llm_claude(meta_prompt, model_id, max_tokens=600)
+        claude_model: str = (
+            model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+        )
+        result = _call_llm_claude(meta_prompt, claude_model, max_tokens=600)
     else:
         return None
     if not result:

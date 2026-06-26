@@ -405,15 +405,18 @@ class StreamingTranscriber:
 
     def _append_to_file(self, text: str, start_time: float, end_time: float) -> None:
         """Escribe transcripción a archivo en tiempo real."""
+        output_file = self.output_file
+        if output_file is None:
+            return
         try:
-            self.output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
 
             # Modo append para escribir mientras transcribe
             timestamp = time.strftime("%H:%M:%S", time.localtime(start_time))
-            with self.output_file.open("a", encoding="utf-8") as f:
+            with output_file.open("a", encoding="utf-8") as f:
                 f.write(f"[{timestamp}] {text}\n")
                 f.flush()  # Asegurar que se escribe inmediatamente
-            logger.debug("Written to file: %s", self.output_file)
+            logger.debug("Written to file: %s", output_file)
         except Exception as e:
             logger.error("Error writing to file: %s", e, exc_info=True)
 

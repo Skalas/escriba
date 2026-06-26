@@ -90,7 +90,7 @@ def diarize_wav(
     except Exception as e:
         logger.debug("Error checking audio duration: %s. Proceeding anyway...", e)
 
-    token = (huggingface_token or os.getenv("HUGGINGFACE_TOKEN", "")).strip()
+    token = (huggingface_token or os.getenv("HUGGINGFACE_TOKEN") or "").strip()
     if not token:
         raise RuntimeError(
             "HuggingFace token required for pyannote diarization. "
@@ -135,7 +135,12 @@ def diarize_wav(
             warnings.filterwarnings("ignore", module="pyannote.audio.core.io")
             warnings.filterwarnings("ignore", message=".*libtorchcodec.*")
             # Use 'token' instead of deprecated 'use_auth_token'
-            pipeline = Pipeline.from_pretrained(pipeline_id, token=token)
+            loaded_pipeline = Pipeline.from_pretrained(pipeline_id, token=token)
+            if loaded_pipeline is None:
+                raise RuntimeError(
+                    f"Failed to load pyannote pipeline {pipeline_id!r}"
+                )
+            pipeline = loaded_pipeline
     except Exception as exc:
         # Check for gated repo access errors
         error_msg = str(exc)

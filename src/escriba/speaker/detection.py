@@ -200,10 +200,7 @@ class SpeakerDetector:
 
         # Promedio de distancias normalizado
         avg_distance = np.mean(distances)
-        # Normalizar a 0-1 (ajustar según necesidad)
-        normalized = min(avg_distance, 1.0)
-
-        return float(normalized)
+        return float(min(float(avg_distance), 1.0))
 
     def reset(self):
         """Reinicia el detector."""

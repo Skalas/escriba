@@ -284,7 +284,7 @@ class StreamingTranscriberMLX:
         for n in [2, 3, 4, 5]:  # Check 2-5 word phrases
             if len(words) >= n * 2:  # Need at least 2 repetitions
                 ngrams = [" ".join(words[i : i + n]) for i in range(len(words) - n + 1)]
-                ngram_counts = {}
+                ngram_counts: dict[str, int] = {}
                 for ng in ngrams:
                     ngram_counts[ng] = ngram_counts.get(ng, 0) + 1
 
@@ -323,10 +323,13 @@ class StreamingTranscriberMLX:
 
     def _append_to_file(self, text: str, start_time: float, end_time: float) -> None:
         """Escribe transcripción a archivo en tiempo real."""
+        output_file = self.output_file
+        if output_file is None:
+            return
         try:
-            self.output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
             timestamp = time.strftime("%H:%M:%S", time.localtime(start_time))
-            with self.output_file.open("a", encoding="utf-8") as f:
+            with output_file.open("a", encoding="utf-8") as f:
                 f.write(f"[{timestamp}] {text}\n")
                 f.flush()
         except Exception as e:

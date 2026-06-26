@@ -567,21 +567,39 @@ def _generate_custom_notes(
     system_prompt: str | None = None,
 ) -> str | None:
     """Generate notes from transcript with a custom user prompt."""
-    from escriba.summarize.llm_summary import resolve_provider_and_model
+    from escriba.summarize.llm_summary import (
+        DEFAULT_CLAUDE_MODEL,
+        DEFAULT_GEMINI_MODEL,
+        recommend_model,
+        resolve_provider_and_model,
+    )
 
     full_prompt = _build_custom_prompt(transcript, prompt, system_prompt)
 
     provider, model_id = resolve_provider_and_model(model)
 
+    if provider in ("local", "gemini", "claude") and not model_id:
+        if provider == "local":
+            model_id = recommend_model()
+        elif provider == "gemini":
+            model_id = os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        else:
+            model_id = os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+
     try:
         if provider == "local":
+            if not model_id:
+                logger.error("No local model available for notes")
+                return None
             from escriba.summarize.llm_summary import _call_llm_local
 
             return _call_llm_local(full_prompt, model_id, max_tokens=4096)
         elif provider == "gemini":
-            return _call_gemini(full_prompt, model_id)
+            resolved_model = model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+            return _call_gemini(full_prompt, resolved_model)
         elif provider == "claude":
-            return _call_claude(full_prompt, model_id)
+            resolved_model = model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+            return _call_claude(full_prompt, resolved_model)
         else:
             if provider == "none":
                 logger.info("No AI provider available — skipping notes")
@@ -641,11 +659,14 @@ def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
 
     if backend == "mlx-whisper":
         from escriba.transcribe.streaming_mlx import StreamingTranscriberMLX
+
+        transcriber: StreamingTranscriberMLX | Any
         transcriber = StreamingTranscriberMLX(
             model_size=model_size, language=language, realtime_output=False,
         )
     else:
         from escriba.transcribe.streaming import StreamingTranscriber
+
         transcriber = StreamingTranscriber(
             model_size=model_size, language=language,
             device=config.streaming.device, realtime_output=False,

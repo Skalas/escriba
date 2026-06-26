@@ -8,7 +8,7 @@ import os
 import sys
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from socketserver import ThreadingMixIn
@@ -134,7 +134,7 @@ PORT = 19876
 
 
 def _concat_wav(
-    sources: list[tuple[Path | None, float, float]], out_path: Path
+    sources: Sequence[tuple[str | Path | None, float, float]], out_path: Path
 ) -> None:
     """Concatenate WAV files into `out_path`, filling silence where needed.
 
@@ -1138,6 +1138,8 @@ class _Handler(BaseHTTPRequestHandler):
         notes = body.get("notes_text", "")
         if notes is not None and not isinstance(notes, str):
             raise ApiError("notes_text must be a string", 400)
+        if notes is None:
+            notes = ""
         db.save_notes(session_id, notes)
         return {"ok": True}, 200
 

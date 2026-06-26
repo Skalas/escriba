@@ -333,9 +333,12 @@ class Database:
 
             # Derive timestamps for the second half.
             started_at_iso = session.get("started_at")
-            try:
-                orig_started = datetime.fromisoformat(started_at_iso)
-            except (TypeError, ValueError):
+            if isinstance(started_at_iso, str):
+                try:
+                    orig_started = datetime.fromisoformat(started_at_iso)
+                except ValueError:
+                    orig_started = datetime.now(timezone.utc)
+            else:
                 orig_started = datetime.now(timezone.utc)
             part2_started_iso = (
                 orig_started + timedelta(seconds=split_time)

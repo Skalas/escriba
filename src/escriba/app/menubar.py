@@ -12,7 +12,7 @@ from pathlib import Path
 import rumps
 
 from escriba.app.database import Database
-from escriba.app.server import AppState, PORT, start_server
+from escriba.app.server import AppState, PORT, _ThreadingHTTPServer, start_server
 from escriba.config import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,8 @@ def _ensure_dashboard_app(icon_path: Path | None = None) -> Path:
     needs_rebuild = not (macos / "open-dashboard").exists()
     if not needs_rebuild:
         existing = (macos / "open-dashboard").read_text()
-        project_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
-        if project_dir not in existing:
+        project_dir_check = str(Path(__file__).resolve().parent.parent.parent.parent)
+        if project_dir_check not in existing:
             needs_rebuild = True
 
     if needs_rebuild:
@@ -115,7 +115,7 @@ class TranscriberMenuBar(rumps.App):
         self.db = Database()
         self.app_state = AppState(config=config, db=self.db)
         self.app_state.reload_config = self._do_reload
-        self.server = None
+        self.server: _ThreadingHTTPServer | None = None
 
         # Mic activation detection state
         self._mic_was_running: bool = False
