@@ -6,7 +6,7 @@ import json
 import logging
 import socket
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from escriba.daemon.server import DAEMON_SOCKET_PATH
 

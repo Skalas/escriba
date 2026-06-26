@@ -7,7 +7,6 @@ import logging
 import os
 import struct
 import threading
-import time
 import wave
 from datetime import datetime
 from pathlib import Path
@@ -341,7 +340,6 @@ class TranscriptionSession:
 
     def _process_loop(self):
         chunk_duration = self.config.streaming.chunk_duration
-        sample_rate = self.config.audio.sample_rate
 
         while not self._stop_event.is_set():
             self._stop_event.wait(chunk_duration)

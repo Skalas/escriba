@@ -251,7 +251,6 @@ class StreamingTranscriber:
         try:
             # Intentar leer WAV usando wave module
             import wave
-            import struct
 
             wav_io = io.BytesIO(wav_data)
 

@@ -70,7 +70,7 @@ def send_summary(summary_path: Path, chat_id: str | None = None) -> bool:
             summary = json.load(f)
 
         # Formatear mensaje
-        message_parts = [f"*📝 Resumen de Reunión*\n"]
+        message_parts = ["*📝 Resumen de Reunión*\n"]
 
         if "summary" in summary:
             message_parts.append(f"*Resumen:*\n{summary['summary']}\n")

@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import logging
 import os
-import ssl
 import threading
 import time
 from datetime import datetime
@@ -165,7 +164,7 @@ class StreamingTranscriberMPS:
 
             try:
                 with wave.open(wav_io, "rb") as wav_file:
-                    sample_rate = wav_file.getframerate()
+                    wav_file.getframerate()
                     n_channels = wav_file.getnchannels()
                     sample_width = wav_file.getsampwidth()
                     frames = wav_file.readframes(wav_file.getnframes())

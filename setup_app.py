@@ -5,7 +5,6 @@ Instead of py2app (which struggles with ML dependencies), this creates
 a lightweight .app wrapper that launches the Python app via uv.
 """
 
-import os
 import plistlib
 import stat
 from pathlib import Path

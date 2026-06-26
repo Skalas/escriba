@@ -6,11 +6,16 @@ import json
 import logging
 import shutil
 import sqlite3
+import threading
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Serializes split_session / merge_sessions so concurrent mutations cannot interleave.
+_multi_row_mutation_lock = threading.Lock()
 
 _DEFAULT_DB_DIR = Path.home() / "Library" / "Application Support" / "Escriba"
 _LEGACY_DB_DIR = Path.home() / "Library" / "Application Support" / "local-transcriber"
@@ -49,7 +54,73 @@ CREATE TABLE IF NOT EXISTS segments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_segments_session ON segments(session_id);
+
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER NOT NULL
+);
 """
+
+MigrationFn = Callable[[sqlite3.Connection], None]
+
+_MIGRATIONS: list[tuple[int, str | MigrationFn]] = [
+    (
+        1,
+        lambda conn: _add_column_if_missing(conn, "sessions", "audio_path", "TEXT"),
+    ),
+    (
+        2,
+        lambda conn: _add_column_if_missing(
+            conn,
+            "sessions",
+            "folder_id",
+            "TEXT REFERENCES folders(id) ON DELETE SET NULL",
+        ),
+    ),
+    (
+        3,
+        """
+        CREATE INDEX IF NOT EXISTS idx_sessions_folder ON sessions(folder_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+        """,
+    ),
+]
+
+
+def _add_column_if_missing(
+    conn: sqlite3.Connection, table: str, column: str, definition: str
+) -> None:
+    """Add a column when upgrading legacy databases that predate the column."""
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        logger.info("Migration: added %s column to %s", column, table)
+
+
+def _get_schema_version(conn: sqlite3.Connection) -> int:
+    """Return the recorded schema version, or 0 when unset."""
+    row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    return int(row[0]) if row else 0
+
+
+def _set_schema_version(conn: sqlite3.Connection, version: int) -> None:
+    """Persist the schema version as a single-row table."""
+    conn.execute("DELETE FROM schema_version")
+    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Apply pending schema migrations in order; safe to call repeatedly."""
+    current = _get_schema_version(conn)
+    for version, step in _MIGRATIONS:
+        if version <= current:
+            continue
+        logger.info("Applying database migration %d", version)
+        if callable(step):
+            step(conn)
+        else:
+            conn.executescript(step)
+        _set_schema_version(conn, version)
+        current = version
 
 
 class Database:
@@ -74,7 +145,7 @@ class Database:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA)
-        self._migrate()
+        _run_migrations(self._conn)
         self._close_stale_sessions()
         self._conn.commit()
         logger.info("Database opened: %s", db_path)
@@ -86,25 +157,6 @@ class Database:
         )
         if cursor.rowcount > 0:
             logger.info("Closed %d stale active session(s)", cursor.rowcount)
-
-    def _migrate(self):
-        """Run safe migrations for columns added after initial schema."""
-        cursor = self._conn.execute("PRAGMA table_info(sessions)")
-        columns = {row[1] for row in cursor.fetchall()}
-        if "audio_path" not in columns:
-            self._conn.execute("ALTER TABLE sessions ADD COLUMN audio_path TEXT")
-            logger.info("Migration: added audio_path column to sessions")
-        if "folder_id" not in columns:
-            self._conn.execute(
-                "ALTER TABLE sessions ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL"
-            )
-            logger.info("Migration: added folder_id column to sessions")
-
-        # Ensure folders table exists (for DBs created before folders feature)
-        self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS folders ("
-            "id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER DEFAULT 0)"
-        )
 
     # --- Sessions ---
 
@@ -241,59 +293,59 @@ class Database:
         Raises ``ValueError`` if the session or segment can't be split
         (missing, not completed, segment not in session, split at index 0).
         """
-        session = self.get_session(session_id)
-        if not session:
-            raise ValueError(f"Session not found: {session_id}")
-        if session.get("status") == "active":
-            raise ValueError("Cannot split an active (recording) session")
+        with _multi_row_mutation_lock:
+            session = self.get_session(session_id)
+            if not session:
+                raise ValueError(f"Session not found: {session_id}")
+            if session.get("status") == "active":
+                raise ValueError("Cannot split an active (recording) session")
 
-        segment_row = self._conn.execute(
-            "SELECT id, session_id, start_time FROM segments WHERE id = ?",
-            (segment_id,),
-        ).fetchone()
-        if not segment_row or segment_row["session_id"] != session_id:
-            raise ValueError(
-                f"Segment {segment_id} not found in session {session_id}"
-            )
+            segment_row = self._conn.execute(
+                "SELECT id, session_id, start_time FROM segments WHERE id = ?",
+                (segment_id,),
+            ).fetchone()
+            if not segment_row or segment_row["session_id"] != session_id:
+                raise ValueError(
+                    f"Segment {segment_id} not found in session {session_id}"
+                )
 
-        split_time = float(segment_row["start_time"] or 0.0)
-        if split_time <= 0:
-            raise ValueError("Cannot split at the first segment")
+            split_time = float(segment_row["start_time"] or 0.0)
+            if split_time <= 0:
+                raise ValueError("Cannot split at the first segment")
 
-        # Confirm there's at least one segment on each side.
-        before = self._conn.execute(
-            "SELECT COUNT(*) FROM segments WHERE session_id = ? AND start_time < ?",
-            (session_id, split_time),
-        ).fetchone()[0]
-        after = self._conn.execute(
-            "SELECT COUNT(*) FROM segments WHERE session_id = ? AND start_time >= ?",
-            (session_id, split_time),
-        ).fetchone()[0]
-        if before == 0 or after == 0:
-            raise ValueError("Split would leave one side empty")
+            # Confirm there's at least one segment on each side.
+            before = self._conn.execute(
+                "SELECT COUNT(*) FROM segments WHERE session_id = ? AND start_time < ?",
+                (session_id, split_time),
+            ).fetchone()[0]
+            after = self._conn.execute(
+                "SELECT COUNT(*) FROM segments WHERE session_id = ? AND start_time >= ?",
+                (session_id, split_time),
+            ).fetchone()[0]
+            if before == 0 or after == 0:
+                raise ValueError("Split would leave one side empty")
 
-        new_id = str(uuid.uuid4())
-        orig_name = session.get("name") or "Session"
-        orig_audio_path = session.get("audio_path")
-        part1_name = f"{orig_name} (part 1)"
-        part2_name = f"{orig_name} (part 2)"
+            new_id = str(uuid.uuid4())
+            orig_name = session.get("name") or "Session"
+            orig_audio_path = session.get("audio_path")
+            part1_name = f"{orig_name} (part 1)"
+            part2_name = f"{orig_name} (part 2)"
 
-        # Derive timestamps for the second half.
-        started_at_iso = session.get("started_at")
-        try:
-            orig_started = datetime.fromisoformat(started_at_iso)
-        except (TypeError, ValueError):
-            orig_started = datetime.now(timezone.utc)
-        part2_started_iso = (
-            orig_started + timedelta(seconds=split_time)
-        ).isoformat()
+            # Derive timestamps for the second half.
+            started_at_iso = session.get("started_at")
+            try:
+                orig_started = datetime.fromisoformat(started_at_iso)
+            except (TypeError, ValueError):
+                orig_started = datetime.now(timezone.utc)
+            part2_started_iso = (
+                orig_started + timedelta(seconds=split_time)
+            ).isoformat()
 
-        orig_duration = session.get("duration_seconds")
-        if orig_duration is None:
-            orig_duration = max(split_time, split_time + 1.0)
-        part2_duration = max(float(orig_duration) - split_time, 0.0)
+            orig_duration = session.get("duration_seconds")
+            if orig_duration is None:
+                orig_duration = max(split_time, split_time + 1.0)
+            part2_duration = max(float(orig_duration) - split_time, 0.0)
 
-        try:
             with self._conn:
                 # Create the second-half session row.
                 self._conn.execute(
@@ -331,11 +383,8 @@ class Database:
                     "UPDATE sessions SET name = ?, duration_seconds = ? WHERE id = ?",
                     (part1_name, split_time, session_id),
                 )
-        except Exception:
-            # `with self._conn:` already rolled back.
-            raise
 
-        return new_id, split_time, orig_audio_path
+            return new_id, split_time, orig_audio_path
 
     def merge_sessions(
         self, session_ids: list[str], name: str
@@ -347,29 +396,29 @@ class Database:
         The caller uses it to concatenate the physical WAV files with the
         same offsets used to rebase segment timestamps.
         """
-        merged_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
+        with _multi_row_mutation_lock:
+            merged_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
 
-        # Sort source sessions by start time so the merged timeline is
-        # chronological and matches the order the user recorded them.
-        placeholders = ",".join("?" for _ in session_ids)
-        src_rows = self._conn.execute(
-            f"SELECT id, started_at, duration_seconds, audio_path "
-            f"FROM sessions WHERE id IN ({placeholders}) "
-            f"ORDER BY started_at ASC",
-            session_ids,
-        ).fetchall()
+            # Sort source sessions by start time so the merged timeline is
+            # chronological and matches the order the user recorded them.
+            placeholders = ",".join("?" for _ in session_ids)
+            src_rows = self._conn.execute(
+                f"SELECT id, started_at, duration_seconds, audio_path "
+                f"FROM sessions WHERE id IN ({placeholders}) "
+                f"ORDER BY started_at ASC",
+                session_ids,
+            ).fetchall()
 
-        offsets: list[tuple[str | None, float, float]] = []
-        cumulative = 0.0
-        for row in src_rows:
-            dur = float(row["duration_seconds"] or 0.0)
-            offsets.append((row["audio_path"], cumulative, dur))
-            cumulative += dur
+            offsets: list[tuple[str | None, float, float]] = []
+            cumulative = 0.0
+            for row in src_rows:
+                dur = float(row["duration_seconds"] or 0.0)
+                offsets.append((row["audio_path"], cumulative, dur))
+                cumulative += dur
 
-        merged_started_iso = src_rows[0]["started_at"] if src_rows else now
+            merged_started_iso = src_rows[0]["started_at"] if src_rows else now
 
-        try:
             with self._conn:
                 self._conn.execute(
                     "INSERT INTO sessions ("
@@ -403,10 +452,8 @@ class Database:
                         "ORDER BY start_time ASC, id ASC",
                         (merged_id, offset, offset, src_id),
                     )
-        except Exception:
-            raise
 
-        return merged_id, offsets
+            return merged_id, offsets
 
     def save_notes(self, session_id: str, notes_text: str):
         self._conn.execute(
