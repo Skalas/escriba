@@ -681,7 +681,7 @@ class _Handler(BaseHTTPRequestHandler):
             }, 400
         except Exception as e:
             logger.error("Error generating notes: %s", e, exc_info=True)
-            return {"ok": False, "error": str(e)}, 503
+            return {"ok": False, "error": "Notes generation failed; check logs"}, 503
 
     def _enhance_prompt(self, body: dict) -> tuple[dict, int]:
         text = (body.get("text") or "").strip()
@@ -706,7 +706,7 @@ class _Handler(BaseHTTPRequestHandler):
             }, 503
         except Exception as e:
             logger.error("Error enhancing prompt: %s", e, exc_info=True)
-            return {"ok": False, "error": str(e)}, 503
+            return {"ok": False, "error": "Prompt enhancement failed; check logs"}, 503
 
     def _merge_sessions(self, body: dict) -> tuple[dict, int]:
         db = self._require_db()
@@ -822,7 +822,7 @@ class _Handler(BaseHTTPRequestHandler):
                     for p in (part1_tmp, part2_tmp):
                         if p and p.exists():
                             p.unlink(missing_ok=True)
-                    return {"ok": False, "error": f"Audio split failed: {e}"}, 503
+                    return {"ok": False, "error": "Audio split failed; check logs"}, 503
 
         try:
             new_id, split_time, _ = db.split_session(session_id, segment_id)
@@ -969,7 +969,7 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": True, "segment_count": len(segments)}, 200
         except Exception as e:
             logger.error("Re-transcribe failed: %s", e, exc_info=True)
-            return {"ok": False, "error": str(e)}, 503
+            return {"ok": False, "error": "Re-transcription failed; check logs"}, 503
 
     def _generate_session_notes(self, session_id: str, body: dict) -> tuple[dict, int]:
         db = self._require_db()
@@ -996,7 +996,7 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": False, "error": "Failed to generate notes"}, 503
         except Exception as e:
             logger.error("Error generating session notes: %s", e, exc_info=True)
-            return {"ok": False, "error": str(e)}, 503
+            return {"ok": False, "error": "Notes generation failed; check logs"}, 503
 
     def _list_models(self) -> tuple[dict, int]:
         try:
@@ -1006,7 +1006,7 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": True, **result}, 200
         except Exception as e:
             logger.error("Error listing models: %s", e, exc_info=True)
-            return {"ok": False, "error": str(e)}, 503
+            return {"ok": False, "error": "Could not list models; check logs"}, 503
 
     def _download_model(self, body: dict) -> tuple[dict, int]:
         """Download a local LLM model in the background."""

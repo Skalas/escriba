@@ -14,9 +14,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Serializes split_session / merge_sessions so concurrent mutations cannot interleave.
-_multi_row_mutation_lock = threading.Lock()
-
 _DEFAULT_DB_DIR = Path.home() / "Library" / "Application Support" / "Escriba"
 _LEGACY_DB_DIR = Path.home() / "Library" / "Application Support" / "local-transcriber"
 _DB_FILENAME = "transcriber.db"
@@ -62,7 +59,18 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 MigrationFn = Callable[[sqlite3.Connection], None]
 
-_MIGRATIONS: list[tuple[int, str | MigrationFn]] = [
+
+def _create_session_indexes(conn: sqlite3.Connection) -> None:
+    """Create indexes added in schema migration 3."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_folder ON sessions(folder_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)"
+    )
+
+
+_MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (
         1,
         lambda conn: _add_column_if_missing(conn, "sessions", "audio_path", "TEXT"),
@@ -78,10 +86,7 @@ _MIGRATIONS: list[tuple[int, str | MigrationFn]] = [
     ),
     (
         3,
-        """
-        CREATE INDEX IF NOT EXISTS idx_sessions_folder ON sessions(folder_id);
-        CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
-        """,
+        lambda conn: _create_session_indexes(conn),
     ),
 ]
 
@@ -115,11 +120,9 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
         if version <= current:
             continue
         logger.info("Applying database migration %d", version)
-        if callable(step):
+        with conn:
             step(conn)
-        else:
-            conn.executescript(step)
-        _set_schema_version(conn, version)
+            _set_schema_version(conn, version)
         current = version
 
 
@@ -140,14 +143,16 @@ class Database:
                         "Migrated database from %s to %s", legacy_db, db_path
                     )
         self._db_path = db_path
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.executescript(_SCHEMA)
-        _run_migrations(self._conn)
-        self._close_stale_sessions()
-        self._conn.commit()
+        self._lock = threading.RLock()
+        with self._lock:
+            self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA foreign_keys=ON")
+            self._conn.executescript(_SCHEMA)
+            _run_migrations(self._conn)
+            self._close_stale_sessions()
+            self._conn.commit()
         logger.info("Database opened: %s", db_path)
 
     def _close_stale_sessions(self):
@@ -163,123 +168,136 @@ class Database:
     def create_session(
         self, name: str, model: str | None = None, language: str | None = None, backend: str | None = None
     ) -> str:
-        session_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-        self._conn.execute(
-            "INSERT INTO sessions (id, name, started_at, model, language, backend, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'active')",
-            (session_id, name, now, model, language, backend),
-        )
-        self._conn.commit()
-        return session_id
+        with self._lock:
+            session_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+            self._conn.execute(
+                "INSERT INTO sessions (id, name, started_at, model, language, backend, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'active')",
+                (session_id, name, now, model, language, backend),
+            )
+            self._conn.commit()
+            return session_id
 
     def stop_session(self, session_id: str, status: str = "completed"):
-        row = self._conn.execute(
-            "SELECT started_at FROM sessions WHERE id = ?", (session_id,)
-        ).fetchone()
-        duration = None
-        if row:
-            started = datetime.fromisoformat(row["started_at"])
-            duration = (datetime.now(timezone.utc) - started).total_seconds()
-        now = datetime.now(timezone.utc).isoformat()
-        self._conn.execute(
-            "UPDATE sessions SET stopped_at = ?, duration_seconds = ?, status = ? WHERE id = ?",
-            (now, duration, status, session_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT started_at FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            duration = None
+            if row:
+                started = datetime.fromisoformat(row["started_at"])
+                duration = (datetime.now(timezone.utc) - started).total_seconds()
+            now = datetime.now(timezone.utc).isoformat()
+            self._conn.execute(
+                "UPDATE sessions SET stopped_at = ?, duration_seconds = ?, status = ? WHERE id = ?",
+                (now, duration, status, session_id),
+            )
+            self._conn.commit()
 
     def add_segments(self, session_id: str, segments: list[dict]):
         if not segments:
             return
-        self._conn.executemany(
-            "INSERT INTO segments (session_id, start_time, end_time, text, speaker) "
-            "VALUES (?, ?, ?, ?, ?)",
-            [
-                (
-                    session_id,
-                    s.get("start"),
-                    s.get("end"),
-                    s.get("text", ""),
-                    s.get("speaker"),
-                )
-                for s in segments
-            ],
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.executemany(
+                "INSERT INTO segments (session_id, start_time, end_time, text, speaker) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [
+                    (
+                        session_id,
+                        s.get("start"),
+                        s.get("end"),
+                        s.get("text", ""),
+                        s.get("speaker"),
+                    )
+                    for s in segments
+                ],
+            )
+            self._conn.commit()
 
     def get_session(self, session_id: str) -> dict | None:
-        row = self._conn.execute(
-            "SELECT *, (SELECT COUNT(*) FROM segments WHERE session_id = s.id) AS segment_count "
-            "FROM sessions s WHERE s.id = ?",
-            (session_id,),
-        ).fetchone()
-        return dict(row) if row else None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT *, (SELECT COUNT(*) FROM segments WHERE session_id = s.id) AS segment_count "
+                "FROM sessions s WHERE s.id = ?",
+                (session_id,),
+            ).fetchone()
+            return dict(row) if row else None
 
     def list_sessions(self, limit: int = 100) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT s.*, (SELECT COUNT(*) FROM segments WHERE session_id = s.id) AS segment_count "
-            "FROM sessions s ORDER BY s.started_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT s.*, (SELECT COUNT(*) FROM segments WHERE session_id = s.id) AS segment_count "
+                "FROM sessions s ORDER BY s.started_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def get_segment(self, segment_id: int) -> dict | None:
-        row = self._conn.execute(
-            "SELECT * FROM segments WHERE id = ?", (segment_id,)
-        ).fetchone()
-        return dict(row) if row else None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM segments WHERE id = ?", (segment_id,)
+            ).fetchone()
+            return dict(row) if row else None
 
     def get_segments(self, session_id: str) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT * FROM segments WHERE session_id = ? ORDER BY start_time ASC, id ASC",
-            (session_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM segments WHERE session_id = ? ORDER BY start_time ASC, id ASC",
+                (session_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def delete_segments(self, session_id: str):
-        self._conn.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
+            self._conn.commit()
 
     def update_audio_path(self, session_id: str, audio_path: str):
-        self._conn.execute(
-            "UPDATE sessions SET audio_path = ? WHERE id = ?",
-            (audio_path, session_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET audio_path = ? WHERE id = ?",
+                (audio_path, session_id),
+            )
+            self._conn.commit()
 
     def rename_session(self, session_id: str, name: str):
-        self._conn.execute(
-            "UPDATE sessions SET name = ? WHERE id = ?",
-            (name, session_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET name = ? WHERE id = ?",
+                (name, session_id),
+            )
+            self._conn.commit()
 
     def move_session_to_folder(self, session_id: str, folder_id: str | None):
-        self._conn.execute(
-            "UPDATE sessions SET folder_id = ? WHERE id = ?",
-            (folder_id, session_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET folder_id = ? WHERE id = ?",
+                (folder_id, session_id),
+            )
+            self._conn.commit()
 
     def move_sessions_to_folder(self, session_ids: list[str], folder_id: str | None):
-        placeholders = ",".join("?" for _ in session_ids)
-        self._conn.execute(
-            f"UPDATE sessions SET folder_id = ? WHERE id IN ({placeholders})",
-            [folder_id, *session_ids],
-        )
-        self._conn.commit()
+        with self._lock:
+            placeholders = ",".join("?" for _ in session_ids)
+            self._conn.execute(
+                f"UPDATE sessions SET folder_id = ? WHERE id IN ({placeholders})",
+                [folder_id, *session_ids],
+            )
+            self._conn.commit()
 
     def delete_session(self, session_id: str):
-        row = self._conn.execute(
-            "SELECT audio_path FROM sessions WHERE id = ?", (session_id,)
-        ).fetchone()
-        if row and row["audio_path"]:
-            audio_file = Path(row["audio_path"])
-            if audio_file.exists():
-                audio_file.unlink()
-                logger.info("Deleted audio file: %s", audio_file)
-        self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-        self._conn.commit()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT audio_path FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if row and row["audio_path"]:
+                audio_file = Path(row["audio_path"])
+                if audio_file.exists():
+                    audio_file.unlink()
+                    logger.info("Deleted audio file: %s", audio_file)
+            self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            self._conn.commit()
 
     def split_session(
         self, session_id: str, segment_id: int
@@ -293,7 +311,7 @@ class Database:
         Raises ``ValueError`` if the session or segment can't be split
         (missing, not completed, segment not in session, split at index 0).
         """
-        with _multi_row_mutation_lock:
+        with self._lock:
             session = self.get_session(session_id)
             if not session:
                 raise ValueError(f"Session not found: {session_id}")
@@ -399,7 +417,7 @@ class Database:
         The caller uses it to concatenate the physical WAV files with the
         same offsets used to rebase segment timestamps.
         """
-        with _multi_row_mutation_lock:
+        with self._lock:
             merged_id = str(uuid.uuid4())
             now = datetime.now(timezone.utc).isoformat()
 
@@ -459,48 +477,54 @@ class Database:
             return merged_id, offsets
 
     def save_notes(self, session_id: str, notes_text: str):
-        self._conn.execute(
-            "UPDATE sessions SET notes_text = ? WHERE id = ?",
-            (notes_text, session_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET notes_text = ? WHERE id = ?",
+                (notes_text, session_id),
+            )
+            self._conn.commit()
 
     # --- Folders ---
 
     def create_folder(self, name: str) -> str:
-        folder_id = str(uuid.uuid4())
-        max_pos = self._conn.execute(
-            "SELECT COALESCE(MAX(position), -1) + 1 FROM folders"
-        ).fetchone()[0]
-        self._conn.execute(
-            "INSERT INTO folders (id, name, position) VALUES (?, ?, ?)",
-            (folder_id, name, max_pos),
-        )
-        self._conn.commit()
-        return folder_id
+        with self._lock:
+            folder_id = str(uuid.uuid4())
+            max_pos = self._conn.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM folders"
+            ).fetchone()[0]
+            self._conn.execute(
+                "INSERT INTO folders (id, name, position) VALUES (?, ?, ?)",
+                (folder_id, name, max_pos),
+            )
+            self._conn.commit()
+            return folder_id
 
     def list_folders(self) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT f.*, (SELECT COUNT(*) FROM sessions WHERE folder_id = f.id) AS session_count "
-            "FROM folders f ORDER BY f.position ASC"
-        ).fetchall()
-        return [dict(r) for r in rows]
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT f.*, (SELECT COUNT(*) FROM sessions WHERE folder_id = f.id) AS session_count "
+                "FROM folders f ORDER BY f.position ASC"
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     def rename_folder(self, folder_id: str, name: str):
-        self._conn.execute(
-            "UPDATE folders SET name = ? WHERE id = ?",
-            (name, folder_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE folders SET name = ? WHERE id = ?",
+                (name, folder_id),
+            )
+            self._conn.commit()
 
     def delete_folder(self, folder_id: str):
-        # Move sessions out of folder before deleting
-        self._conn.execute(
-            "UPDATE sessions SET folder_id = NULL WHERE folder_id = ?",
-            (folder_id,),
-        )
-        self._conn.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
-        self._conn.commit()
+        with self._lock:
+            # Move sessions out of folder before deleting
+            self._conn.execute(
+                "UPDATE sessions SET folder_id = NULL WHERE folder_id = ?",
+                (folder_id,),
+            )
+            self._conn.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+            self._conn.commit()
 
     def close(self):
-        self._conn.close()
+        with self._lock:
+            self._conn.close()

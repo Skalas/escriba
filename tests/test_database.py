@@ -200,3 +200,76 @@ def test_t6_migration_runner_is_idempotent(tmp_path: Path) -> None:
         assert _get_schema_version(db_reopen._conn) == LATEST_SCHEMA_VERSION
     finally:
         db_reopen.close()
+
+
+def test_concurrent_split_and_add_segments(db: Database) -> None:
+    """Split vs concurrent add_segments: split is all-or-nothing; writer intact."""
+    split_source = _seed_completed_session(db, name="Split target", duration=60.0)
+    split_seg_ids = _add_segments(
+        db,
+        split_source,
+        [(0.0, "a"), (10.0, "b"), (20.0, "c"), (30.0, "d")],
+    )
+    split_segment_id = split_seg_ids[2]
+
+    writer_id = db.create_session(name="Live writer")
+    writer_target = 50
+    writer_errors: list[Exception] = []
+    split_errors: list[Exception] = []
+    ready = threading.Barrier(2)
+
+    def writer_worker() -> None:
+        try:
+            ready.wait(timeout=5)
+            for count in range(writer_target):
+                db.add_segments(
+                    writer_id,
+                    [
+                        {
+                            "start": float(count),
+                            "end": float(count) + 1.0,
+                            "text": f"live-{count}",
+                        }
+                    ],
+                )
+        except Exception as exc:
+            writer_errors.append(exc)
+
+    def split_worker() -> None:
+        try:
+            ready.wait(timeout=5)
+            db.split_session(split_source, split_segment_id)
+        except Exception as exc:
+            split_errors.append(exc)
+
+    t_writer = threading.Thread(target=writer_worker)
+    t_split = threading.Thread(target=split_worker)
+    t_writer.start()
+    t_split.start()
+    t_split.join(timeout=15)
+    t_writer.join(timeout=15)
+
+    assert not split_errors, split_errors
+    assert not writer_errors, writer_errors
+
+    original_segments = db.get_segments(split_source)
+    assert len(original_segments) == 2
+    assert {s["text"] for s in original_segments} == {"a", "b"}
+
+    sessions = db.list_sessions(limit=100)
+    part2_candidates = [
+        s for s in sessions if s["id"] not in {split_source, writer_id}
+    ]
+    assert len(part2_candidates) == 1
+    part2_id = part2_candidates[0]["id"]
+    part2_segments = db.get_segments(part2_id)
+    assert len(part2_segments) == 2
+    assert {s["text"] for s in part2_segments} == {"c", "d"}
+
+    writer_segments = db.get_segments(writer_id)
+    assert len(writer_segments) == writer_target
+    assert {s["text"] for s in writer_segments} == {
+        f"live-{i}" for i in range(writer_target)
+    }
+
+    _assert_segment_integrity(db)
