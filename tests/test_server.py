@@ -153,3 +153,33 @@ def test_t3_structured_http_status_codes(app_state: AppState) -> None:
     handler._respond_error(ApiError("Invalid JSON body", 400))
     assert captured[-1][0] == 400
     assert captured[-1][1] == {"ok": False, "error": "Invalid JSON body"}
+
+
+def test_json_null_fields_return_4xx_not_500(app_state: AppState) -> None:
+    """JSON null for string fields must not raise AttributeError / 500."""
+    handler = _make_handler(app_state)
+
+    class NotesSession:
+        def generate_notes(
+            self, prompt: str | None = None, model: str | None = None
+        ) -> None:
+            return None
+
+    app_state.session = NotesSession()  # type: ignore[assignment]
+
+    payload, status = handler._generate_notes({"prompt": None})
+    assert status == 400
+    assert payload["ok"] is False
+
+    payload, status = handler._rename_session("missing-session", {"name": None})
+    assert status == 400
+    assert payload["ok"] is False
+
+    payload, status = handler._create_folder({"name": None})
+    assert status == 400
+    assert payload["ok"] is False
+
+    folder_id = app_state.db.create_folder("Existing")
+    payload, status = handler._rename_folder(folder_id, {"name": None})
+    assert status == 400
+    assert payload["ok"] is False

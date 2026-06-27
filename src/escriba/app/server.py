@@ -668,7 +668,7 @@ class _Handler(BaseHTTPRequestHandler):
             if not session:
                 return {"ok": False, "error": "No session"}, 400
 
-        prompt = body.get("prompt", "").strip() or None
+        prompt = (body.get("prompt") or "").strip() or None
         model = body.get("model") or None
 
         try:
@@ -919,7 +919,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _rename_session(self, session_id: str, body: dict) -> tuple[dict, int]:
         db = self._require_db()
-        name = body.get("name", "").strip()
+        name = (body.get("name") or "").strip()
         if not name:
             return {"ok": False, "error": "Name cannot be empty"}, 400
         if not db.get_session(session_id):
@@ -1180,7 +1180,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _create_folder(self, body: dict) -> tuple[dict, int]:
         db = self._require_db()
-        name = body.get("name", "").strip()
+        name = (body.get("name") or "").strip()
         if not name:
             return {"ok": False, "error": "Folder name cannot be empty"}, 400
         folder_id = db.create_folder(name)
@@ -1188,7 +1188,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _rename_folder(self, folder_id: str, body: dict) -> tuple[dict, int]:
         db = self._require_db()
-        name = body.get("name", "").strip()
+        name = (body.get("name") or "").strip()
         if not name:
             return {"ok": False, "error": "Name cannot be empty"}, 400
         folders = {f["id"] for f in db.list_folders()}
