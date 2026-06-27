@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import struct
 
-import pytest
 
 from escriba.audio.live_capture import _create_wav_chunk
 

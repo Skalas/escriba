@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import plistlib
 import stat
 import subprocess
@@ -13,8 +12,7 @@ from pathlib import Path
 import rumps
 
 from escriba.app.database import Database
-from escriba.app.server import PORT, start_server
-from escriba.app.session import TranscriptionSession
+from escriba.app.server import AppState, PORT, _ThreadingHTTPServer, start_server
 from escriba.config import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -38,8 +36,8 @@ def _ensure_dashboard_app(icon_path: Path | None = None) -> Path:
     needs_rebuild = not (macos / "open-dashboard").exists()
     if not needs_rebuild:
         existing = (macos / "open-dashboard").read_text()
-        project_dir = str(Path(__file__).resolve().parent.parent.parent.parent)
-        if project_dir not in existing:
+        project_dir_check = str(Path(__file__).resolve().parent.parent.parent.parent)
+        if project_dir_check not in existing:
             needs_rebuild = True
 
     if needs_rebuild:
@@ -115,10 +113,9 @@ class TranscriberMenuBar(rumps.App):
         super().__init__("\u3030", quit_button=None)
         self.config = config
         self.db = Database()
-        self.app_state: dict = {"config": config, "session": None, "db": self.db}
-        self.server = None
-
-        self.app_state["reload_config"] = self._do_reload
+        self.app_state = AppState(config=config, db=self.db)
+        self.app_state.reload_config = self._do_reload
+        self.server: _ThreadingHTTPServer | None = None
 
         # Mic activation detection state
         self._mic_was_running: bool = False
@@ -145,7 +142,8 @@ class TranscriberMenuBar(rumps.App):
         load_dotenv(override=True)
         new_config = AppConfig.load()
         self.config = new_config
-        self.app_state["config"] = new_config
+        with self.app_state._lock:
+            self.app_state.config = new_config
         logger.info(
             "Config reloaded: backend=%s, model=%s",
             new_config.streaming.backend,
@@ -157,8 +155,9 @@ class TranscriberMenuBar(rumps.App):
     @rumps.timer(2)
     def _sync_ui_state(self, _):
         """Poll session state and keep menu bar icon/title in sync."""
-        session: TranscriptionSession | None = self.app_state.get("session")
-        is_active = session.is_active if session else False
+        with self.app_state._lock:
+            session = self.app_state.session
+            is_active = session.is_active if session else False
         if is_active == self._last_active:
             return
         self._last_active = is_active
@@ -174,8 +173,10 @@ class TranscriberMenuBar(rumps.App):
         """Poll CoreAudio to detect mic activation and prompt user."""
         if not self.config.auto_record.enabled:
             return
-        session: TranscriptionSession | None = self.app_state.get("session")
-        if session and session.is_active:
+        with self.app_state._lock:
+            session = self.app_state.session
+            is_recording = bool(session and session.is_active)
+        if is_recording:
             if not self._call_item.hidden:
                 self._call_item.hidden = True
             # Auto-stop when mic deactivates during recording
@@ -257,29 +258,36 @@ class TranscriberMenuBar(rumps.App):
     def toggle_recording(self, sender):
         import threading
 
-        session: TranscriptionSession | None = self.app_state.get("session")
+        with self.app_state._lock:
+            session = self.app_state.session
+            is_active = session.is_active if session else False
 
-        if session and session.is_active:
+        if is_active:
             sender.title = "Start Recording"
             self.title = "\u3030"
+
+            _data, status, session = self.app_state.begin_stop_recording()
+            if status != 200 or session is None:
+                return
 
             def _stop_async():
                 try:
                     session.stop()
                 except Exception:
                     logger.exception("Session stop failed")
+                finally:
+                    self.app_state.finish_stop_recording()
                 _notify("Escriba", "Recording stopped", "Transcript saved.")
 
             threading.Thread(target=_stop_async, daemon=True).start()
         else:
-            session = TranscriptionSession(self.config, database=self.db)
-            session.detected_app = self._last_detected_app
+            data, _status = self.app_state.try_start_recording(
+                detected_app=self._last_detected_app
+            )
             self._last_detected_app = None
-            session.start()
-            self.app_state["session"] = session
 
-            if session.error:
-                _notify("Escriba", "Error", session.error)
+            if not data.get("ok"):
+                _notify("Escriba", "Error", data.get("error", "Failed to start"))
                 return
 
             sender.title = "Stop Recording"
@@ -313,8 +321,10 @@ class TranscriberMenuBar(rumps.App):
         import threading
 
         self._terminate_dashboard()
-        session: TranscriptionSession | None = self.app_state.get("session")
-        if session and session.is_active:
+        with self.app_state._lock:
+            session = self.app_state.session
+            active = session is not None and session.is_active
+        if active and session is not None:
             stop_thread = threading.Thread(target=session.stop, daemon=True)
             stop_thread.start()
             stop_thread.join(timeout=5)

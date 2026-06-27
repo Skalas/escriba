@@ -2,16 +2,29 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import os
+import random
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
+
+LLM_TIMEOUT_SECONDS = 30
+LLM_MAX_RETRIES = 3
+LLM_RETRY_BASE_DELAY_SECONDS = 1.0
+LOCAL_MODEL_MAX_ATTEMPTS = 2
+
+# Serialize all mlx-lm inference — parallel Metal calls crash the process.
+_local_llm_semaphore = threading.Semaphore(1)
+
+T = TypeVar("T")
 
 
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
@@ -29,7 +42,7 @@ def get_system_ram_gb() -> int:
     try:
         out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True)
         return int(out.strip()) // (1024 ** 3)
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError):
         logger.debug("Failed to detect system RAM", exc_info=True)
         return 0
 
@@ -51,8 +64,8 @@ class _LocalModelCache:
     """Hybrid cache: lazy-load on first call, evict after TTL of inactivity."""
 
     def __init__(self, ttl: int = 300):
-        self._model = None
-        self._tokenizer = None
+        self._model: Any = None
+        self._tokenizer: Any = None
         self._model_id: str | None = None
         self._last_used: float = 0
         self._ttl = ttl
@@ -74,7 +87,8 @@ class _LocalModelCache:
                 from mlx_lm import load
 
                 logger.info("Loading local model: %s", model_id)
-                model, tokenizer = load(model_id)
+                loaded = load(model_id)
+                model, tokenizer = loaded[0], loaded[1]
                 self._model = model
                 self._tokenizer = tokenizer
                 self._model_id = model_id
@@ -89,9 +103,16 @@ class _LocalModelCache:
                 logger.error("Failed to load model %s (likely OOM): %s", model_id, e)
                 self._evict_unlocked()
                 return None, None
-            except Exception:
-                logger.error("Failed to load local model %s", model_id, exc_info=True)
+            except OSError as e:
+                logger.error(
+                    "Failed to load local model %s: %s", model_id, e, exc_info=True
+                )
                 return None, None
+
+    def evict(self) -> None:
+        """Drop the cached model so the next call reloads from disk."""
+        with self._lock:
+            self._evict_unlocked()
 
     def _evict_unlocked(self):
         """Free model memory. Must be called under self._lock."""
@@ -128,6 +149,160 @@ def configure_local_cache(ttl: int = 300) -> None:
     """Update the cache TTL (called from app startup with config values)."""
     global _model_cache
     _model_cache = _LocalModelCache(ttl=ttl)
+
+
+def _sleep_retry_backoff(attempt: int) -> None:
+    """Exponential backoff with jitter between transient cloud retries."""
+    delay = LLM_RETRY_BASE_DELAY_SECONDS * (2**attempt)
+    jitter = random.uniform(0, delay * 0.25)
+    time.sleep(delay + jitter)
+
+
+def _http_status_from_error(exc: BaseException) -> int | None:
+    """Best-effort HTTP status extraction from provider SDK exceptions."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status
+    response = getattr(exc, "response", None)
+    if response is not None:
+        response_status = getattr(response, "status_code", None)
+        if isinstance(response_status, int):
+            return response_status
+    return None
+
+
+def _is_transient_api_error(exc: BaseException) -> bool:
+    """Return True for rate limits and server-side errors worth retrying."""
+    try:
+        from anthropic import APIStatusError, InternalServerError, RateLimitError
+
+        if isinstance(exc, (RateLimitError, InternalServerError)):
+            return True
+        if isinstance(exc, APIStatusError):
+            status = exc.status_code
+            return status == 429 or status >= 500
+    except ImportError:
+        pass
+
+    status = _http_status_from_error(exc)
+    if status is not None:
+        if status == 429 or status >= 500:
+            return True
+        if 400 <= status < 500:
+            return False
+
+    name = type(exc).__name__.lower()
+    if any(token in name for token in ("ratelimit", "overloaded", "timeout")):
+        return True
+    if "server" in name and "error" in name:
+        return True
+    return False
+
+
+def _call_with_timeout(func: Callable[[], T], timeout_seconds: float) -> T:
+    """Run ``func`` on a worker thread and fail fast if it exceeds the deadline."""
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(func)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except concurrent.futures.TimeoutError as exc:
+        future.cancel()
+        raise TimeoutError(
+            f"LLM call timed out after {timeout_seconds}s"
+        ) from exc
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _retry_cloud_call(label: str, func: Callable[[], T]) -> T:
+    """Retry transient cloud failures with exponential backoff."""
+    last_exc: BaseException | None = None
+    for attempt in range(LLM_MAX_RETRIES):
+        try:
+            return _call_with_timeout(func, LLM_TIMEOUT_SECONDS)
+        except TimeoutError as exc:
+            last_exc = exc
+            logger.warning(
+                "%s timed out (attempt %d/%d)",
+                label,
+                attempt + 1,
+                LLM_MAX_RETRIES,
+            )
+        except Exception as exc:
+            if not _is_transient_api_error(exc):
+                raise
+            last_exc = exc
+            logger.warning(
+                "%s transient failure (attempt %d/%d): %s",
+                label,
+                attempt + 1,
+                LLM_MAX_RETRIES,
+                exc,
+            )
+        if attempt < LLM_MAX_RETRIES - 1:
+            _sleep_retry_backoff(attempt)
+    assert last_exc is not None
+    raise last_exc
+
+
+def _make_gemini_client(api_key: str):
+    """Build a Gemini client with request timeout when the SDK supports it."""
+    from google import genai
+
+    try:
+        from google.genai import types
+
+        return genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=LLM_TIMEOUT_SECONDS * 1000),
+        )
+    except (ImportError, AttributeError, TypeError):
+        return genai.Client(api_key=api_key)
+
+
+def _make_claude_client(api_key: str):
+    """Build an Anthropic client with request timeout."""
+    from anthropic import Anthropic
+
+    return Anthropic(api_key=api_key, timeout=LLM_TIMEOUT_SECONDS)
+
+
+def _gemini_generate_text(model_id: str, prompt: str) -> str:
+    """Call Gemini generate_content; raises on failure after retries."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY environment variable not set")
+
+    def _call() -> str:
+        client = _make_gemini_client(api_key)
+        response = client.models.generate_content(model=model_id, contents=prompt)
+        if not response.text:
+            raise ValueError("Empty response from Gemini")
+        return response.text.strip()
+
+    return _retry_cloud_call(f"Gemini({model_id})", _call)
+
+
+def _claude_generate_text(
+    model_id: str, prompt: str, *, max_tokens: int = 100
+) -> str:
+    """Call Claude messages.create; raises on failure after retries."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+
+    def _call() -> str:
+        client = _make_claude_client(api_key)
+        message = client.messages.create(
+            model=model_id,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        if not message.content:
+            raise ValueError("Empty response from Claude")
+        return message.content[0].text.strip()
+
+    return _retry_cloud_call(f"Claude({model_id})", _call)
 
 
 def resolve_provider_and_model(model: str) -> tuple[str, str | None]:
@@ -230,15 +405,28 @@ def generate_summary(
     if provider == "local":
         return _generate_summary_local(transcript, output_path, model_id=model_id)
     elif provider == "gemini":
-        return _generate_summary_gemini(transcript, output_path, model_id=model_id)
+        gemini_model = model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        return _generate_summary_gemini(transcript, output_path, model_id=gemini_model)
     elif provider == "claude":
-        return _generate_summary_claude(transcript, output_path, model_id=model_id)
+        claude_model = model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+        return _generate_summary_claude(transcript, output_path, model_id=claude_model)
     else:
         if provider == "none":
             logger.info("No AI provider available — skipping summary")
         else:
             logger.error("Unsupported provider: %s", provider)
         return None
+
+
+def _parse_summary_json(response_text: str) -> dict[str, Any]:
+    """Parse and normalize a JSON summary payload from model text."""
+    if response_text.startswith("```json"):
+        response_text = response_text[7:]
+    if response_text.startswith("```"):
+        response_text = response_text[3:]
+    if response_text.endswith("```"):
+        response_text = response_text[:-3]
+    return json.loads(response_text.strip())
 
 
 def _generate_summary_gemini(
@@ -255,54 +443,41 @@ def _generate_summary_gemini(
         Diccionario con el resumen estructurado o None si falla
     """
     try:
-        from google import genai
+        from google import genai  # noqa: F401
     except ImportError:
         logger.error(
             "google-genai not installed. Install with: pip install google-genai"
         )
         return None
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+    if not os.getenv("GEMINI_API_KEY"):
         logger.error("GEMINI_API_KEY environment variable not set")
         return None
 
+    prompt = _build_summary_prompt(transcript)
     try:
-        client = genai.Client(api_key=api_key)
-
-        prompt = _build_summary_prompt(transcript)
-
-        response = client.models.generate_content(model=model_id, contents=prompt)
-        response_text = response.text.strip()
-
-        # Limpiar respuesta (puede tener markdown code blocks)
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        if response_text.startswith("```"):
-            response_text = response_text[3:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-        response_text = response_text.strip()
-
-        # Parsear JSON
-        summary_data = json.loads(response_text)
-
-        # Guardar si se especificó output_path
-        if output_path:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with output_path.open("w", encoding="utf-8") as f:
-                json.dump(summary_data, f, indent=2, ensure_ascii=False)
-            logger.info("Summary saved to: %s", output_path)
-
-        return summary_data
-
+        response_text = _gemini_generate_text(model_id, prompt)
+        summary_data = _parse_summary_json(response_text)
     except json.JSONDecodeError as e:
         logger.error("Failed to parse Gemini response as JSON: %s", e)
-        logger.debug("Response text: %s", response_text[:500])
+        return None
+    except ValueError as e:
+        logger.error("Gemini summary failed: %s", e)
+        return None
+    except TimeoutError as e:
+        logger.error("Gemini summary timed out: %s", e)
         return None
     except Exception as e:
         logger.error("Error generating summary with Gemini: %s", e, exc_info=True)
         return None
+
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", encoding="utf-8") as f:
+            json.dump(summary_data, f, indent=2, ensure_ascii=False)
+        logger.info("Summary saved to: %s", output_path)
+
+    return summary_data
 
 
 def _generate_summary_claude(
@@ -319,59 +494,41 @@ def _generate_summary_claude(
         Diccionario con el resumen estructurado o None si falla
     """
     try:
-        from anthropic import Anthropic
+        from anthropic import Anthropic  # noqa: F401
     except ImportError:
         logger.error(
             "anthropic not installed. Install with: pip install anthropic"
         )
         return None
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not os.getenv("ANTHROPIC_API_KEY"):
         logger.error("ANTHROPIC_API_KEY environment variable not set")
         return None
 
+    prompt = _build_summary_prompt(transcript)
     try:
-        client = Anthropic(api_key=api_key)
-
-        prompt = _build_summary_prompt(transcript)
-
-        message = client.messages.create(
-            model=model_id,
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        response_text = message.content[0].text.strip()
-
-        # Limpiar respuesta (puede tener markdown code blocks)
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        if response_text.startswith("```"):
-            response_text = response_text[3:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-        response_text = response_text.strip()
-
-        # Parsear JSON
-        summary_data = json.loads(response_text)
-
-        # Guardar si se especificó output_path
-        if output_path:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with output_path.open("w", encoding="utf-8") as f:
-                json.dump(summary_data, f, indent=2, ensure_ascii=False)
-            logger.info("Summary saved to: %s", output_path)
-
-        return summary_data
-
+        response_text = _claude_generate_text(model_id, prompt, max_tokens=2000)
+        summary_data = _parse_summary_json(response_text)
     except json.JSONDecodeError as e:
         logger.error("Failed to parse Claude response as JSON: %s", e)
-        logger.debug("Response text: %s", response_text[:500])
+        return None
+    except ValueError as e:
+        logger.error("Claude summary failed: %s", e)
+        return None
+    except TimeoutError as e:
+        logger.error("Claude summary timed out: %s", e)
         return None
     except Exception as e:
         logger.error("Error generating summary with Claude: %s", e, exc_info=True)
         return None
+
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", encoding="utf-8") as f:
+            json.dump(summary_data, f, indent=2, ensure_ascii=False)
+        logger.info("Summary saved to: %s", output_path)
+
+    return summary_data
 
 
 def _generate_summary_local(
@@ -391,16 +548,7 @@ def _generate_summary_local(
         return None
 
     try:
-        # Clean markdown code blocks
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        if response_text.startswith("```"):
-            response_text = response_text[3:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-        response_text = response_text.strip()
-
-        summary_data = json.loads(response_text)
+        summary_data = _parse_summary_json(response_text)
 
         if output_path:
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -444,6 +592,40 @@ def _extract_response(text: str) -> str:
     return cleaned
 
 
+def _run_local_generation(
+    prompt: str,
+    model_id: str,
+    max_tokens: int,
+    enable_thinking: bool,
+) -> str | None:
+    """Run one local MLX generation pass (caller must hold the semaphore)."""
+    model, tokenizer = _model_cache.get(model_id)
+    if model is None or tokenizer is None:
+        raise RuntimeError(f"Failed to load local model: {model_id}")
+
+    from mlx_lm import generate
+
+    messages = [{"role": "user", "content": prompt}]
+    template_kwargs: dict[str, Any] = {
+        "add_generation_prompt": True,
+        "tokenize": False,
+        "enable_thinking": enable_thinking,
+    }
+    try:
+        chat_prompt = tokenizer.apply_chat_template(messages, **template_kwargs)
+    except TypeError:
+        template_kwargs.pop("enable_thinking", None)
+        chat_prompt = tokenizer.apply_chat_template(messages, **template_kwargs)
+
+    with _model_cache._lock:
+        result = generate(model, tokenizer, prompt=chat_prompt, max_tokens=max_tokens)
+        _model_cache._last_used = time.time()
+
+    if not result:
+        return None
+    return _extract_response(result)
+
+
 def _call_llm_local(
     prompt: str,
     model_id: str,
@@ -452,36 +634,35 @@ def _call_llm_local(
 ) -> str | None:
     """Call a local MLX model via the hybrid cache.
 
-    Serializes `generate()` on the cache lock — concurrent MLX Metal calls
-    crash the process (IOGPUMetalCommandBuffer assertion).
+    Serialized with a module-level semaphore so concurrent Metal calls cannot
+    run in parallel. On OOM/runtime failure the cache is evicted and retried once.
     """
-    model, tokenizer = _model_cache.get(model_id)
-    if model is None:
-        return None
-    with _model_cache._lock:
-        try:
-            from mlx_lm import generate
-
-            messages = [{"role": "user", "content": prompt}]
-            template_kwargs: dict = {
-                "add_generation_prompt": True,
-                "tokenize": False,
-                "enable_thinking": enable_thinking,
-            }
+    with _local_llm_semaphore:
+        for attempt in range(LOCAL_MODEL_MAX_ATTEMPTS):
             try:
-                chat_prompt = tokenizer.apply_chat_template(messages, **template_kwargs)
-            except TypeError:
-                template_kwargs.pop("enable_thinking", None)
-                chat_prompt = tokenizer.apply_chat_template(messages, **template_kwargs)
-
-            result = generate(model, tokenizer, prompt=chat_prompt, max_tokens=max_tokens)
-            _model_cache._last_used = time.time()
-            if not result:
+                return _run_local_generation(
+                    prompt, model_id, max_tokens, enable_thinking
+                )
+            except ImportError:
+                logger.warning("mlx-lm not installed — local models unavailable")
                 return None
-            return _extract_response(result)
-        except Exception:
-            logger.error("Local model generation failed", exc_info=True)
-            return None
+            except (MemoryError, RuntimeError) as e:
+                logger.error(
+                    "Local model generation failed (attempt %d/%d): %s",
+                    attempt + 1,
+                    LOCAL_MODEL_MAX_ATTEMPTS,
+                    e,
+                )
+                _model_cache.evict()
+                if attempt >= LOCAL_MODEL_MAX_ATTEMPTS - 1:
+                    return None
+            except TypeError as e:
+                logger.error("Local model template error: %s", e, exc_info=True)
+                return None
+            except OSError as e:
+                logger.error("Local model I/O error: %s", e, exc_info=True)
+                return None
+    return None
 
 
 def generate_session_title(
@@ -506,55 +687,78 @@ def generate_session_title(
     )
 
     provider, model_id = resolve_provider_and_model(model)
-    try:
+    if provider in ("local", "gemini", "claude") and not model_id:
         if provider == "local":
-            title = _call_llm_local(
-                prompt, model_id, max_tokens=60, enable_thinking=False,
-            )
+            model_id = recommend_model()
         elif provider == "gemini":
-            title = _call_llm_gemini(prompt, model_id)
-        elif provider == "claude":
-            title = _call_llm_claude(prompt, model_id)
+            model_id = os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
         else:
+            model_id = os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+    if provider == "local":
+        if not model_id:
             return None
+        title = _call_llm_local(
+            prompt, model_id, max_tokens=60, enable_thinking=False,
+        )
+    elif provider == "gemini":
+        gemini_model: str = (
+            model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        )
+        title = _call_llm_gemini(prompt, gemini_model)
+    elif provider == "claude":
+        claude_model: str = (
+            model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+        )
+        title = _call_llm_claude(prompt, claude_model)
+    else:
+        return None
 
-        if title:
-            title = title.strip().strip('"').strip("'").strip()
-            return title[:60] if title else None
-        return None
-    except Exception:
-        logger.debug("Failed to generate session title", exc_info=True)
-        return None
+    if title:
+        title = title.strip().strip('"').strip("'").strip()
+        return title[:60] if title else None
+    return None
 
 
 def _call_llm_gemini(prompt: str, model_id: str) -> str | None:
     try:
-        from google import genai
+        from google import genai  # noqa: F401
     except ImportError:
+        logger.error("google-genai not installed")
         return None
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+    if not os.getenv("GEMINI_API_KEY"):
         return None
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(model=model_id, contents=prompt)
-    return response.text.strip() if response.text else None
+    try:
+        return _gemini_generate_text(model_id, prompt)
+    except ValueError as e:
+        logger.error("Gemini call failed: %s", e)
+        return None
+    except TimeoutError as e:
+        logger.error("Gemini call timed out: %s", e)
+        return None
+    except Exception as e:
+        logger.error("Gemini call failed: %s", e, exc_info=True)
+        return None
 
 
 def _call_llm_claude(prompt: str, model_id: str, max_tokens: int = 100) -> str | None:
     try:
-        from anthropic import Anthropic
+        from anthropic import Anthropic  # noqa: F401
     except ImportError:
+        logger.error("anthropic not installed")
         return None
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not os.getenv("ANTHROPIC_API_KEY"):
         return None
-    client = Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model=model_id,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text.strip() if message.content else None
+    try:
+        return _claude_generate_text(model_id, prompt, max_tokens=max_tokens)
+    except ValueError as e:
+        logger.error("Claude call failed: %s", e)
+        return None
+    except TimeoutError as e:
+        logger.error("Claude call timed out: %s", e)
+        return None
+    except Exception as e:
+        logger.error("Claude call failed: %s", e, exc_info=True)
+        return None
 
 
 def _build_enhance_prompt(text: str, preserve_placeholders: bool = False) -> str:
@@ -607,31 +811,42 @@ def enhance_prompt(
 
     meta_prompt = _build_enhance_prompt(text.strip(), preserve_placeholders)
     provider, model_id = resolve_provider_and_model(model)
-    try:
+    if provider in ("local", "gemini", "claude") and not model_id:
         if provider == "local":
-            result = _call_llm_local(
-                meta_prompt, model_id, max_tokens=600, enable_thinking=False
-            )
+            model_id = recommend_model()
         elif provider == "gemini":
-            result = _call_llm_gemini(meta_prompt, model_id)
-        elif provider == "claude":
-            result = _call_llm_claude(meta_prompt, model_id, max_tokens=600)
+            model_id = os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
         else:
+            model_id = os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+    if provider == "local":
+        if not model_id:
             return None
-        if not result:
-            return None
-        result = result.strip().strip('"').strip("'").strip()
-        if not result:
-            return None
-        if preserve_placeholders and (
-            "{transcript}" not in result or "{prompt}" not in result
-        ):
-            logger.debug("Enhanced system prompt lost a placeholder; discarding")
-            return None
-        return result
-    except Exception:
-        logger.debug("Failed to enhance prompt", exc_info=True)
+        result = _call_llm_local(
+            meta_prompt, model_id, max_tokens=600, enable_thinking=False
+        )
+    elif provider == "gemini":
+        gemini_model: str = (
+            model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        )
+        result = _call_llm_gemini(meta_prompt, gemini_model)
+    elif provider == "claude":
+        claude_model: str = (
+            model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+        )
+        result = _call_llm_claude(meta_prompt, claude_model, max_tokens=600)
+    else:
         return None
+    if not result:
+        return None
+    result = result.strip().strip('"').strip("'").strip()
+    if not result:
+        return None
+    if preserve_placeholders and (
+        "{transcript}" not in result or "{prompt}" not in result
+    ):
+        logger.debug("Enhanced system prompt lost a placeholder; discarding")
+        return None
+    return result
 
 
 def list_available_models() -> dict[str, Any]:
@@ -681,41 +896,60 @@ def list_available_models() -> dict[str, Any]:
 
 def _list_gemini_models() -> list[str]:
     try:
-        from google import genai
-
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        models = []
-        for model in client.models.list():
-            name = model.name
-            # API returns "models/gemini-..." — strip the prefix
-            if name.startswith("models/"):
-                name = name[7:]
-            # Only include generative models (skip embedding, etc.)
-            if "gemini" in name:
-                models.append(name)
-        return sorted(models) if models else [DEFAULT_GEMINI_MODEL]
+        from google import genai  # noqa: F401
     except ImportError:
         logger.warning("google-genai SDK not installed")
         return [DEFAULT_GEMINI_MODEL]
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return [DEFAULT_GEMINI_MODEL]
+
+    def _call() -> list[str]:
+        client = _make_gemini_client(api_key)
+        models: list[str] = []
+        for model in client.models.list():
+            name = model.name
+            if name.startswith("models/"):
+                name = name[7:]
+            if "gemini" in name:
+                models.append(name)
+        return sorted(models) if models else [DEFAULT_GEMINI_MODEL]
+
+    try:
+        return _call_with_timeout(_call, LLM_TIMEOUT_SECONDS)
+    except TimeoutError:
+        logger.error("Timed out listing Gemini models")
+        return [DEFAULT_GEMINI_MODEL]
     except Exception as e:
-        logger.error("Failed to list Gemini models: %s", e)
+        logger.error("Failed to list Gemini models: %s", e, exc_info=True)
         return [DEFAULT_GEMINI_MODEL]
 
 
 def _list_claude_models() -> list[str]:
     try:
-        from anthropic import Anthropic
+        from anthropic import Anthropic  # noqa: F401
+    except ImportError:
+        logger.warning("anthropic SDK not installed")
+        return [DEFAULT_CLAUDE_MODEL]
 
-        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        # models.list() requires anthropic >= 0.39.0
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return [DEFAULT_CLAUDE_MODEL]
+
+    def _call() -> list[str]:
+        client = _make_claude_client(api_key)
         if not hasattr(client, "models"):
             return [DEFAULT_CLAUDE_MODEL]
         response = client.models.list(limit=100)
         models = [m.id for m in response.data if m.id.startswith("claude")]
         return sorted(models) if models else [DEFAULT_CLAUDE_MODEL]
-    except ImportError:
-        logger.warning("anthropic SDK not installed")
+
+    try:
+        return _call_with_timeout(_call, LLM_TIMEOUT_SECONDS)
+    except TimeoutError:
+        logger.error("Timed out listing Claude models")
         return [DEFAULT_CLAUDE_MODEL]
     except Exception as e:
-        logger.error("Failed to list Claude models: %s", e)
+        logger.error("Failed to list Claude models: %s", e, exc_info=True)
         return [DEFAULT_CLAUDE_MODEL]

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import struct
 import threading
-import time
 import wave
 from datetime import datetime
 from pathlib import Path
@@ -341,7 +339,6 @@ class TranscriptionSession:
 
     def _process_loop(self):
         chunk_duration = self.config.streaming.chunk_duration
-        sample_rate = self.config.audio.sample_rate
 
         while not self._stop_event.is_set():
             self._stop_event.wait(chunk_duration)
@@ -519,8 +516,87 @@ class TranscriptionSession:
 
         result = generate_summary(transcript, model=effective_model)
         if result:
-            return json.dumps(result, indent=2, ensure_ascii=False)
+            return _summary_to_markdown(result)
         return None
+
+
+def _markdown_list_item(value: object) -> str | None:
+    """Return stripped text for a bullet item, or None when empty."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+    else:
+        text = str(value).strip()
+    return text or None
+
+
+def _action_item_to_markdown(item: object) -> str | None:
+    """Format one action item dict as a markdown bullet line."""
+    if isinstance(item, dict):
+        task = _markdown_list_item(item.get("task"))
+        if not task:
+            return None
+        assignee = _markdown_list_item(item.get("assignee"))
+        due_date = _markdown_list_item(item.get("due_date"))
+        line = task
+        if assignee:
+            line = f"{line} — {assignee}"
+        if due_date:
+            line = f"{line} (due: {due_date})"
+        return line
+    return _markdown_list_item(item)
+
+
+def _summary_to_markdown(result: dict[str, Any]) -> str:
+    """Convert a generate_summary payload into dashboard-friendly markdown."""
+    sections: list[str] = []
+
+    summary = _markdown_list_item(result.get("summary"))
+    if summary:
+        sections.append(f"## Summary\n\n{summary}")
+
+    key_points = result.get("key_points")
+    if isinstance(key_points, list):
+        bullets = [
+            f"- {text}"
+            for item in key_points
+            if (text := _markdown_list_item(item))
+        ]
+        if bullets:
+            sections.append("## Key Points\n\n" + "\n".join(bullets))
+
+    action_items = result.get("action_items")
+    if isinstance(action_items, list):
+        bullets = [
+            f"- {line}"
+            for item in action_items
+            if (line := _action_item_to_markdown(item))
+        ]
+        if bullets:
+            sections.append("## Action Items\n\n" + "\n".join(bullets))
+
+    decisions = result.get("decisions")
+    if isinstance(decisions, list):
+        bullets = [
+            f"- {text}"
+            for item in decisions
+            if (text := _markdown_list_item(item))
+        ]
+        if bullets:
+            sections.append("## Decisions\n\n" + "\n".join(bullets))
+
+    topics = result.get("topics")
+    if isinstance(topics, list):
+        bullets = [
+            f"- {text}"
+            for item in topics
+            if (text := _markdown_list_item(item))
+        ]
+        if bullets:
+            sections.append("## Topics\n\n" + "\n".join(bullets))
+
+    return "\n\n".join(sections)
 
 
 def _build_wav(pcm_data: bytes, sample_rate: int, channels: int) -> bytes:
@@ -569,21 +645,41 @@ def _generate_custom_notes(
     system_prompt: str | None = None,
 ) -> str | None:
     """Generate notes from transcript with a custom user prompt."""
-    from escriba.summarize.llm_summary import resolve_provider_and_model
+    from escriba.summarize.llm_summary import (
+        DEFAULT_CLAUDE_MODEL,
+        DEFAULT_GEMINI_MODEL,
+        _call_llm_claude,
+        _call_llm_gemini,
+        _call_llm_local,
+        recommend_model,
+        resolve_provider_and_model,
+    )
 
     full_prompt = _build_custom_prompt(transcript, prompt, system_prompt)
 
     provider, model_id = resolve_provider_and_model(model)
 
+    if provider in ("local", "gemini", "claude") and not model_id:
+        if provider == "local":
+            model_id = recommend_model()
+        elif provider == "gemini":
+            model_id = os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        else:
+            model_id = os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+
     try:
         if provider == "local":
-            from escriba.summarize.llm_summary import _call_llm_local
+            if not model_id:
+                logger.error("No local model available for notes")
+                return None
 
             return _call_llm_local(full_prompt, model_id, max_tokens=4096)
         elif provider == "gemini":
-            return _call_gemini(full_prompt, model_id)
+            resolved_model = model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+            return _call_llm_gemini(full_prompt, resolved_model)
         elif provider == "claude":
-            return _call_claude(full_prompt, model_id)
+            resolved_model = model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+            return _call_llm_claude(full_prompt, resolved_model)
         else:
             if provider == "none":
                 logger.info("No AI provider available — skipping notes")
@@ -593,32 +689,6 @@ def _generate_custom_notes(
     except Exception as e:
         logger.error("Error generating notes: %s", e, exc_info=True)
         return None
-
-
-def _call_gemini(prompt: str, model_id: str) -> str | None:
-    from google import genai
-
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return "Error: GEMINI_API_KEY not set"
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(model=model_id, contents=prompt)
-    return response.text
-
-
-def _call_claude(prompt: str, model_id: str) -> str | None:
-    from anthropic import Anthropic
-
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return "Error: ANTHROPIC_API_KEY not set"
-    client = Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model=model_id,
-        max_tokens=4000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text
 
 
 def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
@@ -643,11 +713,14 @@ def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
 
     if backend == "mlx-whisper":
         from escriba.transcribe.streaming_mlx import StreamingTranscriberMLX
+
+        transcriber: StreamingTranscriberMLX | Any
         transcriber = StreamingTranscriberMLX(
             model_size=model_size, language=language, realtime_output=False,
         )
     else:
         from escriba.transcribe.streaming import StreamingTranscriber
+
         transcriber = StreamingTranscriber(
             model_size=model_size, language=language,
             device=config.streaming.device, realtime_output=False,

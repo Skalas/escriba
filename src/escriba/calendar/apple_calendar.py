@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from datetime import datetime, timedelta
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +54,7 @@ def get_upcoming_events(minutes_ahead: int = 5) -> list[dict[str, str]]:
             return []
 
         # Parsear resultado (formato puede variar)
-        events = []
+        events: list[dict[str, str]] = []
         # Por ahora retornar lista vacía - implementación completa requeriría
         # parsing más robusto del output de osascript
         return events

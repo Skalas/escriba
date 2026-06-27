@@ -28,7 +28,7 @@ def _create_test_wav(audio_data: bytes, sample_rate: int = 16000) -> bytes:
     """
     n_channels = 1
     bits_per_sample = 16
-    n_samples = len(audio_data) // 2  # 2 bytes por sample (int16)
+    len(audio_data) // 2  # 2 bytes por sample (int16)
     data_size = len(audio_data)
 
     # Crear header WAV
@@ -195,7 +195,7 @@ def test_process_wav_chunk_with_metrics(mock_whisper_model):
 
         initial_chunks = metrics.chunks_processed
 
-        result = transcriber.process_wav_chunk(wav_data)
+        transcriber.process_wav_chunk(wav_data)
 
         # Verificar que se registraron métricas
         assert metrics.chunks_processed > initial_chunks

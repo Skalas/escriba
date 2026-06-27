@@ -9,7 +9,6 @@ import signal
 import socket
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Any, Optional
 
