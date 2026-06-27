@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import struct
@@ -517,8 +516,87 @@ class TranscriptionSession:
 
         result = generate_summary(transcript, model=effective_model)
         if result:
-            return json.dumps(result, indent=2, ensure_ascii=False)
+            return _summary_to_markdown(result)
         return None
+
+
+def _markdown_list_item(value: object) -> str | None:
+    """Return stripped text for a bullet item, or None when empty."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+    else:
+        text = str(value).strip()
+    return text or None
+
+
+def _action_item_to_markdown(item: object) -> str | None:
+    """Format one action item dict as a markdown bullet line."""
+    if isinstance(item, dict):
+        task = _markdown_list_item(item.get("task"))
+        if not task:
+            return None
+        assignee = _markdown_list_item(item.get("assignee"))
+        due_date = _markdown_list_item(item.get("due_date"))
+        line = task
+        if assignee:
+            line = f"{line} — {assignee}"
+        if due_date:
+            line = f"{line} (due: {due_date})"
+        return line
+    return _markdown_list_item(item)
+
+
+def _summary_to_markdown(result: dict[str, Any]) -> str:
+    """Convert a generate_summary payload into dashboard-friendly markdown."""
+    sections: list[str] = []
+
+    summary = _markdown_list_item(result.get("summary"))
+    if summary:
+        sections.append(f"## Summary\n\n{summary}")
+
+    key_points = result.get("key_points")
+    if isinstance(key_points, list):
+        bullets = [
+            f"- {text}"
+            for item in key_points
+            if (text := _markdown_list_item(item))
+        ]
+        if bullets:
+            sections.append("## Key Points\n\n" + "\n".join(bullets))
+
+    action_items = result.get("action_items")
+    if isinstance(action_items, list):
+        bullets = [
+            f"- {line}"
+            for item in action_items
+            if (line := _action_item_to_markdown(item))
+        ]
+        if bullets:
+            sections.append("## Action Items\n\n" + "\n".join(bullets))
+
+    decisions = result.get("decisions")
+    if isinstance(decisions, list):
+        bullets = [
+            f"- {text}"
+            for item in decisions
+            if (text := _markdown_list_item(item))
+        ]
+        if bullets:
+            sections.append("## Decisions\n\n" + "\n".join(bullets))
+
+    topics = result.get("topics")
+    if isinstance(topics, list):
+        bullets = [
+            f"- {text}"
+            for item in topics
+            if (text := _markdown_list_item(item))
+        ]
+        if bullets:
+            sections.append("## Topics\n\n" + "\n".join(bullets))
+
+    return "\n\n".join(sections)
 
 
 def _build_wav(pcm_data: bytes, sample_rate: int, channels: int) -> bytes:

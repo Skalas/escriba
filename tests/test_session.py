@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from escriba.app.database import Database
-from escriba.app.session import TranscriptionSession
+from escriba.app.session import TranscriptionSession, _summary_to_markdown
 from escriba.config import AppConfig
 from escriba.summarize import llm_summary
 
@@ -168,3 +168,57 @@ def test_t9_local_llm_calls_are_serialized() -> None:
 
     assert peak == 1
     assert results == ["ok", "ok"]
+
+
+def test_summary_to_markdown_renders_full_summary() -> None:
+    """Default notes path returns markdown sections, not raw JSON."""
+    result = {
+        "summary": "Team aligned on the release plan.",
+        "key_points": ["Scope is frozen", "QA starts Monday"],
+        "action_items": [
+            {"task": "Send recap", "assignee": "Alice", "due_date": "Friday"},
+            {"task": "Review spec", "assignee": "", "due_date": ""},
+            {"task": "Ping vendor", "assignee": "Bob", "due_date": ""},
+        ],
+        "decisions": ["Ship v0.4.0 next week"],
+        "topics": ["Release", "QA"],
+    }
+
+    markdown = _summary_to_markdown(result)
+
+    assert "## Summary" in markdown
+    assert "Team aligned on the release plan." in markdown
+    assert "## Key Points" in markdown
+    assert "- Scope is frozen" in markdown
+    assert "## Action Items" in markdown
+    assert "- Send recap — Alice (due: Friday)" in markdown
+    assert "- Review spec" in markdown
+    assert "Review spec —" not in markdown
+    assert "- Ping vendor — Bob" in markdown
+    assert "(due: )" not in markdown
+    assert "## Decisions" in markdown
+    assert "- Ship v0.4.0 next week" in markdown
+    assert "## Topics" in markdown
+    assert "- Release" in markdown
+    assert '"summary"' not in markdown
+    assert "{" not in markdown
+
+
+def test_summary_to_markdown_omits_empty_sections() -> None:
+    """Sections with no content are left out of the markdown."""
+    markdown = _summary_to_markdown(
+        {
+            "summary": "Brief recap only.",
+            "key_points": [],
+            "action_items": [],
+            "decisions": [],
+            "topics": [],
+        }
+    )
+
+    assert "## Summary" in markdown
+    assert "Brief recap only." in markdown
+    assert "## Key Points" not in markdown
+    assert "## Action Items" not in markdown
+    assert "## Decisions" not in markdown
+    assert "## Topics" not in markdown
