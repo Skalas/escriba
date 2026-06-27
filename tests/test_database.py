@@ -12,6 +12,7 @@ from escriba.app.database import (
     Database,
     _MIGRATIONS,
     _SCHEMA,
+    _create_speaker_labels_table,
     _get_schema_version,
     _run_migrations,
     _set_schema_version,
@@ -498,3 +499,123 @@ def test_search_segments_orders_by_session_started_at_desc(db: Database) -> None
 
     results = db.search_segments("shared keyword")
     assert [row["session_id"] for row in results] == [newer, older]
+
+
+def test_set_speaker_label_upsert_and_blank_deletes(db: Database) -> None:
+    """Custom speaker names upsert; blank display name removes the mapping."""
+    session_id = _seed_completed_session(db, name="Interview")
+    _add_segments(
+        db,
+        session_id,
+        [(0.0, "Hello"), (5.0, "Hi there")],
+    )
+    db._conn.execute(
+        "UPDATE segments SET speaker = ? WHERE session_id = ? AND start_time = 0.0",
+        ("SPEAKER_00", session_id),
+    )
+    db._conn.execute(
+        "UPDATE segments SET speaker = ? WHERE session_id = ? AND start_time = 5.0",
+        ("SPEAKER_01", session_id),
+    )
+    db._conn.commit()
+
+    db.set_speaker_label(session_id, "SPEAKER_00", "Alice")
+    assert db.get_speaker_labels(session_id) == {"SPEAKER_00": "Alice"}
+
+    db.set_speaker_label(session_id, "SPEAKER_00", "Alicia")
+    assert db.get_speaker_labels(session_id) == {"SPEAKER_00": "Alicia"}
+
+    db.set_speaker_label(session_id, "SPEAKER_00", "   ")
+    assert db.get_speaker_labels(session_id) == {}
+
+
+def test_get_segments_includes_speaker_display(db: Database) -> None:
+    """Segments expose speaker_display from the mapping, or raw when unset."""
+    session_id = _seed_completed_session(db, name="Labels")
+    _add_segments(db, session_id, [(0.0, "mapped"), (5.0, "raw only")])
+    db._conn.execute(
+        "UPDATE segments SET speaker = 'SPEAKER_00' WHERE session_id = ? AND start_time = 0.0",
+        (session_id,),
+    )
+    db._conn.execute(
+        "UPDATE segments SET speaker = 'SPEAKER_01' WHERE session_id = ? AND start_time = 5.0",
+        (session_id,),
+    )
+    db._conn.commit()
+    db.set_speaker_label(session_id, "SPEAKER_00", "Bob")
+
+    segments = db.get_segments(session_id)
+    by_start = {seg["start_time"]: seg for seg in segments}
+    assert by_start[0.0]["speaker"] == "SPEAKER_00"
+    assert by_start[0.0]["speaker_display"] == "Bob"
+    assert by_start[5.0]["speaker"] == "SPEAKER_01"
+    assert by_start[5.0]["speaker_display"] == "SPEAKER_01"
+
+
+def test_list_speakers_returns_distinct_keys_with_labels(db: Database) -> None:
+    """list_speakers enumerates unique raw keys with resolved display names."""
+    session_id = _seed_completed_session(db, name="Panel")
+    _add_segments(
+        db,
+        session_id,
+        [(0.0, "a"), (5.0, "b"), (10.0, "c"), (15.0, "d")],
+    )
+    db._conn.execute(
+        "UPDATE segments SET speaker = 'SPEAKER_00' WHERE session_id = ? AND start_time IN (0.0, 5.0)",
+        (session_id,),
+    )
+    db._conn.execute(
+        "UPDATE segments SET speaker = 'SPEAKER_01' WHERE session_id = ? AND start_time IN (10.0, 15.0)",
+        (session_id,),
+    )
+    db._conn.commit()
+    db.set_speaker_label(session_id, "SPEAKER_01", "Carol")
+
+    speakers = db.list_speakers(session_id)
+    assert speakers == [
+        {"speaker": "SPEAKER_00", "display_name": "SPEAKER_00"},
+        {"speaker": "SPEAKER_01", "display_name": "Carol"},
+    ]
+
+
+def test_speaker_labels_migration_is_idempotent_with_existing_segments(
+    tmp_path: Path,
+) -> None:
+    """Migration 5 creates speaker_labels on a DB that already has segments."""
+    db_path = tmp_path / "legacy-speakers.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(_SCHEMA)
+    _set_schema_version(conn, 4)
+
+    session_id = "session-with-speakers"
+    now = "2026-01-01T00:00:00+00:00"
+    conn.execute(
+        "INSERT INTO sessions (id, name, started_at, status) VALUES (?, ?, ?, 'completed')",
+        (session_id, "Legacy", now),
+    )
+    conn.execute(
+        "INSERT INTO segments (session_id, start_time, end_time, text, speaker) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (session_id, 0.0, 1.0, "hello", "SPEAKER_00"),
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(db_path)
+    try:
+        assert _get_schema_version(db._conn) == LATEST_SCHEMA_VERSION
+        table_row = db._conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'speaker_labels'"
+        ).fetchone()
+        assert table_row is not None
+
+        db.set_speaker_label(session_id, "SPEAKER_00", "Legacy Name")
+        assert db.get_segments(session_id)[0]["speaker_display"] == "Legacy Name"
+
+        _create_speaker_labels_table(db._conn)
+        _run_migrations(db._conn)
+        assert _get_schema_version(db._conn) == LATEST_SCHEMA_VERSION
+        assert db.get_speaker_labels(session_id) == {"SPEAKER_00": "Legacy Name"}
+    finally:
+        db.close()

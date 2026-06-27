@@ -90,6 +90,20 @@ def _dedupe_segments_and_create_unique_index(conn: sqlite3.Connection) -> None:
     )
 
 
+def _create_speaker_labels_table(conn: sqlite3.Connection) -> None:
+    """Create per-session speaker display-name mappings."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS speaker_labels (
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            speaker_key TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            PRIMARY KEY (session_id, speaker_key)
+        )
+        """
+    )
+
+
 _MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (
         1,
@@ -111,6 +125,10 @@ _MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (
         4,
         lambda conn: _dedupe_segments_and_create_unique_index(conn),
+    ),
+    (
+        5,
+        lambda conn: _create_speaker_labels_table(conn),
     ),
 ]
 
@@ -270,7 +288,78 @@ class Database:
                 "SELECT * FROM segments WHERE session_id = ? ORDER BY start_time ASC, id ASC",
                 (session_id,),
             ).fetchall()
-            return [dict(r) for r in rows]
+            label_rows = self._conn.execute(
+                "SELECT speaker_key, display_name FROM speaker_labels WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+        labels = {row["speaker_key"]: row["display_name"] for row in label_rows}
+        segments: list[dict] = []
+        for row in rows:
+            seg = dict(row)
+            raw_speaker = seg.get("speaker")
+            if raw_speaker:
+                seg["speaker_display"] = labels.get(raw_speaker, raw_speaker)
+            segments.append(seg)
+        return segments
+
+    def get_speaker_labels(self, session_id: str) -> dict[str, str]:
+        """Return custom display names keyed by raw speaker label."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT speaker_key, display_name FROM speaker_labels WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+        return {row["speaker_key"]: row["display_name"] for row in rows}
+
+    def set_speaker_label(
+        self, session_id: str, speaker_key: str, display_name: str
+    ) -> None:
+        """
+        Upsert or remove a per-session speaker display name.
+
+        Blank ``display_name`` deletes the mapping so the raw label is shown again.
+        """
+        with self._lock:
+            if not display_name.strip():
+                self._conn.execute(
+                    "DELETE FROM speaker_labels WHERE session_id = ? AND speaker_key = ?",
+                    (session_id, speaker_key),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO speaker_labels (session_id, speaker_key, display_name) "
+                    "VALUES (?, ?, ?) "
+                    "ON CONFLICT(session_id, speaker_key) DO UPDATE SET "
+                    "display_name = excluded.display_name",
+                    (session_id, speaker_key, display_name.strip()),
+                )
+            self._conn.commit()
+
+    def list_speakers(self, session_id: str) -> list[dict]:
+        """
+        List distinct raw speaker keys in a session with their display names.
+
+        ``display_name`` is the custom mapping when set, otherwise the raw key.
+        """
+        with self._lock:
+            label_rows = self._conn.execute(
+                "SELECT speaker_key, display_name FROM speaker_labels WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+            speaker_rows = self._conn.execute(
+                "SELECT DISTINCT speaker FROM segments "
+                "WHERE session_id = ? AND speaker IS NOT NULL AND speaker != '' "
+                "ORDER BY speaker ASC",
+                (session_id,),
+            ).fetchall()
+        labels = {row["speaker_key"]: row["display_name"] for row in label_rows}
+        return [
+            {
+                "speaker": row["speaker"],
+                "display_name": labels.get(row["speaker"], row["speaker"]),
+            }
+            for row in speaker_rows
+        ]
 
     @staticmethod
     def _escape_like(value: str) -> str:

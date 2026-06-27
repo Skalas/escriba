@@ -24,6 +24,29 @@ logger = logging.getLogger(__name__)
 
 MAX_BODY_BYTES = 1_048_576
 REQUEST_TIMEOUT_SECONDS = 30
+MAX_SPEAKER_DISPLAY_NAME = 200
+
+
+def _segment_speaker_label(segment: dict[str, Any]) -> str | None:
+    """Resolved speaker label for display/export (custom name or raw)."""
+    display = segment.get("speaker_display")
+    if display:
+        return str(display)
+    raw = segment.get("speaker")
+    return str(raw) if raw else None
+
+
+def _segments_to_transcript(segments: list[dict[str, Any]]) -> str:
+    """Build transcript text using display speaker names when available."""
+    parts: list[str] = []
+    for seg in segments:
+        text = seg.get("text") or ""
+        speaker = _segment_speaker_label(seg)
+        if speaker:
+            parts.append(f"[{speaker}] {text}")
+        else:
+            parts.append(text)
+    return " ".join(parts)
 
 
 class ApiError(Exception):
@@ -390,6 +413,9 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/sessions/") and path.endswith("/rename"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/rename", 1)[0]
                 self._respond(self._rename_session(session_id, self._parse_json_body()))
+            elif path.startswith("/api/sessions/") and path.endswith("/speakers"):
+                session_id = path.split("/api/sessions/")[1].rsplit("/speakers", 1)[0]
+                self._respond(self._set_speaker_label(session_id, self._parse_json_body()))
             elif path.startswith("/api/folders/") and path.endswith("/rename"):
                 folder_id = path.split("/api/folders/")[1].rsplit("/rename", 1)[0]
                 self._respond(self._rename_folder(folder_id, self._parse_json_body()))
@@ -463,7 +489,8 @@ class _Handler(BaseHTTPRequestHandler):
             h, rem = divmod(int(ts), 3600)
             m, s = divmod(rem, 60)
             timestamp = f"{h:02d}:{m:02d}:{s:02d}"
-            speaker = f"[{seg['speaker']}] " if seg.get("speaker") else ""
+            speaker_label = _segment_speaker_label(seg)
+            speaker = f"[{speaker_label}] " if speaker_label else ""
             lines.append(f"{timestamp}  {speaker}{seg.get('text', '')}")
 
         content = "\n".join(lines)
@@ -610,7 +637,7 @@ class _Handler(BaseHTTPRequestHandler):
         if session_id:
             db = self._require_db()
             segments = db.get_segments(session_id)
-            text = " ".join(s["text"] for s in segments)
+            text = _segments_to_transcript(segments)
             session_info = db.get_session(session_id)
             return {
                 "ok": True,
@@ -659,7 +686,29 @@ class _Handler(BaseHTTPRequestHandler):
         if not session:
             return {"ok": False, "error": "Session not found"}, 404
         segments = db.get_segments(session_id)
-        return {"ok": True, "session": session, "segments": segments}, 200
+        speakers = db.list_speakers(session_id)
+        return {
+            "ok": True,
+            "session": session,
+            "segments": segments,
+            "speakers": speakers,
+        }, 200
+
+    def _set_speaker_label(self, session_id: str, body: dict) -> tuple[dict, int]:
+        db = self._require_db()
+        if not db.get_session(session_id):
+            return {"ok": False, "error": "Session not found"}, 404
+        speaker_key = (body.get("speaker") or "").strip()
+        if not speaker_key:
+            return {"ok": False, "error": "Speaker key required"}, 400
+        display_name = (body.get("name") or "").strip()
+        if display_name and len(display_name) > MAX_SPEAKER_DISPLAY_NAME:
+            return {
+                "ok": False,
+                "error": f"Name too long (max {MAX_SPEAKER_DISPLAY_NAME} characters)",
+            }, 400
+        db.set_speaker_label(session_id, speaker_key, display_name)
+        return {"ok": True}, 200
 
     def _start_recording(self) -> tuple[dict, int]:
         return self.app_state.try_start_recording()
@@ -991,7 +1040,7 @@ class _Handler(BaseHTTPRequestHandler):
         segments = db.get_segments(session_id)
         if not segments:
             return {"ok": False, "error": "No segments in this session"}, 400
-        transcript = " ".join(s["text"] for s in segments)
+        transcript = _segments_to_transcript(segments)
         prompt = (body.get("prompt") or "").strip() or "Summarize the key points, decisions, and action items. Respond in the same language as the transcript."
         with self.app_state._lock:
             config = self.app_state.config

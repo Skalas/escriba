@@ -822,6 +822,40 @@
     color: var(--danger); border-color: var(--danger);
   }
   .segment-split-btn svg { width: 12px; height: 12px; }
+
+  /* Speaker labels */
+  .speaker-list { display: flex; flex-direction: column; gap: 6px; }
+  .speaker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .speaker-row:last-child { border-bottom: none; }
+  .speaker-display {
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
+  .speaker-display:hover { background: var(--border-light); color: var(--accent); }
+  .speaker-raw {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .speaker-name-edit {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    background: var(--bg);
+    color: var(--text);
+  }
   .audio-player-card audio { width: 100%; }
   .audio-player-card .no-audio { color: var(--text-secondary); font-style: italic; font-size: 14px; }
 
@@ -1105,6 +1139,10 @@
       <span>Status: <strong id="session-status">-</strong></span>
     </div>
     <div class="content-area">
+      <div class="card" id="session-speakers-card" style="display:none;">
+        <h3>Speakers</h3>
+        <div class="speaker-list" id="session-speakers-list"></div>
+      </div>
       <div class="card">
         <h3>Notes <button class="btn-secondary" id="btn-toggle-notes-edit" onclick="toggleNotesEdit()" style="font-size:11px;padding:4px 10px;">Edit</button></h3>
         <div class="notes-rendered" id="notes-rendered" onclick="toggleNotesEdit()"></div>
@@ -1775,8 +1813,9 @@ async function pollTranscript() {
     if (!t.segments || t.segments.length === 0) return;
     box.innerHTML = t.segments.map(seg => {
       const ts = formatTime(seg.start);
-      const speaker = seg.speaker ? `[${seg.speaker}] ` : '';
-      return `<div class="segment"><span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
+      const speaker = segmentSpeakerLabel(seg);
+      const speakerPrefix = speaker ? `[${speaker}] ` : '';
+      return `<div class="segment"><span class="segment-time">${ts}</span>${speakerPrefix}${escHtml(seg.text)}</div>`;
     }).join('');
     box.scrollTop = box.scrollHeight;
   } catch (e) {}
@@ -1873,6 +1912,61 @@ function highlightSearchSegment(segmentId) {
 function filterSessions() {
   searchQuery = document.getElementById('search-box').value.toLowerCase().trim();
   renderSessionList();
+}
+
+function segmentSpeakerLabel(seg) {
+  return seg.speaker_display || seg.speaker || '';
+}
+
+function renderSessionSpeakers(speakers) {
+  const card = document.getElementById('session-speakers-card');
+  const list = document.getElementById('session-speakers-list');
+  if (!speakers || speakers.length === 0) {
+    card.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  card.style.display = '';
+  list.innerHTML = speakers.map(s => {
+    const hasCustom = s.display_name && s.display_name !== s.speaker;
+    return `<div class="speaker-row" data-speaker="${escAttr(s.speaker)}">
+      <span class="speaker-display" onclick="startSpeakerRename('${escAttr(s.speaker)}')" title="Click to rename">${escHtml(s.display_name || s.speaker)}</span>
+      ${hasCustom ? `<span class="speaker-raw">${escHtml(s.speaker)}</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function startSpeakerRename(speakerKey) {
+  if (!selectedSessionId) return;
+  const row = document.querySelector(`.speaker-row[data-speaker="${CSS.escape(speakerKey)}"]`);
+  if (!row || row.querySelector('.speaker-name-edit')) return;
+  const displayEl = row.querySelector('.speaker-display');
+  const current = displayEl.textContent || speakerKey;
+  row.innerHTML = `<input type="text" class="speaker-name-edit" value="${escAttr(current)}" data-speaker="${escAttr(speakerKey)}" onclick="event.stopPropagation()" onkeydown="handleSpeakerRenameKey(event, '${escAttr(speakerKey)}')">`;
+  const input = row.querySelector('.speaker-name-edit');
+  input.focus();
+  input.select();
+  input.addEventListener('blur', () => saveSpeakerRename(speakerKey));
+}
+
+function handleSpeakerRenameKey(event, speakerKey) {
+  if (event.key === 'Enter') { event.preventDefault(); saveSpeakerRename(speakerKey); }
+  else if (event.key === 'Escape') { event.preventDefault(); selectSession(selectedSessionId); }
+}
+
+async function saveSpeakerRename(speakerKey) {
+  if (!selectedSessionId) return;
+  const input = document.querySelector(`.speaker-name-edit[data-speaker="${CSS.escape(speakerKey)}"]`);
+  if (!input) return;
+  const name = input.value.trim();
+  try {
+    const res = await apiCall('/api/sessions/' + selectedSessionId + '/speakers', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ speaker: speakerKey, name: name }),
+    });
+    if (res.ok) await selectSession(selectedSessionId);
+  } catch (e) {}
 }
 
 async function refreshSessionList() {
@@ -2022,12 +2116,15 @@ async function selectSession(id) {
       currentSessionSegments = res.segments || [];
     } else { audioEl.src = ''; currentSessionSegments = []; }
 
+    renderSessionSpeakers(res.speakers || []);
+
     const box = document.getElementById('session-transcript');
     if (res.segments && res.segments.length > 0) {
       const canSplit = (s.status !== 'active') && res.segments.length > 1;
       box.innerHTML = res.segments.map((seg, idx) => {
         const ts = formatTime(seg.start_time || 0);
-        const speaker = seg.speaker ? `[${seg.speaker}] ` : '';
+        const speaker = segmentSpeakerLabel(seg);
+        const speakerPrefix = speaker ? `[${speaker}] ` : '';
         const clickable = hasAudio ? ' clickable' : '';
         const onclick = hasAudio ? ` onclick="seekToSegment(${seg.start_time || 0})"` : '';
         const splitBtn = (canSplit && idx > 0)
@@ -2041,7 +2138,7 @@ async function selectSession(id) {
                 <line x1="8.12" y1="8.12" x2="12" y2="12"/>
               </svg>
             </button>` : '';
-        return `<div class="segment${clickable}" data-segment-id="${seg.id}" data-start="${seg.start_time || 0}" data-end="${seg.end_time || 0}"${onclick}>${splitBtn}<span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
+        return `<div class="segment${clickable}" data-segment-id="${seg.id}" data-start="${seg.start_time || 0}" data-end="${seg.end_time || 0}"${onclick}>${splitBtn}<span class="segment-time">${ts}</span>${speakerPrefix}${escHtml(seg.text)}</div>`;
       }).join('');
     } else {
       box.innerHTML = '<span style="color:var(--text-secondary);font-style:italic;">No segments</span>';
