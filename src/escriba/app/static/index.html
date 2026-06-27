@@ -956,6 +956,28 @@
     margin: 8px 0; color: var(--text-secondary);
   }
   .notes-rendered hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+  .notes-rendered .md-table-wrap {
+    overflow-x: auto;
+    margin: 12px 0;
+    -webkit-overflow-scrolling: touch;
+  }
+  .notes-rendered table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 320px;
+    font-size: 14px;
+  }
+  .notes-rendered th,
+  .notes-rendered td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .notes-rendered th {
+    background: var(--code-bg);
+    font-weight: 600;
+  }
   .notes-rendered strong { font-weight: 700; }
   .notes-rendered em { font-style: italic; }
   .notes-rendered a { color: var(--accent); text-decoration: none; }
@@ -2680,9 +2702,79 @@ async function generateNotes() {
 }
 
 // --- Markdown rendering ---
+function applyInlineMarkdown(escaped) {
+  if (!escaped) return '';
+  let html = escaped;
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  return html;
+}
+
+function parseMarkdownTableCells(line) {
+  if (!line || !line.trim().includes('|')) return null;
+  let trimmed = line.trim();
+  if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+  return trimmed.split('|').map(cell => cell.trim());
+}
+
+function isMarkdownTableSeparatorRow(cells) {
+  if (!cells || cells.length === 0) return false;
+  return cells.every(cell => /^:?-{3,}:?$/.test(cell.replace(/\s/g, '')));
+}
+
+function convertMarkdownTables(escapedHtml) {
+  const lines = escapedHtml.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (i + 1 < lines.length) {
+      const headerCells = parseMarkdownTableCells(lines[i]);
+      const separatorCells = parseMarkdownTableCells(lines[i + 1]);
+      if (
+        headerCells && headerCells.length > 0
+        && separatorCells && isMarkdownTableSeparatorRow(separatorCells)
+      ) {
+        const colCount = headerCells.length;
+        const bodyRows = [];
+        let j = i + 2;
+        while (j < lines.length) {
+          const rowCells = parseMarkdownTableCells(lines[j]);
+          if (!rowCells || lines[j].trim() === '') break;
+          bodyRows.push(rowCells);
+          j++;
+        }
+        let tableHtml = '<div class="md-table-wrap"><table><thead><tr>';
+        for (let c = 0; c < colCount; c++) {
+          tableHtml += '<th>' + applyInlineMarkdown(headerCells[c] || '') + '</th>';
+        }
+        tableHtml += '</tr></thead><tbody>';
+        for (const row of bodyRows) {
+          tableHtml += '<tr>';
+          for (let c = 0; c < colCount; c++) {
+            const cell = row[c] !== undefined ? row[c] : '';
+            tableHtml += '<td>' + applyInlineMarkdown(cell) + '</td>';
+          }
+          tableHtml += '</tr>';
+        }
+        tableHtml += '</tbody></table></div>';
+        out.push(tableHtml);
+        i = j;
+        continue;
+      }
+    }
+    out.push(lines[i]);
+    i++;
+  }
+  return out.join('\n');
+}
+
 function renderMarkdown(text) {
   if (!text) return '';
   let html = escHtml(text);
+  html = convertMarkdownTables(html);
   html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
   html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
   html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
@@ -2690,10 +2782,7 @@ function renderMarkdown(text) {
   html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
   html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
   html = html.replace(/^---$/gm, '<hr>');
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = applyInlineMarkdown(html);
   html = html.replace(/^- \[x\]\s+(.+)$/gm, '<li><input type="checkbox" checked disabled>$1</li>');
   html = html.replace(/^- \[ \]\s+(.+)$/gm, '<li><input type="checkbox" disabled>$1</li>');
   html = html.replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>');
