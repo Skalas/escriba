@@ -417,3 +417,84 @@ def test_t4_segment_dedup_migration_is_idempotent(tmp_path: Path) -> None:
         assert db.get_segments(session_id)[0]["text"] == "only-one"
     finally:
         db.close()
+
+
+def test_search_segments_finds_matches_across_sessions(db: Database) -> None:
+    """Cross-session search returns segment matches from multiple sessions."""
+    session_a = _seed_completed_session(db, name="Team sync")
+    session_b = _seed_completed_session(db, name="Planning call")
+    _add_segments(db, session_a, [(0.0, "We discussed the quarterly roadmap")])
+    _add_segments(db, session_b, [(5.0, "The quarterly budget needs review")])
+
+    results = db.search_segments("quarterly")
+    assert len(results) == 2
+    session_ids = {row["session_id"] for row in results}
+    assert session_ids == {session_a, session_b}
+    texts = {row["snippet"] for row in results}
+    assert "We discussed the quarterly roadmap" in texts
+    assert "The quarterly budget needs review" in texts
+
+
+def test_search_segments_is_case_insensitive(db: Database) -> None:
+    """Search ignores letter case in segment text."""
+    session_id = _seed_completed_session(db, name="Case test")
+    _add_segments(db, session_id, [(0.0, "Hello WORLD from Escriba")])
+
+    results = db.search_segments("world")
+    assert len(results) == 1
+    assert "WORLD" in results[0]["snippet"]
+
+
+def test_search_segments_respects_limit(db: Database) -> None:
+    """Search returns at most the requested number of rows."""
+    session_id = _seed_completed_session(db, name="Limit test")
+    _add_segments(
+        db,
+        session_id,
+        [(float(i), f"needle segment number {i}") for i in range(10)],
+    )
+
+    results = db.search_segments("needle", limit=3)
+    assert len(results) == 3
+
+
+def test_search_segments_escapes_like_wildcards(db: Database) -> None:
+    """A literal % in the query must not match every row."""
+    session_id = _seed_completed_session(db, name="Wildcard test")
+    _add_segments(db, session_id, [(0.0, "100% complete"), (1.0, "no wildcards here")])
+
+    results = db.search_segments("%")
+    assert len(results) == 1
+    assert results[0]["snippet"] == "100% complete"
+
+
+def test_search_segments_matches_session_name(db: Database) -> None:
+    """Search also matches session names, returning that session's segments."""
+    session_id = _seed_completed_session(db, name="Acme Interview Panel")
+    seg_ids = _add_segments(db, session_id, [(0.0, "Tell me about yourself")])
+
+    results = db.search_segments("Acme")
+    assert len(results) == 1
+    assert results[0]["session_id"] == session_id
+    assert results[0]["id"] == seg_ids[0]
+    assert results[0]["session_name"] == "Acme Interview Panel"
+
+
+def test_search_segments_orders_by_session_started_at_desc(db: Database) -> None:
+    """Newer sessions appear before older ones in search results."""
+    older = _seed_completed_session(db, name="Older session")
+    newer = _seed_completed_session(db, name="Newer session")
+    db._conn.execute(
+        "UPDATE sessions SET started_at = ? WHERE id = ?",
+        ("2026-01-01T00:00:00+00:00", older),
+    )
+    db._conn.execute(
+        "UPDATE sessions SET started_at = ? WHERE id = ?",
+        ("2026-06-01T00:00:00+00:00", newer),
+    )
+    db._conn.commit()
+    _add_segments(db, older, [(0.0, "shared keyword alpha")])
+    _add_segments(db, newer, [(0.0, "shared keyword beta")])
+
+    results = db.search_segments("shared keyword")
+    assert [row["session_id"] for row in results] == [newer, older]

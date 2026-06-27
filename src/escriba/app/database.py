@@ -272,6 +272,56 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """Escape SQL LIKE wildcards so user input is matched literally."""
+        return (
+            value.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+
+    @staticmethod
+    def _segment_snippet(text: str, max_len: int = 160) -> str:
+        """Return a short preview of segment text for search results."""
+        if len(text) <= max_len:
+            return text
+        return text[: max_len - 1].rstrip() + "…"
+
+    def search_segments(self, query: str, limit: int = 50) -> list[dict]:
+        """
+        Search segment text and session names across all sessions.
+
+        Args:
+            query: Case-insensitive substring to match.
+            limit: Maximum number of rows to return.
+
+        Returns:
+            Matches with session_id, session_name, id, start_time, and snippet.
+        """
+        pattern = f"%{self._escape_like(query)}%"
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT seg.id, seg.session_id, seg.start_time, seg.text, sess.name AS session_name "
+                "FROM segments seg "
+                "JOIN sessions sess ON seg.session_id = sess.id "
+                "WHERE LOWER(seg.text) LIKE LOWER(?) ESCAPE '\\' "
+                "   OR LOWER(sess.name) LIKE LOWER(?) ESCAPE '\\' "
+                "ORDER BY sess.started_at DESC, seg.start_time ASC, seg.id ASC "
+                "LIMIT ?",
+                (pattern, pattern, limit),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "session_name": row["session_name"],
+                "start_time": row["start_time"],
+                "snippet": self._segment_snippet(row["text"]),
+            }
+            for row in rows
+        ]
+
     def delete_segments(self, session_id: str):
         with self._lock:
             self._conn.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))

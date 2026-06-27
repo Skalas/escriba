@@ -309,6 +309,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(self._get_folders())
             elif path == "/api/models":
                 self._respond(self._list_models())
+            elif path == "/api/search":
+                q = params.get("q", [""])[0]
+                self._respond(self._search_segments(q))
             elif path == "/api/download-model/status":
                 downloading, result = self.app_state.get_download_status()
                 self._respond(
@@ -633,6 +636,16 @@ class _Handler(BaseHTTPRequestHandler):
         sessions = db.list_sessions()
         folders = db.list_folders()
         return {"ok": True, "sessions": sessions, "folders": folders}
+
+    def _search_segments(self, query: str) -> tuple[dict, int]:
+        q = query.strip()
+        if not q:
+            return {"ok": False, "error": "Query required"}, 400
+        if len(q) > 200:
+            return {"ok": False, "error": "Query too long (max 200 characters)"}, 400
+        db = self._require_db()
+        results = db.search_segments(q)
+        return {"ok": True, "query": q, "results": results}, 200
 
     def _get_folders(self) -> dict:
         db = self._get_db()

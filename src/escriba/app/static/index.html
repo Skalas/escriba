@@ -421,6 +421,55 @@
     margin-top: 10px;
   }
   .toolbar-row .search-box { flex: 1; margin-bottom: 0; }
+
+  /* Transcript search results */
+  .search-results-header {
+    padding: 8px 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+  }
+  .search-result-group { margin-bottom: 4px; }
+  .search-result-group-name {
+    padding: 6px 12px 2px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .search-result-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 8px;
+    margin: 0 4px;
+    transition: background var(--transition);
+  }
+  .search-result-item:hover { background: var(--border-light); }
+  .search-result-item .search-result-time {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+  }
+  .search-result-item .search-result-snippet {
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--text);
+  }
+  .search-highlight-mark {
+    background: var(--accent-glow);
+    color: var(--text);
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  .segment.search-highlight {
+    background: var(--accent-glow);
+    border-left: 3px solid var(--accent);
+    padding-left: 29px;
+  }
   .btn-record {
     width: 44px; height: 44px; min-width: 44px;
     border-radius: 50%;
@@ -992,7 +1041,7 @@
     </div>
     <div class="toolbar-row">
       <input type="checkbox" id="select-all-checkbox" class="session-checkbox" onclick="toggleSelectAll(this.checked)" title="Select all">
-      <input type="text" class="search-box" id="search-box" placeholder="Search..." oninput="filterSessions()">
+      <input type="text" class="search-box" id="search-box" placeholder="Search transcripts..." oninput="onTranscriptSearchInput()" aria-label="Search transcripts">
     </div>
   </div>
   <div class="session-list" id="session-list">
@@ -1396,6 +1445,11 @@ let allSessions = [];
 let allFolders = [];
 let collapsedFolders = new Set();
 let searchQuery = '';
+let transcriptSearchResults = [];
+let transcriptSearchActive = false;
+let searchDebounceTimer = null;
+let pendingHighlightSegmentId = null;
+let pendingHighlightQuery = '';
 
 // --- In-app modal (themed replacement for native confirm/prompt) ---
 let _modalResolve = null;
@@ -1466,6 +1520,7 @@ const DEFAULT_PROMPT_TEMPLATES = [
   { id: 'keypoints', label: 'Key Points', prompt: 'Summarize the most important points, insights, and takeaways as a bulleted list. Capture specific figures, names, and data mentioned. Focus on substance, not a chronological recap.' },
   { id: 'blockers', label: 'Risks & Blockers', prompt: 'Identify all risks, blockers, dependencies, and concerns raised. For each, note the issue, who flagged it, and any proposed mitigation or workaround. If none were raised, state that.' },
   { id: 'minutes', label: 'Meeting Minutes', prompt: 'Write structured meeting minutes in Markdown with these sections: **Attendees**, **Agenda**, **Discussion**, **Decisions**, **Action Items**, **Next Steps**. Omit a section only if there is genuinely nothing to record under it.' },
+  { id: 'interview', label: 'Interview Evaluation', prompt: 'Critically evaluate the candidate in this interview transcript. Do NOT be charitable or complacent: most candidates do not meet the bar, and your job is to find the evidence, not to give the benefit of the doubt. For each relevant competency (technical depth, problem-solving, communication, ownership and impact, and any role-specific skills discussed), give a rating (Strong / Adequate / Weak / No evidence) and cite the specific transcript evidence behind it. Sharply distinguish what the candidate DEMONSTRATED from what they merely CLAIMED. Flag vague, generic, evasive, or buzzword answers, contradictions, and moments where they dodged a question or could not go deep when pressed. Structure the output as: (1) Recommendation — one of Strong Hire / Hire / No Hire / Strong No Hire, with a one-line justification and your confidence; (2) Competency assessment — rating + evidence per competency; (3) Strengths — concrete, evidenced positives (omit if none); (4) Concerns and red flags — weaknesses, gaps, evasions, contradictions; (5) Missing signal — what the interview did not probe or the candidate did not substantiate, and what evidence would be needed to raise the rating. Hold a high bar: if evidence for a competency is thin or absent, rate it Weak or No evidence rather than assuming competence. When the overall signal is mixed or insufficient, lean toward No Hire and state exactly what evidence is missing.' },
   { id: 'followup', label: 'Follow-up Email', prompt: 'Draft a concise, professional follow-up email: a one-line recap, the decisions made, action items with owners, and next steps. Open with a greeting and close with a clear call to action.' },
 ];
 
@@ -1728,6 +1783,93 @@ async function pollTranscript() {
 }
 
 // --- Sessions ---
+function onTranscriptSearchInput() {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(runTranscriptSearch, 300);
+}
+
+async function runTranscriptSearch() {
+  const raw = document.getElementById('search-box').value.trim();
+  if (!raw) {
+    transcriptSearchActive = false;
+    transcriptSearchResults = [];
+    searchQuery = '';
+    renderSessionList();
+    return;
+  }
+  searchQuery = raw.toLowerCase();
+  try {
+    const res = await apiCall('/api/search?q=' + encodeURIComponent(raw));
+    if (!res.ok) return;
+    transcriptSearchActive = true;
+    transcriptSearchResults = res.results || [];
+    renderSearchResults(res.query || raw);
+  } catch (e) {}
+}
+
+function highlightSearchText(text, query) {
+  if (!query) return escHtml(text);
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  let html = '';
+  let cursor = 0;
+  let idx = lowerText.indexOf(lowerQuery, cursor);
+  while (idx !== -1) {
+    html += escHtml(text.slice(cursor, idx));
+    html += '<mark class="search-highlight-mark">' + escHtml(text.slice(idx, idx + query.length)) + '</mark>';
+    cursor = idx + query.length;
+    idx = lowerText.indexOf(lowerQuery, cursor);
+  }
+  html += escHtml(text.slice(cursor));
+  return html;
+}
+
+function renderSearchResults(query) {
+  const list = document.getElementById('session-list');
+  if (transcriptSearchResults.length === 0) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary);font-size:13px;">No matches for “' + escHtml(query) + '”</div>';
+    return;
+  }
+  const grouped = new Map();
+  for (const r of transcriptSearchResults) {
+    if (!grouped.has(r.session_id)) {
+      grouped.set(r.session_id, { name: r.session_name, items: [] });
+    }
+    grouped.get(r.session_id).items.push(r);
+  }
+  let html = '<div class="search-results-header">' + transcriptSearchResults.length + ' match' + (transcriptSearchResults.length === 1 ? '' : 'es') + '</div>';
+  for (const [sessionId, group] of grouped) {
+    html += '<div class="search-result-group">';
+    html += '<div class="search-result-group-name">' + escHtml(group.name) + '</div>';
+    for (const item of group.items) {
+      const ts = formatTime(item.start_time || 0);
+      html += `<div class="search-result-item" onclick="openSearchResult('${escAttr(sessionId)}', ${item.id}, '${escAttr(query)}')">`
+        + `<div class="search-result-time">${escHtml(ts)}</div>`
+        + `<div class="search-result-snippet">${highlightSearchText(item.snippet || '', query)}</div>`
+        + '</div>';
+    }
+    html += '</div>';
+  }
+  list.innerHTML = html;
+}
+
+async function openSearchResult(sessionId, segmentId, query) {
+  pendingHighlightSegmentId = segmentId;
+  pendingHighlightQuery = query;
+  await selectSession(sessionId);
+  highlightSearchSegment(segmentId);
+}
+
+function highlightSearchSegment(segmentId) {
+  document.querySelectorAll('#session-transcript .segment.search-highlight').forEach(el => el.classList.remove('search-highlight'));
+  const el = document.querySelector('#session-transcript .segment[data-segment-id="' + segmentId + '"]');
+  if (!el) return;
+  el.classList.add('search-highlight');
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  pendingHighlightSegmentId = null;
+  pendingHighlightQuery = '';
+}
+
 function filterSessions() {
   searchQuery = document.getElementById('search-box').value.toLowerCase().trim();
   renderSessionList();
@@ -1746,6 +1888,7 @@ async function refreshSessionList() {
 }
 
 function renderSessionList() {
+  if (transcriptSearchActive) return;
   const list = document.getElementById('session-list');
   let filtered = allSessions;
   if (searchQuery) {
@@ -1898,7 +2041,7 @@ async function selectSession(id) {
                 <line x1="8.12" y1="8.12" x2="12" y2="12"/>
               </svg>
             </button>` : '';
-        return `<div class="segment${clickable}" data-start="${seg.start_time || 0}" data-end="${seg.end_time || 0}"${onclick}>${splitBtn}<span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
+        return `<div class="segment${clickable}" data-segment-id="${seg.id}" data-start="${seg.start_time || 0}" data-end="${seg.end_time || 0}"${onclick}>${splitBtn}<span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
       }).join('');
     } else {
       box.innerHTML = '<span style="color:var(--text-secondary);font-style:italic;">No segments</span>';
@@ -1911,6 +2054,9 @@ async function selectSession(id) {
     document.querySelectorAll('.session-item').forEach(el => {
       el.classList.toggle('selected', el.dataset.id === id);
     });
+    if (pendingHighlightSegmentId) {
+      highlightSearchSegment(pendingHighlightSegmentId);
+    }
   } catch (e) {}
 }
 
