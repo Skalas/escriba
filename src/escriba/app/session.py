@@ -298,7 +298,7 @@ class TranscriptionSession:
     def _append_pcm_with_backpressure(self, buffer: bytearray, data: bytes) -> None:
         """Append PCM to a live buffer, dropping oldest frame-aligned bytes if over the cap."""
         cap = self._audio_buffer_cap_bytes()
-        frame_bytes = max(self.config.audio.channels * 2, 1)
+        frame_bytes = self._pcm_frame_bytes()
         overflow = len(buffer) + len(data) - cap
         if overflow > 0:
             drop = min(
@@ -333,9 +333,39 @@ class TranscriptionSession:
         with self._buffer_lock:
             self._append_pcm_with_backpressure(self._mic_buffer, data)
 
+    def _pcm_frame_bytes(self) -> int:
+        """Bytes per PCM frame (one sample across all channels, int16)."""
+        return max(self.config.audio.channels * 2, 1)
+
+    def _align_dual_buffers_to_trailing_window(self) -> None:
+        """Drop oldest PCM from the longer buffer so system/mic share one trailing window."""
+        sys_len = len(self._system_buffer)
+        mic_len = len(self._mic_buffer)
+        if sys_len == 0 or mic_len == 0 or sys_len == mic_len:
+            return
+
+        frame_bytes = self._pcm_frame_bytes()
+        if sys_len > mic_len:
+            longer = self._system_buffer
+            target_len = mic_len
+        else:
+            longer = self._mic_buffer
+            target_len = sys_len
+
+        excess = len(longer) - target_len
+        drop = (excess // frame_bytes) * frame_bytes
+        if drop == 0:
+            drop = excess
+        del longer[:drop]
+        remaining = len(longer) - target_len
+        if remaining > 0:
+            del longer[:remaining]
+
     def _mix_buffers(self) -> bytes:
         """Mix system and mic PCM buffers into one. Must be called under _buffer_lock."""
         import numpy as np
+
+        self._align_dual_buffers_to_trailing_window()
 
         sys_bytes = bytes(self._system_buffer)
         mic_bytes = bytes(self._mic_buffer)
@@ -349,13 +379,6 @@ class TranscriptionSession:
 
         sys_samples = np.frombuffer(sys_bytes, dtype=np.int16).astype(np.float32)
         mic_samples = np.frombuffer(mic_bytes, dtype=np.int16).astype(np.float32)
-
-        # Pad shorter buffer with silence
-        max_len = max(len(sys_samples), len(mic_samples))
-        if len(sys_samples) < max_len:
-            sys_samples = np.pad(sys_samples, (0, max_len - len(sys_samples)))
-        if len(mic_samples) < max_len:
-            mic_samples = np.pad(mic_samples, (0, max_len - len(mic_samples)))
 
         mic_boost = self.config.audio.mic_boost
         mixed = sys_samples + mic_samples * mic_boost

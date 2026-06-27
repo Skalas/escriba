@@ -318,6 +318,32 @@ def test_b1_merge_sessions_ignores_colliding_segment_timings(db: Database) -> No
     assert segments[0]["text"] == "from-a"
 
 
+def test_merge_sessions_logs_when_segments_are_dropped(db: Database, caplog) -> None:
+    """Merge collisions are visible via WARNING, not silently ignored."""
+    import logging
+
+    caplog.set_level(logging.WARNING)
+
+    session_a = _seed_completed_session(db, name="Merge A", duration=0.0)
+    session_b = _seed_completed_session(db, name="Merge B", duration=0.0)
+    db.add_segments(
+        session_a,
+        [{"start": 0.0, "end": 1.0, "text": "from-a"}],
+    )
+    db.add_segments(
+        session_b,
+        [{"start": 0.0, "end": 1.0, "text": "from-b"}],
+    )
+
+    db.merge_sessions([session_a, session_b], name="Merged")
+
+    assert any(
+        "ignored 1 duplicate segment" in record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING"
+    )
+
+
 def test_t4_migration_dedupes_existing_rows_and_creates_unique_index(
     tmp_path: Path,
 ) -> None:

@@ -262,6 +262,111 @@ def test_t3_audio_buffer_under_cap_unchanged(minimal_config: AppConfig) -> None:
     assert len(session._audio_buffer) <= cap
 
 
+def test_both_mode_mix_aligns_unequal_buffers_to_trailing_window(
+    tmp_path: Path,
+) -> None:
+    """Asymmetric backpressure must not time-shift one source via trailing silence pad."""
+    import numpy as np
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        """
+[audio]
+audio_source = "both"
+sample_rate = 16000
+channels = 1
+mic_boost = 1.0
+
+[streaming]
+chunk_duration = 0.5
+
+[auto_name]
+enabled = false
+""".strip(),
+        encoding="utf-8",
+    )
+    config = AppConfig.load(cfg_path)
+    session = TranscriptionSession(config)
+
+    # System kept an extra leading frame; mic backpressure trimmed more aggressively.
+    session._system_buffer = bytearray(b"\x0a\x00\x14\x00\x1e\x00")  # 10, 20, 30
+    session._mic_buffer = bytearray(b"\x32\x00\x3c\x00")  # 50, 60
+
+    with session._buffer_lock:
+        mixed = session._mix_buffers()
+
+    assert len(session._system_buffer) == len(session._mic_buffer) == 4
+    assert len(mixed) == 4
+
+    sys_tail = np.frombuffer(bytes(session._system_buffer), dtype=np.int16)
+    mic_tail = np.frombuffer(bytes(session._mic_buffer), dtype=np.int16)
+    mixed_samples = np.frombuffer(mixed, dtype=np.int16)
+
+    assert sys_tail.tolist() == [20, 30]
+    assert mic_tail.tolist() == [50, 60]
+    np.testing.assert_array_equal(mixed_samples, sys_tail + mic_tail)
+
+
+def test_both_mode_mix_preserves_system_when_mic_empty(tmp_path: Path) -> None:
+    """Empty mic must not trim away system audio in 'both' mode."""
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        """
+[audio]
+audio_source = "both"
+sample_rate = 16000
+channels = 1
+
+[streaming]
+chunk_duration = 0.5
+
+[auto_name]
+enabled = false
+""".strip(),
+        encoding="utf-8",
+    )
+    session = TranscriptionSession(AppConfig.load(cfg_path))
+    system_pcm = b"\x0a\x00\x14\x00\x1e\x00"
+    session._system_buffer = bytearray(system_pcm)
+    session._mic_buffer = bytearray()
+
+    with session._buffer_lock:
+        mixed = session._mix_buffers()
+
+    assert mixed == system_pcm
+    assert bytes(session._system_buffer) == system_pcm
+
+
+def test_both_mode_mix_preserves_mic_when_system_empty(tmp_path: Path) -> None:
+    """Empty system audio must not trim away mic audio in 'both' mode."""
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        """
+[audio]
+audio_source = "both"
+sample_rate = 16000
+channels = 1
+
+[streaming]
+chunk_duration = 0.5
+
+[auto_name]
+enabled = false
+""".strip(),
+        encoding="utf-8",
+    )
+    session = TranscriptionSession(AppConfig.load(cfg_path))
+    mic_pcm = b"\x32\x00\x3c\x00"
+    session._system_buffer = bytearray()
+    session._mic_buffer = bytearray(mic_pcm)
+
+    with session._buffer_lock:
+        mixed = session._mix_buffers()
+
+    assert mixed == mic_pcm
+    assert bytes(session._mic_buffer) == mic_pcm
+
+
 @pytest.fixture
 def distinctive_config(minimal_config: AppConfig) -> AppConfig:
     from dataclasses import replace

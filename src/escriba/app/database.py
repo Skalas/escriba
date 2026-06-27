@@ -485,7 +485,11 @@ class Database:
                     (row["id"], off, dur)
                     for row, (_ap, off, dur) in zip(src_rows, offsets)
                 ]:
-                    self._conn.execute(
+                    expected = self._conn.execute(
+                        "SELECT COUNT(*) FROM segments WHERE session_id = ?",
+                        (src_id,),
+                    ).fetchone()[0]
+                    cursor = self._conn.execute(
                         "INSERT OR IGNORE INTO segments "
                         "(session_id, start_time, end_time, text, speaker) "
                         "SELECT ?, "
@@ -497,6 +501,13 @@ class Database:
                         "ORDER BY start_time ASC, id ASC",
                         (merged_id, offset, offset, src_id),
                     )
+                    dropped = expected - cursor.rowcount
+                    if dropped > 0:
+                        logger.warning(
+                            "Merge ignored %d duplicate segment(s) from session %s",
+                            dropped,
+                            src_id,
+                        )
 
             return merged_id, offsets
 
