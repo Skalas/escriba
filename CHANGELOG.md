@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-27
+
+Transcription robustness ([#29](https://github.com/Skalas/escriba/issues/29)): the transcription path no longer silently degrades output.
+
+### Added
+- **Re-transcribe honors full config** — `retranscribe_from_wav` now applies the same dictionary/VAD/hallucination settings as live capture (via a shared `_build_transcriber`), so a re-transcription matches live behavior instead of using defaults.
+- **Chunk-error resilience** — transient inference failures retry (bounded + backoff); persistent/fatal failures surface as `ChunkProcessingError` (logged) instead of being silently treated as silence.
+- **Audio buffer backpressure** — the live, system, and mic PCM buffers are bounded (~2× chunk size); under load they drop oldest audio with a rate-limited warning instead of growing unbounded on long meetings.
+- **Segment dedup** — a unique index on `(session_id, start_time, end_time)` + `INSERT OR IGNORE` prevents double-inserts on chunk retry; the migration de-duplicates any pre-existing rows before adding the index.
+
+### Fixed
+- "both" audio mode: system/mic buffers are now bounded and kept time-aligned (no source time-shift under backpressure), and a single empty source no longer discards the other source's audio.
+- `merge_sessions` uses `INSERT OR IGNORE` so the new unique index can't roll back a merge on a colliding rebased timing.
+
 ## [0.4.0] - 2026-06-26
 
 Reliability milestone ([Epic #12](https://github.com/Skalas/escriba/issues/12)): the core stops corrupting state under concurrent load and fails gracefully. See `docs/review/v0.4.0-review-findings.md` for the full review record.
@@ -47,7 +61,8 @@ Cuts the accumulated feature work since `v0.2.0` as a proper minor release.
 
 Initial tracked release.
 
-[Unreleased]: https://github.com/Skalas/escriba/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Skalas/escriba/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Skalas/escriba/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Skalas/escriba/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Skalas/escriba/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Skalas/escriba/releases/tag/v0.2.0
