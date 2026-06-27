@@ -381,6 +381,10 @@ class Database:
         """
         Search segment text and session names across all sessions.
 
+        Text matches return every matching segment. Session-name matches return
+        at most one representative segment per session (when no segment text
+        matched that session).
+
         Args:
             query: Case-insensitive substring to match.
             limit: Maximum number of rows to return.
@@ -390,26 +394,73 @@ class Database:
         """
         pattern = f"%{self._escape_like(query)}%"
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT seg.id, seg.session_id, seg.start_time, seg.text, sess.name AS session_name "
+            text_rows = self._conn.execute(
+                "SELECT seg.id, seg.session_id, seg.start_time, seg.text, "
+                "       sess.name AS session_name, sess.started_at "
                 "FROM segments seg "
                 "JOIN sessions sess ON seg.session_id = sess.id "
                 "WHERE LOWER(seg.text) LIKE LOWER(?) ESCAPE '\\' "
-                "   OR LOWER(sess.name) LIKE LOWER(?) ESCAPE '\\' "
-                "ORDER BY sess.started_at DESC, seg.start_time ASC, seg.id ASC "
-                "LIMIT ?",
-                (pattern, pattern, limit),
+                "ORDER BY sess.started_at DESC, seg.start_time ASC, seg.id ASC",
+                (pattern,),
             ).fetchall()
-        return [
-            {
+            name_rows = self._conn.execute(
+                "SELECT seg.id, seg.session_id, seg.start_time, seg.text, "
+                "       sess.name AS session_name, sess.started_at "
+                "FROM segments seg "
+                "JOIN sessions sess ON seg.session_id = sess.id "
+                "INNER JOIN ( "
+                "    SELECT session_id, MIN(start_time) AS min_start "
+                "    FROM segments GROUP BY session_id "
+                ") first_start ON first_start.session_id = seg.session_id "
+                "              AND first_start.min_start = seg.start_time "
+                "INNER JOIN ( "
+                "    SELECT session_id, start_time, MIN(id) AS min_id "
+                "    FROM segments GROUP BY session_id, start_time "
+                ") first_seg ON first_seg.min_id = seg.id "
+                "WHERE LOWER(sess.name) LIKE LOWER(?) ESCAPE '\\' "
+                "ORDER BY sess.started_at DESC, seg.start_time ASC, seg.id ASC",
+                (pattern,),
+            ).fetchall()
+
+        def _row_to_result(row: sqlite3.Row) -> dict:
+            return {
                 "id": row["id"],
                 "session_id": row["session_id"],
                 "session_name": row["session_name"],
                 "start_time": row["start_time"],
                 "snippet": self._segment_snippet(row["text"]),
+                "_started_at": row["started_at"],
             }
-            for row in rows
-        ]
+
+        text_session_ids = {row["session_id"] for row in text_rows}
+        seen_ids: set[int] = set()
+        merged: list[dict] = []
+
+        for row in text_rows:
+            seg_id = int(row["id"])
+            if seg_id in seen_ids:
+                continue
+            seen_ids.add(seg_id)
+            merged.append(_row_to_result(row))
+
+        for row in name_rows:
+            if row["session_id"] in text_session_ids:
+                continue
+            seg_id = int(row["id"])
+            if seg_id in seen_ids:
+                continue
+            seen_ids.add(seg_id)
+            merged.append(_row_to_result(row))
+
+        merged.sort(key=lambda item: item["id"])
+        merged.sort(
+            key=lambda item: item["start_time"] if item["start_time"] is not None else 0.0
+        )
+        merged.sort(key=lambda item: item["_started_at"] or "", reverse=True)
+        for item in merged:
+            del item["_started_at"]
+
+        return merged[:limit]
 
     def delete_segments(self, session_id: str):
         with self._lock:

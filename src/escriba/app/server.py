@@ -92,7 +92,9 @@ def build_session_export_markdown(session: dict[str, Any], segments: list[dict[s
     lines.extend(["## Transcript", ""])
     for seg in segments:
         seg_id = seg.get("id")
-        anchor = f'<a id="seg-{seg_id}"></a>' if seg_id is not None else ""
+        anchor = ""
+        if seg_id is not None:
+            anchor = f'<a id="seg-{int(seg_id)}"></a>'
         timestamp = format_export_timestamp(seg.get("start_time"))
         text = seg.get("text") or ""
         speaker = _segment_speaker_label(seg)
@@ -770,6 +772,10 @@ class _Handler(BaseHTTPRequestHandler):
                 "ok": False,
                 "error": f"Name too long (max {MAX_SPEAKER_DISPLAY_NAME} characters)",
             }, 400
+        if display_name:
+            known_speakers = {s["speaker"] for s in db.list_speakers(session_id)}
+            if speaker_key not in known_speakers:
+                return {"ok": False, "error": "Unknown speaker for session"}, 400
         db.set_speaker_label(session_id, speaker_key, display_name)
         return {"ok": True}, 200
 

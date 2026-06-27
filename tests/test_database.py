@@ -470,7 +470,7 @@ def test_search_segments_escapes_like_wildcards(db: Database) -> None:
 
 
 def test_search_segments_matches_session_name(db: Database) -> None:
-    """Search also matches session names, returning that session's segments."""
+    """Search also matches session names, returning one representative segment."""
     session_id = _seed_completed_session(db, name="Acme Interview Panel")
     seg_ids = _add_segments(db, session_id, [(0.0, "Tell me about yourself")])
 
@@ -479,6 +479,20 @@ def test_search_segments_matches_session_name(db: Database) -> None:
     assert results[0]["session_id"] == session_id
     assert results[0]["id"] == seg_ids[0]
     assert results[0]["session_name"] == "Acme Interview Panel"
+
+
+def test_search_segments_name_match_does_not_flood_all_segments(db: Database) -> None:
+    """Session-name matches return one row per session, not every segment."""
+    session_id = _seed_completed_session(db, name="Acme Weekly Review")
+    _add_segments(
+        db,
+        session_id,
+        [(float(i), f"segment {i} with no keyword") for i in range(20)],
+    )
+
+    results = db.search_segments("Acme")
+    assert len(results) == 1
+    assert results[0]["session_id"] == session_id
 
 
 def test_search_segments_orders_by_session_started_at_desc(db: Database) -> None:

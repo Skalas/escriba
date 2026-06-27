@@ -1841,7 +1841,7 @@ async function pollTranscript() {
     box.innerHTML = t.segments.map(seg => {
       const ts = formatTime(seg.start);
       const speaker = segmentSpeakerLabel(seg);
-      const speakerPrefix = speaker ? `[${speaker}] ` : '';
+      const speakerPrefix = speaker ? `[${escHtml(speaker)}] ` : '';
       return `<div class="segment"><span class="segment-time">${ts}</span>${speakerPrefix}${escHtml(seg.text)}</div>`;
     }).join('');
     box.scrollTop = box.scrollHeight;
@@ -2151,7 +2151,7 @@ async function selectSession(id) {
       box.innerHTML = res.segments.map((seg, idx) => {
         const ts = formatTime(seg.start_time || 0);
         const speaker = segmentSpeakerLabel(seg);
-        const speakerPrefix = speaker ? `[${speaker}] ` : '';
+        const speakerPrefix = speaker ? `[${escHtml(speaker)}] ` : '';
         const clickable = hasAudio ? ' clickable' : '';
         const onclick = hasAudio ? ` onclick="seekToSegment(${seg.start_time || 0})"` : '';
         const splitBtn = (canSplit && idx > 0)
@@ -3073,7 +3073,10 @@ function escHtml(s) {
   d.textContent = s;
   return d.innerHTML;
 }
-function escAttr(s) { return s ? s.replace(/'/g, "\\'").replace(/"/g, '&quot;') : ''; }
+function escAttr(s) {
+  if (!s) return '';
+  return escHtml(String(s)).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 function showError(msg) {
   const b = document.getElementById('error-banner');

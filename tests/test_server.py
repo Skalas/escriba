@@ -183,3 +183,24 @@ def test_json_null_fields_return_4xx_not_500(app_state: AppState) -> None:
     payload, status = handler._rename_folder(folder_id, {"name": None})
     assert status == 400
     assert payload["ok"] is False
+
+
+def test_set_speaker_label_rejects_unknown_speaker(app_state: AppState) -> None:
+    """Renaming a speaker key that is not in the session returns 400."""
+    db = app_state.db
+    session_id = db.create_session(name="Interview")
+    db.stop_session(session_id)
+    db.add_segments(
+        session_id,
+        [{"start": 0.0, "end": 1.0, "text": "Hello", "speaker": "SPEAKER_00"}],
+    )
+
+    handler = _make_handler(app_state)
+    payload, status = handler._set_speaker_label(
+        session_id,
+        {"speaker": "SPEAKER_99", "name": "Ghost"},
+    )
+    assert status == 400
+    assert payload["ok"] is False
+    assert payload["error"] == "Unknown speaker for session"
+    assert db.get_speaker_labels(session_id) == {}
