@@ -467,7 +467,11 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/sessions/") and path.endswith("/export"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/export", 1)[0]
                 export_format = params.get("format", ["md"])[0]
-                self._respond(self._export_session(session_id, export_format))
+                download_flag = params.get("download", ["0"])[0].strip().lower()
+                if download_flag in ("1", "true", "yes"):
+                    self._serve_export_download(session_id, export_format)
+                else:
+                    self._respond(self._export_session(session_id, export_format))
             elif path.startswith("/api/sessions/"):
                 session_id = path.split("/api/sessions/")[1]
                 if session_id:
@@ -594,8 +598,10 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _export_session(self, session_id: str, fmt: str = "md") -> tuple[dict, int]:
-        """Build an in-browser export bundle for a session."""
+    def _resolve_session_export(
+        self, session_id: str, fmt: str
+    ) -> tuple[dict[str, Any], int] | tuple[str, str, str, str]:
+        """Build export payload or return an error response tuple."""
         db = self._require_db()
         session = db.get_session(session_id)
         if not session:
@@ -606,18 +612,49 @@ class _Handler(BaseHTTPRequestHandler):
         if export_format == "md":
             content = build_session_export_markdown(session, segments)
             filename = safe_export_filename(session.get("name", "Session"), "md")
+            content_type = "text/markdown"
         elif export_format == "txt":
             content = build_session_export_txt(session, segments)
             filename = safe_export_filename(session.get("name", "Session"), "txt")
+            content_type = "text/plain"
         else:
             return {"ok": False, "error": f"Unsupported format: {fmt}"}, 400
 
+        return content, filename, export_format, content_type
+
+    def _export_session(self, session_id: str, fmt: str = "md") -> tuple[dict, int]:
+        """Build an in-browser export bundle for a session (JSON for Copy)."""
+        resolved = self._resolve_session_export(session_id, fmt)
+        if isinstance(resolved[0], dict):
+            return resolved  # type: ignore[return-value]
+        content, filename, export_format, _content_type = resolved
         return {
             "ok": True,
             "filename": filename,
             "content": content,
             "format": export_format,
         }, 200
+
+    def _serve_export_download(self, session_id: str, fmt: str) -> None:
+        """Stream a session export as a file attachment (for Download)."""
+        resolved = self._resolve_session_export(session_id, fmt)
+        if isinstance(resolved[0], dict):
+            self._respond(resolved)  # type: ignore[arg-type]
+            return
+        content, filename, _export_format, content_type = resolved
+        body = content.encode("utf-8")
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+            self.send_header(
+                "Content-Disposition",
+                f'attachment; filename="{filename}"',
+            )
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("export download")
 
     def _serve_audio(self, session_id: str) -> None:
         """Serve the WAV audio file for a session with HTTP Range support."""

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -50,6 +52,8 @@ def app_state(minimal_config: AppConfig, tmp_path: Path) -> AppState:
 def _make_handler(app_state: AppState) -> _Handler:
     handler = _Handler.__new__(_Handler)
     handler.app_state = app_state
+    handler.headers = {}
+    handler.wfile = BytesIO()
     return handler
 
 
@@ -187,3 +191,46 @@ def test_export_session_md_from_database(app_state: AppState) -> None:
     txt_payload, txt_status = handler._export_session(session_id, "txt")
     assert txt_status == 200
     assert "[Candidate] Tell me about yourself" in txt_payload["content"]
+
+
+def test_export_download_returns_raw_attachment(app_state: AppState) -> None:
+    """download=1 mode streams raw bytes with Content-Disposition attachment."""
+    db = app_state.db
+    assert db is not None
+    session_id = _seed_completed_session(db, name="Team Sync", duration=30.0)
+    _add_segments(db, session_id, [(5.0, "Hello everyone")])
+
+    handler = _make_handler(app_state)
+    headers: dict[str, str] = {}
+    handler.send_response = MagicMock()
+    handler.send_header = lambda key, value: headers.__setitem__(key, value)
+    handler.end_headers = MagicMock()
+
+    handler._serve_export_download(session_id, "md")
+
+    handler.send_response.assert_called_once_with(200)
+    assert headers["Content-Type"] == "text/markdown; charset=utf-8"
+    assert headers["Content-Disposition"] == 'attachment; filename="Team Sync.md"'
+    body = handler.wfile.getvalue()
+    assert body.startswith(b"# Team Sync")
+    assert b'"ok"' not in body
+
+
+def test_export_download_txt_uses_plain_content_type(app_state: AppState) -> None:
+    """TXT download mode uses text/plain and attachment disposition."""
+    db = app_state.db
+    assert db is not None
+    session_id = _seed_completed_session(db, name="Plain Notes", duration=10.0)
+    _add_segments(db, session_id, [(1.0, "Line one")])
+
+    handler = _make_handler(app_state)
+    headers: dict[str, str] = {}
+    handler.send_response = MagicMock()
+    handler.send_header = lambda key, value: headers.__setitem__(key, value)
+    handler.end_headers = MagicMock()
+
+    handler._serve_export_download(session_id, "txt")
+
+    assert headers["Content-Type"] == "text/plain; charset=utf-8"
+    assert headers["Content-Disposition"] == 'attachment; filename="Plain Notes.txt"'
+    assert handler.wfile.getvalue().startswith(b"Plain Notes")

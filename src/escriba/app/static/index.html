@@ -725,6 +725,39 @@
     border-left: 3px solid var(--danger);
   }
   #error-banner.visible { display: block; animation: slideDown 200ms ease; }
+
+  #notice-banner {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100;
+    padding: 12px 18px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    display: none;
+    box-shadow: var(--shadow-lg);
+    max-width: min(90vw, 560px);
+    text-align: center;
+  }
+  #notice-banner.visible { display: block; animation: slideDown 200ms ease; }
+  #notice-banner.success {
+    background: var(--badge-active);
+    color: var(--success);
+    border-left: 3px solid var(--success);
+  }
+  #notice-banner.info {
+    background: var(--badge-completed);
+    color: var(--accent);
+    border-left: 3px solid var(--accent);
+  }
+  #notice-banner .notice-link {
+    color: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+    cursor: pointer;
+  }
   @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
@@ -839,15 +872,6 @@
   .segment:hover .segment-link-btn { opacity: 1; }
   .segment-link-btn:hover { background: var(--border-light); color: var(--accent); }
   .segment-link-btn svg { width: 12px; height: 12px; }
-  .export-toast {
-    font-size: 12px;
-    color: var(--accent);
-    margin-left: 4px;
-    opacity: 0;
-    transition: opacity var(--transition-fast);
-  }
-  .export-toast.visible { opacity: 1; }
-
   /* Speaker labels */
   .speaker-list { display: flex; flex-direction: column; gap: 6px; }
   .speaker-row {
@@ -1148,6 +1172,8 @@
   </div>
 </div>
 
+<div id="notice-banner" role="status" aria-live="polite"></div>
+
 <!-- Main content -->
 <div class="main">
   <div id="error-banner"></div>
@@ -1198,7 +1224,6 @@
             <div class="move-dropdown-item" role="menuitem" onclick="runExportAction('download')">Download .md</div>
           </div>
         </div>
-        <span class="export-toast" id="export-toast" aria-live="polite"></span>
       </div>
     </header>
     <div class="info-bar">
@@ -2608,12 +2633,55 @@ function runExportAction(action) {
   else if (action === 'download') downloadSessionMarkdown(btn);
 }
 
-function showExportToast(message) {
-  const toast = document.getElementById('export-toast');
-  if (!toast) return;
-  toast.textContent = message;
-  toast.classList.add('visible');
-  setTimeout(() => toast.classList.remove('visible'), 2000);
+let noticeDismissTimer = null;
+
+function hideNotice() {
+  const banner = document.getElementById('notice-banner');
+  if (!banner) return;
+  banner.classList.remove('visible', 'success', 'info');
+  banner.textContent = '';
+  banner.innerHTML = '';
+  if (noticeDismissTimer) {
+    clearTimeout(noticeDismissTimer);
+    noticeDismissTimer = null;
+  }
+}
+
+function showNotice(message, opts = {}) {
+  const banner = document.getElementById('notice-banner');
+  if (!banner) return;
+  hideNotice();
+  const type = opts.type || 'info';
+  banner.className = 'visible ' + type;
+  if (opts.action && opts.action.sid) {
+    const before = opts.action.before || message || '';
+    const after = opts.action.after || '';
+    const name = opts.action.name || opts.action.label || 'Recording';
+    banner.innerHTML =
+      escHtml(before) +
+      '<a href="#" class="notice-link">' + escHtml(name) + '</a>' +
+      escHtml(after);
+    banner.querySelector('.notice-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      hideNotice();
+      selectSession(opts.action.sid);
+    });
+  } else {
+    banner.textContent = message;
+  }
+  noticeDismissTimer = setTimeout(hideNotice, 3500);
+}
+
+function triggerAttachmentDownload(url) {
+  let iframe = document.getElementById('download-iframe');
+  if (!iframe) {
+    iframe = document.createElement('iframe');
+    iframe.id = 'download-iframe';
+    iframe.title = 'Download';
+    iframe.style.display = 'none';
+    document.body.appendChild(iframe);
+  }
+  iframe.src = url;
 }
 
 async function copyToClipboard(text) {
@@ -2645,7 +2713,7 @@ async function copySessionExport(btn) {
     const res = await fetchSessionExport('md');
     if (!res.ok) { showError(res.error || 'Export failed'); return; }
     await copyToClipboard(res.content || '');
-    showExportToast('Copied');
+    showNotice('Copied', { type: 'success' });
     btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> <span class="btn-label">Copied</span>';
     setTimeout(() => { btn.innerHTML = origHTML; }, 2000);
   } catch (e) {
@@ -2655,28 +2723,21 @@ async function copySessionExport(btn) {
   }
 }
 
-async function downloadSessionMarkdown(btn) {
+function downloadSessionMarkdown(btn) {
   if (!selectedSessionId) return;
   const origHTML = btn.innerHTML;
   btn.disabled = true;
   try {
-    const res = await fetchSessionExport('md');
-    if (!res.ok) { showError(res.error || 'Export failed'); return; }
-    const blob = new Blob([res.content || ''], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = res.filename || 'session.md';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showExportToast('Downloaded');
+    triggerAttachmentDownload(
+      '/api/sessions/' + selectedSessionId + '/export?format=md&download=1'
+    );
+    showNotice('Downloaded', { type: 'success' });
+    btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> <span class="btn-label">Downloaded</span>';
+    setTimeout(() => { btn.innerHTML = origHTML; }, 2000);
   } catch (e) {
     showError('Download failed: ' + e.message);
   } finally {
     btn.disabled = false;
-    btn.innerHTML = origHTML;
   }
 }
 
@@ -2687,7 +2748,7 @@ function segmentDeepLink(sessionId, segmentId) {
 async function copySegmentLink(sessionId, segmentId) {
   try {
     await copyToClipboard(segmentDeepLink(sessionId, segmentId));
-    showExportToast('Link copied');
+    showNotice('Link copied', { type: 'success' });
   } catch (e) {
     showError('Copy failed: ' + e.message);
   }
@@ -2739,7 +2800,19 @@ async function generateSessionNotes() {
       }
     } else if (res.ok && res.notes) {
       const saved = await appendNotesToSession(sid, res.notes);
-      if (saved) showExportToast('Notes generated for the other recording.');
+      if (saved) {
+        const session = allSessions.find(s => s.id === sid);
+        const sessionName = session ? session.name : 'Recording';
+        showNotice('', {
+          type: 'info',
+          action: {
+            sid,
+            name: sessionName,
+            before: 'Notes generated for "',
+            after: '"',
+          },
+        });
+      }
     }
   } catch (e) {
     if (selectedSessionId === sid) showError('Error: ' + e.message);
