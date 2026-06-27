@@ -6,12 +6,17 @@ import logging
 import os
 import struct
 import threading
+import time
 import wave
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Cap live PCM buffer at this multiple of one transcription chunk.
+AUDIO_BUFFER_CAP_FACTOR = 2
+AUDIO_BUFFER_OVERFLOW_LOG_INTERVAL_S = 5.0
 
 
 class TranscriptionSession:
@@ -44,6 +49,7 @@ class TranscriptionSession:
         self._title_generated: bool = False
         self._title_refined: bool = False
         self._title_thread: threading.Thread | None = None
+        self._last_buffer_overflow_log: float = 0.0
 
     def _open_audio_file(self):
         """Open a WAV file to record the session audio."""
@@ -84,6 +90,7 @@ class TranscriptionSession:
         self._mic_buffer = bytearray()
         self._last_segment_count = 0
         self.error = None
+        self._last_buffer_overflow_log = 0.0
 
         # Create DB session
         if self.db:
@@ -108,26 +115,7 @@ class TranscriptionSession:
         )
 
         try:
-            if backend == "mlx-whisper":
-                from escriba.transcribe.streaming_mlx import (
-                    StreamingTranscriberMLX,
-                )
-
-                self.transcriber = StreamingTranscriberMLX(
-                    model_size=model_size,
-                    language=language,
-                    realtime_output=True,
-                    dictionary=self.config.dictionary,
-                )
-            else:
-                from escriba.transcribe.streaming import StreamingTranscriber
-
-                self.transcriber = StreamingTranscriber(
-                    model_size=model_size,
-                    language=language,
-                    device=self.config.streaming.device,
-                    realtime_output=True,
-                )
+            self.transcriber = _build_transcriber(self.config, realtime_output=True)
         except Exception as e:
             self.error = f"Failed to load model: {e}"
             logger.error("Failed to load model: %s", e, exc_info=True)
@@ -296,21 +284,88 @@ class TranscriptionSession:
             actual_rate, target_rate, needs_resample, mix_mode,
         )
 
+    def _chunk_pcm_byte_size(self) -> int:
+        """Bytes in one streaming chunk of raw PCM int16 audio."""
+        sample_rate = self.config.audio.sample_rate
+        channels = self.config.audio.channels
+        chunk_duration = self.config.streaming.chunk_duration
+        return int(sample_rate * channels * 2 * chunk_duration)
+
+    def _audio_buffer_cap_bytes(self) -> int:
+        """Maximum bytes retained in the live PCM buffer before dropping oldest audio."""
+        return self._chunk_pcm_byte_size() * AUDIO_BUFFER_CAP_FACTOR
+
+    def _append_pcm_with_backpressure(self, buffer: bytearray, data: bytes) -> None:
+        """Append PCM to a live buffer, dropping oldest frame-aligned bytes if over the cap."""
+        cap = self._audio_buffer_cap_bytes()
+        frame_bytes = self._pcm_frame_bytes()
+        overflow = len(buffer) + len(data) - cap
+        if overflow > 0:
+            drop = min(
+                len(buffer),
+                ((overflow + frame_bytes - 1) // frame_bytes) * frame_bytes,
+            )
+            if drop > 0:
+                del buffer[:drop]
+                now = time.monotonic()
+                if (
+                    now - self._last_buffer_overflow_log
+                    >= AUDIO_BUFFER_OVERFLOW_LOG_INTERVAL_S
+                ):
+                    logger.warning(
+                        "Audio buffer exceeded cap (%d bytes); dropped %d oldest bytes "
+                        "because transcription is behind",
+                        cap,
+                        drop,
+                    )
+                    self._last_buffer_overflow_log = now
+        buffer.extend(data)
+
     def _on_audio_data(self, data: bytes):
         with self._buffer_lock:
-            self._audio_buffer.extend(data)
+            self._append_pcm_with_backpressure(self._audio_buffer, data)
 
     def _on_system_audio(self, data: bytes):
         with self._buffer_lock:
-            self._system_buffer.extend(data)
+            self._append_pcm_with_backpressure(self._system_buffer, data)
 
     def _on_mic_audio(self, data: bytes):
         with self._buffer_lock:
-            self._mic_buffer.extend(data)
+            self._append_pcm_with_backpressure(self._mic_buffer, data)
+
+    def _pcm_frame_bytes(self) -> int:
+        """Bytes per PCM frame (one sample across all channels, int16)."""
+        return max(self.config.audio.channels * 2, 1)
+
+    def _align_dual_buffers_to_trailing_window(self) -> None:
+        """Drop oldest PCM from the longer buffer so system/mic share one trailing window."""
+        sys_len = len(self._system_buffer)
+        mic_len = len(self._mic_buffer)
+        if sys_len == 0 or mic_len == 0 or sys_len == mic_len:
+            return
+
+        frame_bytes = self._pcm_frame_bytes()
+        if sys_len > mic_len:
+            longer = self._system_buffer
+            target_len = mic_len
+        else:
+            longer = self._mic_buffer
+            target_len = sys_len
+
+        excess = len(longer) - target_len
+        drop = (excess // frame_bytes) * frame_bytes
+        if drop == 0:
+            drop = excess
+        del longer[:drop]
+        remaining = len(longer) - target_len
+        if remaining > 0:
+            del longer[:remaining]
 
     def _mix_buffers(self) -> bytes:
         """Mix system and mic PCM buffers into one. Must be called under _buffer_lock."""
         import numpy as np
+
+        self._align_dual_buffers_to_trailing_window()
 
         sys_bytes = bytes(self._system_buffer)
         mic_bytes = bytes(self._mic_buffer)
@@ -324,13 +379,6 @@ class TranscriptionSession:
 
         sys_samples = np.frombuffer(sys_bytes, dtype=np.int16).astype(np.float32)
         mic_samples = np.frombuffer(mic_bytes, dtype=np.int16).astype(np.float32)
-
-        # Pad shorter buffer with silence
-        max_len = max(len(sys_samples), len(mic_samples))
-        if len(sys_samples) < max_len:
-            sys_samples = np.pad(sys_samples, (0, max_len - len(sys_samples)))
-        if len(mic_samples) < max_len:
-            mic_samples = np.pad(mic_samples, (0, max_len - len(mic_samples)))
 
         mic_boost = self.config.audio.mic_boost
         mixed = sys_samples + mic_samples * mic_boost
@@ -619,6 +667,40 @@ def _build_wav(pcm_data: bytes, sample_rate: int, channels: int) -> bytes:
     return header + pcm_data
 
 
+def _build_transcriber(config, *, realtime_output: bool) -> Any:
+    """
+    Construct the streaming transcriber for the configured backend.
+
+    Shared by live sessions and re-transcribe so both paths honor the same
+    VAD, hallucination, and dictionary settings from ``config``.
+    """
+    model_size = config.streaming.model_size
+    language = config.streaming.language
+    shared_kwargs = {
+        "model_size": model_size,
+        "language": language,
+        "realtime_output": realtime_output,
+        "vad_enabled": config.streaming.vad_enabled,
+        "vad_config": config.vad,
+        "hallucination_config": config.hallucination,
+    }
+
+    if config.streaming.backend == "mlx-whisper":
+        from escriba.transcribe.streaming_mlx import StreamingTranscriberMLX
+
+        return StreamingTranscriberMLX(
+            **shared_kwargs,
+            dictionary=config.dictionary,
+        )
+
+    from escriba.transcribe.streaming import StreamingTranscriber
+
+    return StreamingTranscriber(
+        **shared_kwargs,
+        device=config.streaming.device,
+    )
+
+
 def _build_custom_prompt(
     transcript: str, prompt: str, system_prompt: str | None = None
 ) -> str:
@@ -703,7 +785,6 @@ def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
 
     backend = config.streaming.backend
     model_size = config.streaming.model_size
-    language = config.streaming.language
     chunk_duration = config.streaming.chunk_duration
 
     logger.info(
@@ -711,20 +792,7 @@ def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
         audio_path.name, total_frames, backend, model_size,
     )
 
-    if backend == "mlx-whisper":
-        from escriba.transcribe.streaming_mlx import StreamingTranscriberMLX
-
-        transcriber: StreamingTranscriberMLX | Any
-        transcriber = StreamingTranscriberMLX(
-            model_size=model_size, language=language, realtime_output=False,
-        )
-    else:
-        from escriba.transcribe.streaming import StreamingTranscriber
-
-        transcriber = StreamingTranscriber(
-            model_size=model_size, language=language,
-            device=config.streaming.device, realtime_output=False,
-        )
+    transcriber = _build_transcriber(config, realtime_output=False)
 
     chunk_bytes = int(sample_rate * channels * 2 * chunk_duration)
     min_bytes = sample_rate * 2  # at least 0.5s

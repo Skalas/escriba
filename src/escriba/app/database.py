@@ -70,6 +70,26 @@ def _create_session_indexes(conn: sqlite3.Connection) -> None:
     )
 
 
+def _dedupe_segments_and_create_unique_index(conn: sqlite3.Connection) -> None:
+    """Collapse duplicate segment timings, then enforce uniqueness."""
+    deleted = conn.execute(
+        """
+        DELETE FROM segments
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM segments
+            GROUP BY session_id, start_time, end_time
+        )
+        """
+    ).rowcount
+    if deleted:
+        logger.info("Migration: removed %d duplicate segment row(s)", deleted)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_segments_session_timing "
+        "ON segments(session_id, start_time, end_time)"
+    )
+
+
 _MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (
         1,
@@ -87,6 +107,10 @@ _MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (
         3,
         lambda conn: _create_session_indexes(conn),
+    ),
+    (
+        4,
+        lambda conn: _dedupe_segments_and_create_unique_index(conn),
     ),
 ]
 
@@ -200,7 +224,7 @@ class Database:
             return
         with self._lock:
             self._conn.executemany(
-                "INSERT INTO segments (session_id, start_time, end_time, text, speaker) "
+                "INSERT OR IGNORE INTO segments (session_id, start_time, end_time, text, speaker) "
                 "VALUES (?, ?, ?, ?, ?)",
                 [
                     (
@@ -461,8 +485,12 @@ class Database:
                     (row["id"], off, dur)
                     for row, (_ap, off, dur) in zip(src_rows, offsets)
                 ]:
-                    self._conn.execute(
-                        "INSERT INTO segments "
+                    expected = self._conn.execute(
+                        "SELECT COUNT(*) FROM segments WHERE session_id = ?",
+                        (src_id,),
+                    ).fetchone()[0]
+                    cursor = self._conn.execute(
+                        "INSERT OR IGNORE INTO segments "
                         "(session_id, start_time, end_time, text, speaker) "
                         "SELECT ?, "
                         "       start_time + ?, "
@@ -473,6 +501,13 @@ class Database:
                         "ORDER BY start_time ASC, id ASC",
                         (merged_id, offset, offset, src_id),
                     )
+                    dropped = expected - cursor.rowcount
+                    if dropped > 0:
+                        logger.warning(
+                            "Merge ignored %d duplicate segment(s) from session %s",
+                            dropped,
+                            src_id,
+                        )
 
             return merged_id, offsets
 

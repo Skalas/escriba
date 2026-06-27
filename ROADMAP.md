@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-26 · Current version: `0.4.0` (Epic #12 shipped) · next milestone: `v0.5.0` (depth on the core loop)_
+_Last updated: 2026-06-27 · Current version: `0.5.0` (transcription robustness, #29) · next milestone: `v0.6.0` (depth on the core loop, cont.)_
 
 ---
 
@@ -82,15 +82,26 @@ The core stops corrupting state under concurrent load and fails gracefully. **Th
 
 ---
 
-### `v0.5.0` — Depth on the core loop  ·  _next up_
+### `v0.5.0` — Transcription robustness  ·  _shipped 2026-06-27 (#29)_
 
-Make the existing record → transcribe → summarize flow better, not wider. _Candidates — to be scoped:_
+Hardened the transcription path so it never silently degrades output (the first "depth on the core loop" slice).
 
-- [ ] Cross-session transcript search
-- [ ] Speaker-label naming & editing (persist names across a session)
-- [ ] Richer export / share (Markdown bundle, copy-to-clipboard, per-segment links)
-- [ ] Re-transcribe respects full config (dictionary/VAD/hallucination) (`session.py:624`)
-- [ ] Transcription robustness: recoverable vs fatal chunk errors, audio buffer backpressure, segment dedup
+- [x] Re-transcribe respects full config (dictionary/VAD/hallucination) — shared `_build_transcriber` so live + re-transcribe can't drift
+- [x] Recoverable vs fatal chunk errors — transient inference failures retry (bounded); fatal surface as `ChunkProcessingError` instead of silent silence
+- [x] Audio buffer backpressure — live/system/mic buffers bounded (~2× chunk), drop oldest + warn instead of unbounded growth
+- [x] Segment dedup — `(session_id, start_time, end_time)` unique index + `INSERT OR IGNORE`; migration de-dups existing rows safely
+
+**Done when:** re-transcribe honors all config; transient chunk failures retry instead of silently dropping audio. ✅ (100 tests; review caught & fixed a merge/unique-index break, a both-mode mix desync, and an empty-source audio-discard.)
+
+---
+
+### `v0.6.0` — Depth on the core loop (cont.)  ·  _next up_
+
+The remaining "better, not wider" candidates. _To be scoped:_
+
+- [ ] Cross-session transcript search (#26)
+- [ ] Speaker-label naming & editing — persist names across a session (#27)
+- [ ] Richer export / share — Markdown bundle, copy-to-clipboard, per-segment links (#28)
 
 **Done when:** _TBD at planning time._
 

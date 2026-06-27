@@ -11,8 +11,10 @@ import pytest
 from escriba.app.database import (
     Database,
     _MIGRATIONS,
+    _SCHEMA,
     _get_schema_version,
     _run_migrations,
+    _set_schema_version,
 )
 
 
@@ -273,3 +275,145 @@ def test_concurrent_split_and_add_segments(db: Database) -> None:
     }
 
     _assert_segment_integrity(db)
+
+
+def test_t4_add_segments_ignores_duplicate_timing(db: Database) -> None:
+    """T4: duplicate (session_id, start_time, end_time) inserts are skipped."""
+    session_id = db.create_session(name="Dedup")
+    segment = {"start": 1.0, "end": 2.0, "text": "first"}
+    db.add_segments(session_id, [segment])
+    db.add_segments(
+        session_id,
+        [{"start": 1.0, "end": 2.0, "text": "duplicate"}],
+    )
+
+    rows = db.get_segments(session_id)
+    assert len(rows) == 1
+    assert rows[0]["text"] == "first"
+
+
+def test_b1_merge_sessions_ignores_colliding_segment_timings(db: Database) -> None:
+    """B1: merge survives when rebased segments share (start_time, end_time)."""
+    session_a = _seed_completed_session(db, name="Merge A", duration=0.0)
+    session_b = _seed_completed_session(db, name="Merge B", duration=0.0)
+    db._conn.execute(
+        "UPDATE sessions SET duration_seconds = NULL WHERE id = ?",
+        (session_a,),
+    )
+    db._conn.commit()
+
+    db.add_segments(
+        session_a,
+        [{"start": 0.0, "end": 1.0, "text": "from-a"}],
+    )
+    db.add_segments(
+        session_b,
+        [{"start": 0.0, "end": 1.0, "text": "from-b"}],
+    )
+
+    merged_id, _sources = db.merge_sessions([session_a, session_b], name="Merged")
+
+    segments = db.get_segments(merged_id)
+    assert len(segments) == 1
+    assert segments[0]["text"] == "from-a"
+
+
+def test_merge_sessions_logs_when_segments_are_dropped(db: Database, caplog) -> None:
+    """Merge collisions are visible via WARNING, not silently ignored."""
+    import logging
+
+    caplog.set_level(logging.WARNING)
+
+    session_a = _seed_completed_session(db, name="Merge A", duration=0.0)
+    session_b = _seed_completed_session(db, name="Merge B", duration=0.0)
+    db.add_segments(
+        session_a,
+        [{"start": 0.0, "end": 1.0, "text": "from-a"}],
+    )
+    db.add_segments(
+        session_b,
+        [{"start": 0.0, "end": 1.0, "text": "from-b"}],
+    )
+
+    db.merge_sessions([session_a, session_b], name="Merged")
+
+    assert any(
+        "ignored 1 duplicate segment" in record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING"
+    )
+
+
+def test_t4_migration_dedupes_existing_rows_and_creates_unique_index(
+    tmp_path: Path,
+) -> None:
+    """T4: migration 4 collapses legacy duplicates then adds the unique index."""
+    db_path = tmp_path / "legacy-duplicates.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(_SCHEMA)
+    _set_schema_version(conn, 3)
+
+    session_id = "session-with-dupes"
+    now = "2026-01-01T00:00:00+00:00"
+    conn.execute(
+        "INSERT INTO sessions (id, name, started_at, status) VALUES (?, ?, ?, 'completed')",
+        (session_id, "Legacy", now),
+    )
+    for text in ("keep-me", "drop-me", "drop-me-too"):
+        conn.execute(
+            "INSERT INTO segments (session_id, start_time, end_time, text) "
+            "VALUES (?, ?, ?, ?)",
+            (session_id, 5.0, 6.0, text),
+        )
+    conn.commit()
+    conn.close()
+
+    db = Database(db_path)
+    try:
+        assert _get_schema_version(db._conn) == LATEST_SCHEMA_VERSION
+        rows = db.get_segments(session_id)
+        assert len(rows) == 1
+        assert rows[0]["text"] == "keep-me"
+
+        index_row = db._conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'index' AND name = 'idx_segments_session_timing'"
+        ).fetchone()
+        assert index_row is not None
+
+        _run_migrations(db._conn)
+        assert _get_schema_version(db._conn) == LATEST_SCHEMA_VERSION
+        assert len(db.get_segments(session_id)) == 1
+    finally:
+        db.close()
+
+
+def test_t4_segment_dedup_migration_is_idempotent(tmp_path: Path) -> None:
+    """T4: running migration 4 twice does not error or drop surviving rows."""
+    db_path = tmp_path / "legacy-idempotent.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(_SCHEMA)
+    _set_schema_version(conn, 3)
+
+    session_id = "session-idempotent"
+    now = "2026-01-01T00:00:00+00:00"
+    conn.execute(
+        "INSERT INTO sessions (id, name, started_at, status) VALUES (?, ?, ?, 'completed')",
+        (session_id, "Legacy", now),
+    )
+    conn.execute(
+        "INSERT INTO segments (session_id, start_time, end_time, text) "
+        "VALUES (?, ?, ?, ?)",
+        (session_id, 0.0, 1.0, "only-one"),
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(db_path)
+    try:
+        _run_migrations(db._conn)
+        _run_migrations(db._conn)
+        assert len(db.get_segments(session_id)) == 1
+        assert db.get_segments(session_id)[0]["text"] == "only-one"
+    finally:
+        db.close()
