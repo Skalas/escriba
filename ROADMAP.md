@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-27 · Current version: `0.5.0` (transcription robustness, #29) · next milestone: `v0.6.0` (depth on the core loop, cont.)_
+_Last updated: 2026-06-27 · Current version: `0.6.0` (search · speakers · export · interview prompt) · next milestone: `v0.7.0` (to be scoped)_
 
 ---
 
@@ -95,15 +95,24 @@ Hardened the transcription path so it never silently degrades output (the first 
 
 ---
 
-### `v0.6.0` — Depth on the core loop (cont.)  ·  _next up_
+### `v0.6.0` — Search, speakers, export, interview prompt  ·  _shipped 2026-06-27_
 
-The remaining "better, not wider" candidates. _To be scoped:_
+Three "better, not wider" features + a rigorous interview-evaluation prompt.
 
-- [ ] Cross-session transcript search (#26)
-- [ ] Speaker-label naming & editing — persist names across a session (#27)
-- [ ] Richer export / share — Markdown bundle, copy-to-clipboard, per-segment links (#28)
+- [x] Cross-session transcript search (#26) — search across all sessions, click-to-jump + highlight
+- [x] Speaker-label naming & editing — persist names per session, reflected in transcript/notes/export (#27)
+- [x] Richer export / share — Markdown bundle, copy-to-clipboard, save-to-Downloads, per-segment deep links (#28)
+- [x] Non-complacent **Interview Evaluation** prompt (evidence-demanding, decisive hire/no-hire)
 
-**Done when:** _TBD at planning time._
+**Also (surfaced in smoke):** recovered orphaned audio (relink canonical WAV when `audio_path` was empty — no data lost); GFM table rendering in notes; notes-generation scoped to its session (no cross-record bleed); audio-stream client-disconnect handled (no BrokenPipe spam); dark-mode surface separation + button/control text inherit theme color; markdown-table/XSS escaping on speaker names.
+
+**Done when:** the three features work end-to-end and the interview prompt yields a critical evaluation. ✅ (130 tests; review caught a stored-XSS via the rename feature.)
+
+---
+
+### `v0.7.0` — _next up (to be scoped)_
+
+Candidates: local-LLM inference in a subprocess so generation doesn't block the app (#36); observability (Epic #12 §8); config validation (Epic #12 §6); the v0.4.0-review backlog (#30–#33).
 
 ---
 

@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from socketserver import ThreadingMixIn
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 from urllib.parse import parse_qs, urlparse
 
 if TYPE_CHECKING:
@@ -24,6 +24,153 @@ logger = logging.getLogger(__name__)
 
 MAX_BODY_BYTES = 1_048_576
 REQUEST_TIMEOUT_SECONDS = 30
+MAX_SPEAKER_DISPLAY_NAME = 200
+_CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError)
+
+
+def _segment_speaker_label(segment: dict[str, Any]) -> str | None:
+    """Resolved speaker label for display/export (custom name or raw)."""
+    display = segment.get("speaker_display")
+    if display:
+        return str(display)
+    raw = segment.get("speaker")
+    return str(raw) if raw else None
+
+
+def _segments_to_transcript(segments: list[dict[str, Any]]) -> str:
+    """Build transcript text using display speaker names when available."""
+    parts: list[str] = []
+    for seg in segments:
+        text = seg.get("text") or ""
+        speaker = _segment_speaker_label(seg)
+        if speaker:
+            parts.append(f"[{speaker}] {text}")
+        else:
+            parts.append(text)
+    return " ".join(parts)
+
+
+def format_export_timestamp(seconds: float | int | None) -> str:
+    """Format segment start time as HH:MM:SS for export."""
+    total = int(seconds or 0)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def format_export_duration(seconds: float | int | None) -> str:
+    """Format session duration as HH:MM:SS for export metadata."""
+    return format_export_timestamp(seconds)
+
+
+def safe_export_filename(name: str, ext: str) -> str:
+    """Build a filesystem-safe export filename."""
+    safe_name = "".join(
+        c if c.isalnum() or c in " -_" else "_"
+        for c in name
+    ).strip() or "transcript"
+    return f"{safe_name}.{ext}"
+
+
+def format_path_for_display(path: Path) -> str:
+    """Return a user-friendly path (~-prefixed when under home)."""
+    home = Path.home()
+    try:
+        return "~/" + str(path.relative_to(home))
+    except ValueError:
+        return str(path)
+
+
+def unique_export_path(directory: Path, filename: str) -> Path:
+    """Pick a non-colliding path under directory for filename."""
+    target = directory / filename
+    if not target.exists():
+        return target
+    stem = Path(filename).stem
+    ext = Path(filename).suffix
+    counter = 2
+    while True:
+        candidate = directory / f"{stem} ({counter}){ext}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def save_session_export_to_downloads(
+    content: str,
+    filename: str,
+    downloads_dir: Path | None = None,
+) -> Path:
+    """Write export content to ~/Downloads with a de-duplicated filename."""
+    directory = downloads_dir if downloads_dir is not None else Path.home() / "Downloads"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = unique_export_path(directory, filename)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def build_session_export_markdown(session: dict[str, Any], segments: list[dict[str, Any]]) -> str:
+    """Build a Markdown export bundle for a session."""
+    lines: list[str] = [f"# {session.get('name', 'Session')}", ""]
+
+    metadata: list[str] = []
+    if session.get("started_at"):
+        metadata.append(f"**Date:** {session['started_at']}")
+    duration = session.get("duration_seconds")
+    if duration is not None:
+        metadata.append(f"**Duration:** {format_export_duration(duration)}")
+    if metadata:
+        lines.extend(metadata)
+        lines.append("")
+
+    notes_text = (session.get("notes_text") or "").strip()
+    if notes_text:
+        lines.extend(["## Notes", "", notes_text, ""])
+
+    lines.extend(["## Transcript", ""])
+    for seg in segments:
+        seg_id = seg.get("id")
+        anchor = ""
+        if seg_id is not None:
+            anchor = f'<a id="seg-{int(seg_id)}"></a>'
+        timestamp = format_export_timestamp(seg.get("start_time"))
+        text = seg.get("text") or ""
+        speaker = _segment_speaker_label(seg)
+        if speaker:
+            lines.append(f"{anchor}[{timestamp}] **{speaker}**: {text}")
+        else:
+            lines.append(f"{anchor}[{timestamp}] {text}")
+
+    return "\n".join(lines)
+
+
+def build_session_export_txt(session: dict[str, Any], segments: list[dict[str, Any]]) -> str:
+    """Build a plain-text export bundle for a session."""
+    lines: list[str] = [session.get("name", "Session"), ""]
+
+    if session.get("started_at"):
+        lines.append(f"Date: {session['started_at']}")
+    duration = session.get("duration_seconds")
+    if duration is not None:
+        lines.append(f"Duration: {format_export_duration(duration)}")
+    if session.get("started_at") or duration is not None:
+        lines.append("")
+
+    notes_text = (session.get("notes_text") or "").strip()
+    if notes_text:
+        lines.extend(["Notes", notes_text, ""])
+
+    lines.append("Transcript")
+    for seg in segments:
+        timestamp = format_export_timestamp(seg.get("start_time"))
+        text = seg.get("text") or ""
+        speaker = _segment_speaker_label(seg)
+        if speaker:
+            lines.append(f"{timestamp}  [{speaker}] {text}")
+        else:
+            lines.append(f"{timestamp}  {text}")
+
+    return "\n".join(lines)
 
 
 class ApiError(Exception):
@@ -286,6 +433,40 @@ class _Handler(BaseHTTPRequestHandler):
             status=500,
         )
 
+    def _log_client_disconnect(self, context: str) -> None:
+        client = getattr(self, "client_address", None)
+        logger.debug(
+            "Client disconnected during %s from %s",
+            context,
+            client,
+        )
+
+    def _handle_request_exception(self, exc: Exception) -> None:
+        if isinstance(exc, ApiError):
+            self._respond_error(exc)
+        elif isinstance(exc, _CLIENT_DISCONNECT_ERRORS):
+            self._log_client_disconnect("request handling")
+        else:
+            self._respond_unexpected(exc)
+
+    def _stream_file_to_client(self, f: BinaryIO, length: int | None = None) -> None:
+        """Stream an open file to the client; stop quietly on disconnect."""
+        remaining = length
+        while True:
+            chunk_size = 65536 if remaining is None else min(65536, remaining)
+            if remaining is not None and remaining <= 0:
+                break
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            try:
+                self.wfile.write(chunk)
+            except _CLIENT_DISCONNECT_ERRORS:
+                self._log_client_disconnect("audio stream")
+                return
+            if remaining is not None:
+                remaining -= len(chunk)
+
     # --- Routing ---
 
     def do_GET(self) -> None:
@@ -309,6 +490,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(self._get_folders())
             elif path == "/api/models":
                 self._respond(self._list_models())
+            elif path == "/api/search":
+                q = params.get("q", [""])[0]
+                self._respond(self._search_segments(q))
             elif path == "/api/download-model/status":
                 downloading, result = self.app_state.get_download_status()
                 self._respond(
@@ -317,6 +501,10 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/sessions/") and path.endswith("/audio"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/audio", 1)[0]
                 self._serve_audio(session_id)
+            elif path.startswith("/api/sessions/") and path.endswith("/export"):
+                session_id = path.split("/api/sessions/")[1].rsplit("/export", 1)[0]
+                export_format = params.get("format", ["md"])[0]
+                self._respond(self._export_session(session_id, export_format))
             elif path.startswith("/api/sessions/"):
                 session_id = path.split("/api/sessions/")[1]
                 if session_id:
@@ -327,8 +515,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("GET")
         except Exception as exc:
-            self._respond_unexpected(exc)
+            self._handle_request_exception(exc)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -351,6 +541,16 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(self._move_sessions(self._parse_json_body()))
             elif path == "/api/folders":
                 self._respond(self._create_folder(self._parse_json_body()))
+            elif path.startswith("/api/sessions/") and path.endswith("/export"):
+                session_id = path.split("/api/sessions/")[1].rsplit("/export", 1)[0]
+                body = self._parse_json_body()
+                if body.get("save"):
+                    export_format = str(body.get("format", "md"))
+                    self._respond(self._save_session_export(session_id, export_format))
+                else:
+                    self._respond(
+                        ({"ok": False, "error": "Use GET for JSON export or POST with save:true"}, 400)
+                    )
             elif path.startswith("/api/sessions/") and path.endswith("/retranscribe"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/retranscribe", 1)[0]
                 self._respond(self._retranscribe_session(session_id))
@@ -365,17 +565,16 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/sessions/") and path.endswith("/notes"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/notes", 1)[0]
                 self._respond(self._save_notes(session_id, self._parse_json_body()))
-            elif path.startswith("/api/sessions/") and path.endswith("/export"):
-                session_id = path.split("/api/sessions/")[1].rsplit("/export", 1)[0]
-                self._respond(self._export_session(session_id))
             elif path == "/api/download-model":
                 self._respond(self._download_model(self._parse_json_body()))
             else:
                 self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("POST")
         except Exception as exc:
-            self._respond_unexpected(exc)
+            self._handle_request_exception(exc)
 
     def do_PUT(self) -> None:
         parsed = urlparse(self.path)
@@ -387,6 +586,9 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/sessions/") and path.endswith("/rename"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/rename", 1)[0]
                 self._respond(self._rename_session(session_id, self._parse_json_body()))
+            elif path.startswith("/api/sessions/") and path.endswith("/speakers"):
+                session_id = path.split("/api/sessions/")[1].rsplit("/speakers", 1)[0]
+                self._respond(self._set_speaker_label(session_id, self._parse_json_body()))
             elif path.startswith("/api/folders/") and path.endswith("/rename"):
                 folder_id = path.split("/api/folders/")[1].rsplit("/rename", 1)[0]
                 self._respond(self._rename_folder(folder_id, self._parse_json_body()))
@@ -394,8 +596,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("PUT")
         except Exception as exc:
-            self._respond_unexpected(exc)
+            self._handle_request_exception(exc)
 
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
@@ -418,8 +622,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("DELETE")
         except Exception as exc:
-            self._respond_unexpected(exc)
+            self._handle_request_exception(exc)
 
     # --- Helpers ---
 
@@ -435,51 +641,60 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _export_session(self, session_id: str) -> tuple[dict, int]:
-        """Save transcript + notes to ~/Downloads as a text file."""
+    def _resolve_session_export(
+        self, session_id: str, fmt: str
+    ) -> tuple[dict[str, Any], int] | tuple[str, str, str, str]:
+        """Build export payload or return an error response tuple."""
         db = self._require_db()
         session = db.get_session(session_id)
         if not session:
             return {"ok": False, "error": "Session not found"}, 404
+
         segments = db.get_segments(session_id)
+        export_format = (fmt or "md").strip().lower()
+        if export_format == "md":
+            content = build_session_export_markdown(session, segments)
+            filename = safe_export_filename(session.get("name", "Session"), "md")
+            content_type = "text/markdown"
+        elif export_format == "txt":
+            content = build_session_export_txt(session, segments)
+            filename = safe_export_filename(session.get("name", "Session"), "txt")
+            content_type = "text/plain"
+        else:
+            return {"ok": False, "error": f"Unsupported format: {fmt}"}, 400
 
-        lines: list[str] = []
-        lines.append(f"# {session.get('name', 'Session')}")
-        if session.get("started_at"):
-            lines.append(f"Date: {session['started_at']}")
-        lines.append("")
+        return content, filename, export_format, content_type
 
-        if session.get("notes_text"):
-            lines.append("## Notes")
-            lines.append(session["notes_text"])
-            lines.append("")
+    def _export_session(self, session_id: str, fmt: str = "md") -> tuple[dict, int]:
+        """Build an in-browser export bundle for a session (JSON for Copy)."""
+        resolved = self._resolve_session_export(session_id, fmt)
+        if isinstance(resolved[0], dict):
+            return resolved  # type: ignore[return-value]
+        content, filename, export_format, _content_type = resolved
+        return {
+            "ok": True,
+            "filename": filename,
+            "content": content,
+            "format": export_format,
+        }, 200
 
-        lines.append("## Transcript")
-        for seg in segments:
-            ts = seg.get("start_time", 0)
-            h, rem = divmod(int(ts), 3600)
-            m, s = divmod(rem, 60)
-            timestamp = f"{h:02d}:{m:02d}:{s:02d}"
-            speaker = f"[{seg['speaker']}] " if seg.get("speaker") else ""
-            lines.append(f"{timestamp}  {speaker}{seg.get('text', '')}")
-
-        content = "\n".join(lines)
-        safe_name = "".join(
-            c if c.isalnum() or c in " -_" else "_"
-            for c in session.get("name", "transcript")
-        )
-        filename = f"{safe_name.strip()}.txt"
-
-        downloads = Path.home() / "Downloads"
-        downloads.mkdir(exist_ok=True)
-        out_path = downloads / filename
-        # Avoid overwriting
-        counter = 1
-        while out_path.exists():
-            out_path = downloads / f"{safe_name.strip()} ({counter}).txt"
-            counter += 1
-        out_path.write_text(content, encoding="utf-8")
-        return {"ok": True, "path": str(out_path)}, 200
+    def _save_session_export(self, session_id: str, fmt: str = "md") -> tuple[dict, int]:
+        """Write a session export to ~/Downloads and return its path."""
+        resolved = self._resolve_session_export(session_id, fmt)
+        if isinstance(resolved[0], dict):
+            return resolved  # type: ignore[return-value]
+        content, filename, export_format, _content_type = resolved
+        try:
+            saved_path = save_session_export_to_downloads(content, filename)
+        except OSError as exc:
+            logger.error("Failed to save export for session %s: %s", session_id, exc, exc_info=True)
+            return {"ok": False, "error": f"Failed to save export: {exc}"}, 500
+        return {
+            "ok": True,
+            "path": str(saved_path),
+            "display_path": format_path_for_display(saved_path),
+            "format": export_format,
+        }, 200
 
     def _serve_audio(self, session_id: str) -> None:
         """Serve the WAV audio file for a session with HTTP Range support."""
@@ -533,7 +748,7 @@ class _Handler(BaseHTTPRequestHandler):
 
             with open(audio_path, "rb") as f:
                 f.seek(start)
-                self.wfile.write(f.read(length))
+                self._stream_file_to_client(f, length)
         else:
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")
@@ -542,16 +757,18 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
             with open(audio_path, "rb") as f:
-                while chunk := f.read(65536):
-                    self.wfile.write(chunk)
+                self._stream_file_to_client(f)
 
-    def _json_response(self, data: dict, status: int = 200):
+    def _json_response(self, data: dict, status: int = 200) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("JSON response")
 
     def _parse_json_body(self) -> dict[str, Any]:
         """Read and parse a JSON object body with size limits."""
@@ -607,7 +824,7 @@ class _Handler(BaseHTTPRequestHandler):
         if session_id:
             db = self._require_db()
             segments = db.get_segments(session_id)
-            text = " ".join(s["text"] for s in segments)
+            text = _segments_to_transcript(segments)
             session_info = db.get_session(session_id)
             return {
                 "ok": True,
@@ -634,6 +851,16 @@ class _Handler(BaseHTTPRequestHandler):
         folders = db.list_folders()
         return {"ok": True, "sessions": sessions, "folders": folders}
 
+    def _search_segments(self, query: str) -> tuple[dict, int]:
+        q = query.strip()
+        if not q:
+            return {"ok": False, "error": "Query required"}, 400
+        if len(q) > 200:
+            return {"ok": False, "error": "Query too long (max 200 characters)"}, 400
+        db = self._require_db()
+        results = db.search_segments(q)
+        return {"ok": True, "query": q, "results": results}, 200
+
     def _get_folders(self) -> dict:
         db = self._get_db()
         if not db:
@@ -646,7 +873,33 @@ class _Handler(BaseHTTPRequestHandler):
         if not session:
             return {"ok": False, "error": "Session not found"}, 404
         segments = db.get_segments(session_id)
-        return {"ok": True, "session": session, "segments": segments}, 200
+        speakers = db.list_speakers(session_id)
+        return {
+            "ok": True,
+            "session": session,
+            "segments": segments,
+            "speakers": speakers,
+        }, 200
+
+    def _set_speaker_label(self, session_id: str, body: dict) -> tuple[dict, int]:
+        db = self._require_db()
+        if not db.get_session(session_id):
+            return {"ok": False, "error": "Session not found"}, 404
+        speaker_key = (body.get("speaker") or "").strip()
+        if not speaker_key:
+            return {"ok": False, "error": "Speaker key required"}, 400
+        display_name = (body.get("name") or "").strip()
+        if display_name and len(display_name) > MAX_SPEAKER_DISPLAY_NAME:
+            return {
+                "ok": False,
+                "error": f"Name too long (max {MAX_SPEAKER_DISPLAY_NAME} characters)",
+            }, 400
+        if display_name:
+            known_speakers = {s["speaker"] for s in db.list_speakers(session_id)}
+            if speaker_key not in known_speakers:
+                return {"ok": False, "error": "Unknown speaker for session"}, 400
+        db.set_speaker_label(session_id, speaker_key, display_name)
+        return {"ok": True}, 200
 
     def _start_recording(self) -> tuple[dict, int]:
         return self.app_state.try_start_recording()
@@ -978,7 +1231,7 @@ class _Handler(BaseHTTPRequestHandler):
         segments = db.get_segments(session_id)
         if not segments:
             return {"ok": False, "error": "No segments in this session"}, 400
-        transcript = " ".join(s["text"] for s in segments)
+        transcript = _segments_to_transcript(segments)
         prompt = (body.get("prompt") or "").strip() or "Summarize the key points, decisions, and action items. Respond in the same language as the transcript."
         with self.app_state._lock:
             config = self.app_state.config

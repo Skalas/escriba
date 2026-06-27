@@ -90,6 +90,20 @@ def _dedupe_segments_and_create_unique_index(conn: sqlite3.Connection) -> None:
     )
 
 
+def _create_speaker_labels_table(conn: sqlite3.Connection) -> None:
+    """Create per-session speaker display-name mappings."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS speaker_labels (
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            speaker_key TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            PRIMARY KEY (session_id, speaker_key)
+        )
+        """
+    )
+
+
 _MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (
         1,
@@ -111,6 +125,10 @@ _MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (
         4,
         lambda conn: _dedupe_segments_and_create_unique_index(conn),
+    ),
+    (
+        5,
+        lambda conn: _create_speaker_labels_table(conn),
     ),
 ]
 
@@ -176,8 +194,72 @@ class Database:
             self._conn.executescript(_SCHEMA)
             _run_migrations(self._conn)
             self._close_stale_sessions()
+            relinked = self.relink_orphaned_audio()
+            if relinked:
+                logger.info("Relinked audio for %d session(s) on startup", relinked)
             self._conn.commit()
         logger.info("Database opened: %s", db_path)
+
+    def _audio_dir(self) -> Path | None:
+        """Derive the canonical audio directory from the database file location."""
+        db_path = self._db_path
+        if db_path is None:
+            return None
+        path_str = str(db_path).strip()
+        if not path_str or path_str == ":memory:":
+            return None
+        return Path(db_path).parent / "audio"
+
+    @staticmethod
+    def _is_missing_audio_path(audio_path: str | None) -> bool:
+        """Return True when audio_path is unset or blank."""
+        return not audio_path or not str(audio_path).strip()
+
+    def _relink_session_audio_if_orphaned(
+        self, session_id: str, *, commit: bool = True
+    ) -> str | None:
+        """
+        Backfill audio_path when the canonical WAV exists on disk.
+
+        Caller must hold ``self._lock``.
+        """
+        audio_dir = self._audio_dir()
+        if audio_dir is None:
+            return None
+        wav_path = audio_dir / f"{session_id}.wav"
+        if not wav_path.is_file():
+            return None
+        path_str = str(wav_path.resolve())
+        self._conn.execute(
+            "UPDATE sessions SET audio_path = ? WHERE id = ?",
+            (path_str, session_id),
+        )
+        if commit:
+            self._conn.commit()
+        logger.info("Relinked audio for session %s", session_id)
+        return path_str
+
+    def relink_orphaned_audio(self) -> int:
+        """
+        Scan sessions with empty audio_path and link any whose WAV file exists.
+
+        Returns:
+            Number of sessions relinked.
+        """
+        if self._audio_dir() is None:
+            return 0
+        count = 0
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM sessions "
+                "WHERE audio_path IS NULL OR TRIM(audio_path) = ''"
+            ).fetchall()
+            for row in rows:
+                if self._relink_session_audio_if_orphaned(row["id"], commit=False):
+                    count += 1
+            if count:
+                self._conn.commit()
+        return count
 
     def _close_stale_sessions(self):
         """Mark any leftover 'active' sessions as 'completed' on startup."""
@@ -246,7 +328,14 @@ class Database:
                 "FROM sessions s WHERE s.id = ?",
                 (session_id,),
             ).fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            session = dict(row)
+            if self._is_missing_audio_path(session.get("audio_path")):
+                relinked = self._relink_session_audio_if_orphaned(session_id, commit=True)
+                if relinked:
+                    session["audio_path"] = relinked
+            return session
 
     def list_sessions(self, limit: int = 100) -> list[dict]:
         with self._lock:
@@ -270,7 +359,179 @@ class Database:
                 "SELECT * FROM segments WHERE session_id = ? ORDER BY start_time ASC, id ASC",
                 (session_id,),
             ).fetchall()
-            return [dict(r) for r in rows]
+            label_rows = self._conn.execute(
+                "SELECT speaker_key, display_name FROM speaker_labels WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+        labels = {row["speaker_key"]: row["display_name"] for row in label_rows}
+        segments: list[dict] = []
+        for row in rows:
+            seg = dict(row)
+            raw_speaker = seg.get("speaker")
+            if raw_speaker:
+                seg["speaker_display"] = labels.get(raw_speaker, raw_speaker)
+            segments.append(seg)
+        return segments
+
+    def get_speaker_labels(self, session_id: str) -> dict[str, str]:
+        """Return custom display names keyed by raw speaker label."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT speaker_key, display_name FROM speaker_labels WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+        return {row["speaker_key"]: row["display_name"] for row in rows}
+
+    def set_speaker_label(
+        self, session_id: str, speaker_key: str, display_name: str
+    ) -> None:
+        """
+        Upsert or remove a per-session speaker display name.
+
+        Blank ``display_name`` deletes the mapping so the raw label is shown again.
+        """
+        with self._lock:
+            if not display_name.strip():
+                self._conn.execute(
+                    "DELETE FROM speaker_labels WHERE session_id = ? AND speaker_key = ?",
+                    (session_id, speaker_key),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO speaker_labels (session_id, speaker_key, display_name) "
+                    "VALUES (?, ?, ?) "
+                    "ON CONFLICT(session_id, speaker_key) DO UPDATE SET "
+                    "display_name = excluded.display_name",
+                    (session_id, speaker_key, display_name.strip()),
+                )
+            self._conn.commit()
+
+    def list_speakers(self, session_id: str) -> list[dict]:
+        """
+        List distinct raw speaker keys in a session with their display names.
+
+        ``display_name`` is the custom mapping when set, otherwise the raw key.
+        """
+        with self._lock:
+            label_rows = self._conn.execute(
+                "SELECT speaker_key, display_name FROM speaker_labels WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+            speaker_rows = self._conn.execute(
+                "SELECT DISTINCT speaker FROM segments "
+                "WHERE session_id = ? AND speaker IS NOT NULL AND speaker != '' "
+                "ORDER BY speaker ASC",
+                (session_id,),
+            ).fetchall()
+        labels = {row["speaker_key"]: row["display_name"] for row in label_rows}
+        return [
+            {
+                "speaker": row["speaker"],
+                "display_name": labels.get(row["speaker"], row["speaker"]),
+            }
+            for row in speaker_rows
+        ]
+
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """Escape SQL LIKE wildcards so user input is matched literally."""
+        return (
+            value.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+
+    @staticmethod
+    def _segment_snippet(text: str, max_len: int = 160) -> str:
+        """Return a short preview of segment text for search results."""
+        if len(text) <= max_len:
+            return text
+        return text[: max_len - 1].rstrip() + "…"
+
+    def search_segments(self, query: str, limit: int = 50) -> list[dict]:
+        """
+        Search segment text and session names across all sessions.
+
+        Text matches return every matching segment. Session-name matches return
+        at most one representative segment per session (when no segment text
+        matched that session).
+
+        Args:
+            query: Case-insensitive substring to match.
+            limit: Maximum number of rows to return.
+
+        Returns:
+            Matches with session_id, session_name, id, start_time, and snippet.
+        """
+        pattern = f"%{self._escape_like(query)}%"
+        with self._lock:
+            text_rows = self._conn.execute(
+                "SELECT seg.id, seg.session_id, seg.start_time, seg.text, "
+                "       sess.name AS session_name, sess.started_at "
+                "FROM segments seg "
+                "JOIN sessions sess ON seg.session_id = sess.id "
+                "WHERE LOWER(seg.text) LIKE LOWER(?) ESCAPE '\\' "
+                "ORDER BY sess.started_at DESC, seg.start_time ASC, seg.id ASC",
+                (pattern,),
+            ).fetchall()
+            name_rows = self._conn.execute(
+                "SELECT seg.id, seg.session_id, seg.start_time, seg.text, "
+                "       sess.name AS session_name, sess.started_at "
+                "FROM segments seg "
+                "JOIN sessions sess ON seg.session_id = sess.id "
+                "INNER JOIN ( "
+                "    SELECT session_id, MIN(start_time) AS min_start "
+                "    FROM segments GROUP BY session_id "
+                ") first_start ON first_start.session_id = seg.session_id "
+                "              AND first_start.min_start = seg.start_time "
+                "INNER JOIN ( "
+                "    SELECT session_id, start_time, MIN(id) AS min_id "
+                "    FROM segments GROUP BY session_id, start_time "
+                ") first_seg ON first_seg.min_id = seg.id "
+                "WHERE LOWER(sess.name) LIKE LOWER(?) ESCAPE '\\' "
+                "ORDER BY sess.started_at DESC, seg.start_time ASC, seg.id ASC",
+                (pattern,),
+            ).fetchall()
+
+        def _row_to_result(row: sqlite3.Row) -> dict:
+            return {
+                "id": row["id"],
+                "session_id": row["session_id"],
+                "session_name": row["session_name"],
+                "start_time": row["start_time"],
+                "snippet": self._segment_snippet(row["text"]),
+                "_started_at": row["started_at"],
+            }
+
+        text_session_ids = {row["session_id"] for row in text_rows}
+        seen_ids: set[int] = set()
+        merged: list[dict] = []
+
+        for row in text_rows:
+            seg_id = int(row["id"])
+            if seg_id in seen_ids:
+                continue
+            seen_ids.add(seg_id)
+            merged.append(_row_to_result(row))
+
+        for row in name_rows:
+            if row["session_id"] in text_session_ids:
+                continue
+            seg_id = int(row["id"])
+            if seg_id in seen_ids:
+                continue
+            seen_ids.add(seg_id)
+            merged.append(_row_to_result(row))
+
+        merged.sort(key=lambda item: item["id"])
+        merged.sort(
+            key=lambda item: item["start_time"] if item["start_time"] is not None else 0.0
+        )
+        merged.sort(key=lambda item: item["_started_at"] or "", reverse=True)
+        for item in merged:
+            del item["_started_at"]
+
+        return merged[:limit]
 
     def delete_segments(self, session_id: str):
         with self._lock:

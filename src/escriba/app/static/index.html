@@ -46,7 +46,7 @@
   @media (prefers-color-scheme: dark) {
     :root, [data-theme="teal"] {
       --bg: #0f1a19;
-      --card: #182624;
+      --card: #223330;
       --text: #e7efed;
       --text-secondary: #93a8a4;
       --accent: #2dd4bf;
@@ -62,10 +62,10 @@
       --success: #34d399;
       --warning: #fbbf24;
       --warning-subtle: rgba(251, 191, 36, 0.14);
-      --border: #2c3e3b;
-      --border-light: #243431;
+      --border: #3f5854;
+      --border-light: #2e4642;
       --code-bg: #1d2c2a;
-      --sidebar-bg: #13201e;
+      --sidebar-bg: #172522;
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
       --shadow-md: 0 2px 8px rgba(0,0,0,0.36), 0 1px 2px rgba(0,0,0,0.24);
       --shadow-lg: 0 4px 16px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.24);
@@ -112,7 +112,7 @@
   @media (prefers-color-scheme: dark) {
     [data-theme="ink"] {
       --bg: #1a1917;
-      --card: #252320;
+      --card: #353330;
       --text: #ece7dd;
       --text-secondary: #a89f90;
       --accent: #94a3b8;
@@ -130,10 +130,10 @@
       --success: #4ade80;
       --warning: #fbbf24;
       --warning-subtle: rgba(251, 191, 36, 0.14);
-      --border: #3a362f;
-      --border-light: #2f2c26;
+      --border: #4a463f;
+      --border-light: #2e2c28;
       --code-bg: #2c2925;
-      --sidebar-bg: #1f1d1a;
+      --sidebar-bg: #211f1c;
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
       --shadow-md: 0 2px 8px rgba(0,0,0,0.36), 0 1px 2px rgba(0,0,0,0.24);
       --shadow-lg: 0 4px 16px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.24);
@@ -180,7 +180,7 @@
   @media (prefers-color-scheme: dark) {
     [data-theme="indigo"] {
       --bg: #14131f;
-      --card: #1e1c2e;
+      --card: #2e2b44;
       --text: #e9e7f5;
       --text-secondary: #a09bbb;
       --accent: #818cf8;
@@ -198,10 +198,10 @@
       --success: #34d399;
       --warning: #fbbf24;
       --warning-subtle: rgba(251, 191, 36, 0.14);
-      --border: #322e48;
-      --border-light: #2a2740;
+      --border: #454065;
+      --border-light: #3a3550;
       --code-bg: #241f36;
-      --sidebar-bg: #181527;
+      --sidebar-bg: #191728;
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
       --shadow-md: 0 2px 8px rgba(0,0,0,0.36), 0 1px 2px rgba(0,0,0,0.24);
       --shadow-lg: 0 4px 16px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.24);
@@ -248,7 +248,7 @@
   @media (prefers-color-scheme: dark) {
     [data-theme="graphite"] {
       --bg: #18181b;
-      --card: #232327;
+      --card: #323235;
       --text: #f4f4f5;
       --text-secondary: #a1a1aa;
       --accent: #d4d4d8;
@@ -266,10 +266,10 @@
       --success: #34d399;
       --warning: #fbbf24;
       --warning-subtle: rgba(251, 191, 36, 0.14);
-      --border: #3f3f46;
-      --border-light: #2e2e33;
+      --border: #52525c;
+      --border-light: #3f3f46;
       --code-bg: #27272a;
-      --sidebar-bg: #1d1d20;
+      --sidebar-bg: #1e1e21;
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
       --shadow-md: 0 2px 8px rgba(0,0,0,0.36), 0 1px 2px rgba(0,0,0,0.24);
       --shadow-lg: 0 4px 16px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.24);
@@ -421,6 +421,55 @@
     margin-top: 10px;
   }
   .toolbar-row .search-box { flex: 1; margin-bottom: 0; }
+
+  /* Transcript search results */
+  .search-results-header {
+    padding: 8px 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+  }
+  .search-result-group { margin-bottom: 4px; }
+  .search-result-group-name {
+    padding: 6px 12px 2px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .search-result-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 8px;
+    margin: 0 4px;
+    transition: background var(--transition);
+  }
+  .search-result-item:hover { background: var(--border-light); }
+  .search-result-item .search-result-time {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+  }
+  .search-result-item .search-result-snippet {
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--text);
+  }
+  .search-highlight-mark {
+    background: var(--accent-glow);
+    color: var(--text);
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  .segment.search-highlight {
+    background: var(--accent-glow);
+    border-left: 3px solid var(--accent);
+    padding-left: 29px;
+  }
   .btn-record {
     width: 44px; height: 44px; min-width: 44px;
     border-radius: 50%;
@@ -676,6 +725,42 @@
     border-left: 3px solid var(--danger);
   }
   #error-banner.visible { display: block; animation: slideDown 200ms ease; }
+
+  #notice-banner {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100;
+    padding: 12px 18px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    display: none;
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    max-width: min(90vw, 560px);
+    text-align: center;
+  }
+  #notice-banner.visible { display: block; animation: noticeSlideDown 200ms ease; }
+  #notice-banner.success {
+    border-left: 3px solid var(--success);
+  }
+  #notice-banner.info {
+    border-left: 3px solid var(--accent);
+  }
+  #notice-banner .notice-link {
+    color: var(--accent);
+    font-weight: 700;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  @keyframes noticeSlideDown {
+    from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
   @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
@@ -703,10 +788,22 @@
   button {
     padding: 10px 20px; border: 1px solid transparent; border-radius: 10px;
     font-size: 14px; font-weight: 600; cursor: pointer;
+    color: inherit;
+    font-family: inherit;
     transition: background var(--transition-fast), border-color var(--transition-fast), transform 80ms ease, opacity var(--transition-fast), box-shadow var(--transition-fast);
   }
+  input, select, textarea {
+    color: inherit;
+    font-family: inherit;
+  }
+
   button:active:not(:disabled) { transform: scale(0.97); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #btn-retranscribe:disabled {
+    opacity: 0.55;
+    color: var(--text-secondary);
+    border-color: var(--border-light);
+  }
   .btn-start { background: var(--accent); color: var(--on-accent); }
   .btn-start:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 2px 8px var(--accent-glow); }
   .btn-stop { background: var(--danger); color: white; }
@@ -773,6 +870,56 @@
     color: var(--danger); border-color: var(--danger);
   }
   .segment-split-btn svg { width: 12px; height: 12px; }
+  .segment-link-btn {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    padding: 2px 4px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 4px;
+    line-height: 0;
+  }
+  .segment:hover .segment-link-btn { opacity: 1; }
+  .segment-link-btn:hover { background: var(--border-light); color: var(--accent); }
+  .segment-link-btn svg { width: 12px; height: 12px; }
+  /* Speaker labels */
+  .speaker-list { display: flex; flex-direction: column; gap: 6px; }
+  .speaker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .speaker-row:last-child { border-bottom: none; }
+  .speaker-display {
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
+  .speaker-display:hover { background: var(--border-light); color: var(--accent); }
+  .speaker-raw {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .speaker-name-edit {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    background: var(--bg);
+    color: var(--text);
+  }
   .audio-player-card audio { width: 100%; }
   .audio-player-card .no-audio { color: var(--text-secondary); font-style: italic; font-size: 14px; }
 
@@ -848,6 +995,28 @@
     margin: 8px 0; color: var(--text-secondary);
   }
   .notes-rendered hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+  .notes-rendered .md-table-wrap {
+    overflow-x: auto;
+    margin: 12px 0;
+    -webkit-overflow-scrolling: touch;
+  }
+  .notes-rendered table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 320px;
+    font-size: 14px;
+  }
+  .notes-rendered th,
+  .notes-rendered td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .notes-rendered th {
+    background: var(--code-bg);
+    font-weight: 600;
+  }
   .notes-rendered strong { font-weight: 700; }
   .notes-rendered em { font-style: italic; }
   .notes-rendered a { color: var(--accent); text-decoration: none; }
@@ -875,6 +1044,17 @@
   .move-dropdown-item:hover { background: var(--code-bg); }
   .move-dropdown-item.new-folder { color: var(--accent); font-weight: 600; }
 
+  /* Export dropdown (session header) */
+  .export-dropdown .move-dropdown-content {
+    bottom: auto;
+    top: 100%;
+    left: auto;
+    right: 0;
+    margin-bottom: 0;
+    margin-top: 4px;
+    min-width: 168px;
+  }
+
   /* Keyboard shortcuts settings */
   .shortcut-input {
     padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
@@ -893,7 +1073,7 @@
   }
   .theme-swatch:hover { border-color: var(--accent); }
   .theme-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
-  .theme-swatch-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .theme-swatch-name { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
   .theme-swatch-dots { display: flex; gap: 5px; }
   .theme-swatch-dot { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.08); }
   .theme-swatch-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
@@ -992,7 +1172,7 @@
     </div>
     <div class="toolbar-row">
       <input type="checkbox" id="select-all-checkbox" class="session-checkbox" onclick="toggleSelectAll(this.checked)" title="Select all">
-      <input type="text" class="search-box" id="search-box" placeholder="Search..." oninput="filterSessions()">
+      <input type="text" class="search-box" id="search-box" placeholder="Search transcripts..." oninput="onTranscriptSearchInput()" aria-label="Search transcripts">
     </div>
   </div>
   <div class="session-list" id="session-list">
@@ -1006,6 +1186,8 @@
     </div>
   </div>
 </div>
+
+<div id="notice-banner" role="status" aria-live="polite"></div>
 
 <!-- Main content -->
 <div class="main">
@@ -1045,8 +1227,18 @@
       <h2 id="session-title" class="editable" ondblclick="startTitleRename()">Session</h2>
       <div class="controls-row" style="margin-bottom:0;">
         <button class="btn-start" id="btn-back-to-live" onclick="backToLive()" style="display:none;">Back to Live</button>
-        <button class="btn-secondary" id="btn-retranscribe" onclick="retranscribeSession()" aria-label="Re-transcribe" title="Re-transcribe" style="display:none;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg> <span class="btn-label">Re-transcribe</span></button>
-        <button class="btn-secondary" id="btn-export" onclick="exportSession(this)" aria-label="Download" title="Download" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> <span class="btn-label">Download</span></button>
+        <button class="btn-secondary" id="btn-retranscribe" onclick="retranscribeSession()" aria-label="Re-transcribe" title="Re-transcribe" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg> <span class="btn-label">Re-transcribe</span></button>
+        <div class="move-dropdown export-dropdown">
+          <button class="btn-secondary" id="btn-export-menu" onclick="toggleExportDropdown(event)" aria-haspopup="menu" aria-expanded="false" aria-controls="export-dropdown-menu" title="Export session" style="display:inline-flex;align-items:center;gap:6px;">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span class="btn-label">Export</span>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="move-dropdown-content" id="export-dropdown-menu" role="menu">
+            <div class="move-dropdown-item" role="menuitem" onclick="runExportAction('copy')">Copy Markdown</div>
+            <div class="move-dropdown-item" role="menuitem" onclick="runExportAction('download')">Download .md</div>
+          </div>
+        </div>
       </div>
     </header>
     <div class="info-bar">
@@ -1056,6 +1248,10 @@
       <span>Status: <strong id="session-status">-</strong></span>
     </div>
     <div class="content-area">
+      <div class="card" id="session-speakers-card" style="display:none;">
+        <h3>Speakers</h3>
+        <div class="speaker-list" id="session-speakers-list"></div>
+      </div>
       <div class="card">
         <h3>Notes <button class="btn-secondary" id="btn-toggle-notes-edit" onclick="toggleNotesEdit()" style="font-size:11px;padding:4px 10px;">Edit</button></h3>
         <div class="notes-rendered" id="notes-rendered" onclick="toggleNotesEdit()"></div>
@@ -1396,6 +1592,48 @@ let allSessions = [];
 let allFolders = [];
 let collapsedFolders = new Set();
 let searchQuery = '';
+let transcriptSearchResults = [];
+let transcriptSearchActive = false;
+let searchDebounceTimer = null;
+let pendingHighlightSegmentId = null;
+let pendingHighlightQuery = '';
+let notesGeneratingFor = null;
+let liveNotesGenerating = false;
+
+const NOTES_BTN_DEFAULT = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes';
+const NOTES_BTN_GENERATING = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:currentColor;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
+
+function isLiveViewActive() {
+  return !viewingHistory && document.getElementById('live-view').style.display !== 'none';
+}
+
+function updateSessionNotesButton(sessionId) {
+  const btn = document.getElementById('btn-session-notes');
+  if (!btn || !sessionId) return;
+  if (notesGeneratingFor === sessionId) {
+    btn.classList.add('loading');
+    btn.disabled = true;
+    btn.innerHTML = NOTES_BTN_GENERATING;
+  } else {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+    btn.innerHTML = NOTES_BTN_DEFAULT;
+  }
+}
+
+function updateLiveNotesButton() {
+  const btn = document.getElementById('btn-notes');
+  if (!btn) return;
+  if (liveNotesGenerating) {
+    btn.classList.add('loading');
+    btn.disabled = true;
+    btn.innerHTML = NOTES_BTN_GENERATING;
+  } else {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+    btn.innerHTML = NOTES_BTN_DEFAULT;
+  }
+}
 
 // --- In-app modal (themed replacement for native confirm/prompt) ---
 let _modalResolve = null;
@@ -1466,6 +1704,7 @@ const DEFAULT_PROMPT_TEMPLATES = [
   { id: 'keypoints', label: 'Key Points', prompt: 'Summarize the most important points, insights, and takeaways as a bulleted list. Capture specific figures, names, and data mentioned. Focus on substance, not a chronological recap.' },
   { id: 'blockers', label: 'Risks & Blockers', prompt: 'Identify all risks, blockers, dependencies, and concerns raised. For each, note the issue, who flagged it, and any proposed mitigation or workaround. If none were raised, state that.' },
   { id: 'minutes', label: 'Meeting Minutes', prompt: 'Write structured meeting minutes in Markdown with these sections: **Attendees**, **Agenda**, **Discussion**, **Decisions**, **Action Items**, **Next Steps**. Omit a section only if there is genuinely nothing to record under it.' },
+  { id: 'interview', label: 'Interview Evaluation', prompt: 'Critically evaluate the candidate in this interview transcript. Do NOT be charitable or complacent: most candidates do not meet the bar, and your job is to find the evidence, not to give the benefit of the doubt. For each relevant competency (technical depth, problem-solving, communication, ownership and impact, and any role-specific skills discussed), give a rating (Strong / Adequate / Weak / No evidence) and cite the specific transcript evidence behind it. Sharply distinguish what the candidate DEMONSTRATED from what they merely CLAIMED. Flag vague, generic, evasive, or buzzword answers, contradictions, and moments where they dodged a question or could not go deep when pressed. Structure the output as: (1) Recommendation — one of Strong Hire / Hire / No Hire / Strong No Hire, with a one-line justification and your confidence; (2) Competency assessment — rating + evidence per competency; (3) Strengths — concrete, evidenced positives (omit if none); (4) Concerns and red flags — weaknesses, gaps, evasions, contradictions; (5) Missing signal — what the interview did not probe or the candidate did not substantiate, and what evidence would be needed to raise the rating. Hold a high bar: if evidence for a competency is thin or absent, rate it Weak or No evidence rather than assuming competence. When the overall signal is mixed or insufficient, lean toward No Hire and state exactly what evidence is missing.' },
   { id: 'followup', label: 'Follow-up Email', prompt: 'Draft a concise, professional follow-up email: a one-line recap, the decisions made, action items with owners, and next steps. Open with a greeting and close with a clear call to action.' },
 ];
 
@@ -1720,17 +1959,160 @@ async function pollTranscript() {
     if (!t.segments || t.segments.length === 0) return;
     box.innerHTML = t.segments.map(seg => {
       const ts = formatTime(seg.start);
-      const speaker = seg.speaker ? `[${seg.speaker}] ` : '';
-      return `<div class="segment"><span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
+      const speaker = segmentSpeakerLabel(seg);
+      const speakerPrefix = speaker ? `[${escHtml(speaker)}] ` : '';
+      return `<div class="segment"><span class="segment-time">${ts}</span>${speakerPrefix}${escHtml(seg.text)}</div>`;
     }).join('');
     box.scrollTop = box.scrollHeight;
   } catch (e) {}
 }
 
 // --- Sessions ---
+function onTranscriptSearchInput() {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(runTranscriptSearch, 300);
+}
+
+async function runTranscriptSearch() {
+  const raw = document.getElementById('search-box').value.trim();
+  if (!raw) {
+    transcriptSearchActive = false;
+    transcriptSearchResults = [];
+    searchQuery = '';
+    renderSessionList();
+    return;
+  }
+  searchQuery = raw.toLowerCase();
+  try {
+    const res = await apiCall('/api/search?q=' + encodeURIComponent(raw));
+    if (!res.ok) return;
+    transcriptSearchActive = true;
+    transcriptSearchResults = res.results || [];
+    renderSearchResults(res.query || raw);
+  } catch (e) {}
+}
+
+function highlightSearchText(text, query) {
+  if (!query) return escHtml(text);
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  let html = '';
+  let cursor = 0;
+  let idx = lowerText.indexOf(lowerQuery, cursor);
+  while (idx !== -1) {
+    html += escHtml(text.slice(cursor, idx));
+    html += '<mark class="search-highlight-mark">' + escHtml(text.slice(idx, idx + query.length)) + '</mark>';
+    cursor = idx + query.length;
+    idx = lowerText.indexOf(lowerQuery, cursor);
+  }
+  html += escHtml(text.slice(cursor));
+  return html;
+}
+
+function renderSearchResults(query) {
+  const list = document.getElementById('session-list');
+  if (transcriptSearchResults.length === 0) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary);font-size:13px;">No matches for “' + escHtml(query) + '”</div>';
+    return;
+  }
+  const grouped = new Map();
+  for (const r of transcriptSearchResults) {
+    if (!grouped.has(r.session_id)) {
+      grouped.set(r.session_id, { name: r.session_name, items: [] });
+    }
+    grouped.get(r.session_id).items.push(r);
+  }
+  let html = '<div class="search-results-header">' + transcriptSearchResults.length + ' match' + (transcriptSearchResults.length === 1 ? '' : 'es') + '</div>';
+  for (const [sessionId, group] of grouped) {
+    html += '<div class="search-result-group">';
+    html += '<div class="search-result-group-name">' + escHtml(group.name) + '</div>';
+    for (const item of group.items) {
+      const ts = formatTime(item.start_time || 0);
+      html += `<div class="search-result-item" onclick="openSearchResult('${escAttr(sessionId)}', ${item.id}, '${escAttr(query)}')">`
+        + `<div class="search-result-time">${escHtml(ts)}</div>`
+        + `<div class="search-result-snippet">${highlightSearchText(item.snippet || '', query)}</div>`
+        + '</div>';
+    }
+    html += '</div>';
+  }
+  list.innerHTML = html;
+}
+
+async function openSearchResult(sessionId, segmentId, query) {
+  pendingHighlightSegmentId = segmentId;
+  pendingHighlightQuery = query;
+  await selectSession(sessionId);
+  highlightSearchSegment(segmentId);
+}
+
+function highlightSearchSegment(segmentId) {
+  document.querySelectorAll('#session-transcript .segment.search-highlight').forEach(el => el.classList.remove('search-highlight'));
+  const el = document.querySelector('#session-transcript .segment[data-segment-id="' + segmentId + '"]');
+  if (!el) return;
+  el.classList.add('search-highlight');
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  pendingHighlightSegmentId = null;
+  pendingHighlightQuery = '';
+}
+
 function filterSessions() {
   searchQuery = document.getElementById('search-box').value.toLowerCase().trim();
   renderSessionList();
+}
+
+function segmentSpeakerLabel(seg) {
+  return seg.speaker_display || seg.speaker || '';
+}
+
+function renderSessionSpeakers(speakers) {
+  const card = document.getElementById('session-speakers-card');
+  const list = document.getElementById('session-speakers-list');
+  if (!speakers || speakers.length === 0) {
+    card.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  card.style.display = '';
+  list.innerHTML = speakers.map(s => {
+    const hasCustom = s.display_name && s.display_name !== s.speaker;
+    return `<div class="speaker-row" data-speaker="${escAttr(s.speaker)}">
+      <span class="speaker-display" onclick="startSpeakerRename('${escAttr(s.speaker)}')" title="Click to rename">${escHtml(s.display_name || s.speaker)}</span>
+      ${hasCustom ? `<span class="speaker-raw">${escHtml(s.speaker)}</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function startSpeakerRename(speakerKey) {
+  if (!selectedSessionId) return;
+  const row = document.querySelector(`.speaker-row[data-speaker="${CSS.escape(speakerKey)}"]`);
+  if (!row || row.querySelector('.speaker-name-edit')) return;
+  const displayEl = row.querySelector('.speaker-display');
+  const current = displayEl.textContent || speakerKey;
+  row.innerHTML = `<input type="text" class="speaker-name-edit" value="${escAttr(current)}" data-speaker="${escAttr(speakerKey)}" onclick="event.stopPropagation()" onkeydown="handleSpeakerRenameKey(event, '${escAttr(speakerKey)}')">`;
+  const input = row.querySelector('.speaker-name-edit');
+  input.focus();
+  input.select();
+  input.addEventListener('blur', () => saveSpeakerRename(speakerKey));
+}
+
+function handleSpeakerRenameKey(event, speakerKey) {
+  if (event.key === 'Enter') { event.preventDefault(); saveSpeakerRename(speakerKey); }
+  else if (event.key === 'Escape') { event.preventDefault(); selectSession(selectedSessionId); }
+}
+
+async function saveSpeakerRename(speakerKey) {
+  if (!selectedSessionId) return;
+  const input = document.querySelector(`.speaker-name-edit[data-speaker="${CSS.escape(speakerKey)}"]`);
+  if (!input) return;
+  const name = input.value.trim();
+  try {
+    const res = await apiCall('/api/sessions/' + selectedSessionId + '/speakers', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ speaker: speakerKey, name: name }),
+    });
+    if (res.ok) await selectSession(selectedSessionId);
+  } catch (e) {}
 }
 
 async function refreshSessionList() {
@@ -1746,6 +2128,7 @@ async function refreshSessionList() {
 }
 
 function renderSessionList() {
+  if (transcriptSearchActive) return;
   const list = document.getElementById('session-list');
   let filtered = allSessions;
   if (searchQuery) {
@@ -1873,18 +2256,29 @@ async function selectSession(id) {
     const audioEl = document.getElementById('session-audio');
     const hasAudio = !!s.audio_path;
     audioCard.style.display = hasAudio ? '' : 'none';
-    document.getElementById('btn-retranscribe').style.display = hasAudio ? 'inline-flex' : 'none';
+    const retranscribeBtn = document.getElementById('btn-retranscribe');
+    retranscribeBtn.style.display = 'inline-flex';
+    if (hasAudio) {
+      retranscribeBtn.disabled = false;
+      retranscribeBtn.title = 'Re-transcribe';
+    } else {
+      retranscribeBtn.disabled = true;
+      retranscribeBtn.title = 'No saved audio to re-transcribe';
+    }
     if (hasAudio) {
       audioEl.src = '/api/sessions/' + id + '/audio';
       currentSessionSegments = res.segments || [];
     } else { audioEl.src = ''; currentSessionSegments = []; }
+
+    renderSessionSpeakers(res.speakers || []);
 
     const box = document.getElementById('session-transcript');
     if (res.segments && res.segments.length > 0) {
       const canSplit = (s.status !== 'active') && res.segments.length > 1;
       box.innerHTML = res.segments.map((seg, idx) => {
         const ts = formatTime(seg.start_time || 0);
-        const speaker = seg.speaker ? `[${seg.speaker}] ` : '';
+        const speaker = segmentSpeakerLabel(seg);
+        const speakerPrefix = speaker ? `[${escHtml(speaker)}] ` : '';
         const clickable = hasAudio ? ' clickable' : '';
         const onclick = hasAudio ? ` onclick="seekToSegment(${seg.start_time || 0})"` : '';
         const splitBtn = (canSplit && idx > 0)
@@ -1898,7 +2292,15 @@ async function selectSession(id) {
                 <line x1="8.12" y1="8.12" x2="12" y2="12"/>
               </svg>
             </button>` : '';
-        return `<div class="segment${clickable}" data-start="${seg.start_time || 0}" data-end="${seg.end_time || 0}"${onclick}>${splitBtn}<span class="segment-time">${ts}</span>${speaker}${escHtml(seg.text)}</div>`;
+        const linkBtn = `<button class="segment-link-btn" aria-label="Copy segment link"
+              title="Copy link to this segment"
+              onclick="event.stopPropagation();copySegmentLink('${escAttr(id)}', ${seg.id})">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
+            </button>`;
+        return `<div class="segment${clickable}" id="seg-${seg.id}" data-segment-id="${seg.id}" data-start="${seg.start_time || 0}" data-end="${seg.end_time || 0}"${onclick}>${splitBtn}${linkBtn}<span class="segment-time">${ts}</span>${speakerPrefix}${escHtml(seg.text)}</div>`;
       }).join('');
     } else {
       box.innerHTML = '<span style="color:var(--text-secondary);font-style:italic;">No segments</span>';
@@ -1911,6 +2313,10 @@ async function selectSession(id) {
     document.querySelectorAll('.session-item').forEach(el => {
       el.classList.toggle('selected', el.dataset.id === id);
     });
+    if (pendingHighlightSegmentId) {
+      highlightSearchSegment(pendingHighlightSegmentId);
+    }
+    updateSessionNotesButton(id);
   } catch (e) {}
 }
 
@@ -2194,13 +2600,187 @@ async function deleteSessionById(id) {
 }
 
 // --- Notes ---
+async function saveNotesForSession(sessionId, notesText) {
+  if (!sessionId) return;
+  await apiCall('/api/sessions/' + sessionId + '/notes', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes_text: notesText }),
+  });
+}
+
+async function appendNotesToSession(sessionId, newNotes) {
+  const detail = await apiCall('/api/sessions/' + sessionId);
+  if (!detail.ok) return false;
+  const existing = (detail.session.notes_text || '').trim();
+  const separator = existing ? '\n\n---\n\n' : '';
+  await saveNotesForSession(sessionId, existing + separator + newNotes);
+  return true;
+}
+
 async function saveNotes() {
   if (!selectedSessionId) return;
   const notes = document.getElementById('session-notes-input').value;
-  await apiCall('/api/sessions/' + selectedSessionId + '/notes', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ notes_text: notes }),
-  });
+  await saveNotesForSession(selectedSessionId, notes);
+}
+
+async function fetchSessionExport(format) {
+  if (!selectedSessionId) return { ok: false, error: 'No session selected' };
+  return apiCall('/api/sessions/' + selectedSessionId + '/export?format=' + encodeURIComponent(format || 'md'));
+}
+
+function closeExportDropdown() {
+  const dd = document.getElementById('export-dropdown-menu');
+  const btn = document.getElementById('btn-export-menu');
+  if (dd) dd.classList.remove('visible');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function toggleExportDropdown(event) {
+  if (event) event.stopPropagation();
+  const dd = document.getElementById('export-dropdown-menu');
+  const btn = document.getElementById('btn-export-menu');
+  if (!dd || !btn) return;
+  const open = !dd.classList.contains('visible');
+  closeExportDropdown();
+  if (open) {
+    dd.classList.add('visible');
+    btn.setAttribute('aria-expanded', 'true');
+  }
+}
+
+function runExportAction(action) {
+  closeExportDropdown();
+  const btn = document.getElementById('btn-export-menu');
+  if (!btn) return;
+  if (action === 'copy') copySessionExport(btn);
+  else if (action === 'download') downloadSessionMarkdown(btn);
+}
+
+let noticeDismissTimer = null;
+
+function hideNotice() {
+  const banner = document.getElementById('notice-banner');
+  if (!banner) return;
+  banner.classList.remove('visible', 'success', 'info');
+  banner.textContent = '';
+  banner.innerHTML = '';
+  if (noticeDismissTimer) {
+    clearTimeout(noticeDismissTimer);
+    noticeDismissTimer = null;
+  }
+}
+
+function showNotice(message, opts = {}) {
+  const banner = document.getElementById('notice-banner');
+  if (!banner) return;
+  hideNotice();
+  const type = opts.type || 'info';
+  banner.className = 'visible ' + type;
+  if (opts.action && opts.action.sid) {
+    const before = opts.action.before || message || '';
+    const after = opts.action.after || '';
+    const name = opts.action.name || opts.action.label || 'Recording';
+    banner.innerHTML =
+      escHtml(before) +
+      '<a href="#" class="notice-link">' + escHtml(name) + '</a>' +
+      escHtml(after);
+    banner.querySelector('.notice-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      hideNotice();
+      selectSession(opts.action.sid);
+    });
+  } else {
+    banner.textContent = message;
+  }
+  noticeDismissTimer = setTimeout(hideNotice, 3500);
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      return true;
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+}
+
+async function copySessionExport(btn) {
+  if (!selectedSessionId) return;
+  const origHTML = btn.innerHTML;
+  btn.disabled = true;
+  try {
+    const res = await fetchSessionExport('md');
+    if (!res.ok) { showError(res.error || 'Export failed'); return; }
+    await copyToClipboard(res.content || '');
+    showNotice('Copied', { type: 'success' });
+    btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> <span class="btn-label">Copied</span>';
+    setTimeout(() => { btn.innerHTML = origHTML; }, 2000);
+  } catch (e) {
+    showError('Copy failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function downloadSessionMarkdown(btn) {
+  if (!selectedSessionId) return;
+  const origHTML = btn.innerHTML;
+  btn.disabled = true;
+  try {
+    const res = await apiCall('/api/sessions/' + selectedSessionId + '/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ format: 'md', save: true }),
+    });
+    if (!res.ok) { showError(res.error || 'Export failed'); return; }
+    const pathLabel = res.display_path || res.path || '~/Downloads';
+    showNotice('Saved to ' + pathLabel, { type: 'success' });
+    btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> <span class="btn-label">Saved</span>';
+    setTimeout(() => { btn.innerHTML = origHTML; }, 2000);
+  } catch (e) {
+    showError('Download failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function segmentDeepLink(sessionId, segmentId) {
+  return window.location.origin + window.location.pathname + '#session/' + sessionId + '/seg/' + segmentId;
+}
+
+async function copySegmentLink(sessionId, segmentId) {
+  try {
+    await copyToClipboard(segmentDeepLink(sessionId, segmentId));
+    showNotice('Link copied', { type: 'success' });
+  } catch (e) {
+    showError('Copy failed: ' + e.message);
+  }
+}
+
+function parseDeepLink() {
+  const hash = (location.hash || '').replace(/^#/, '');
+  const match = hash.match(/^session\/([^/]+)\/seg\/(\d+)$/);
+  if (!match) return null;
+  return { sessionId: match[1], segmentId: parseInt(match[2], 10) };
+}
+
+async function handleDeepLink() {
+  const link = parseDeepLink();
+  if (!link) return;
+  pendingHighlightSegmentId = link.segmentId;
+  await selectSession(link.sessionId);
 }
 
 async function clearNotes() {
@@ -2211,66 +2791,157 @@ async function clearNotes() {
   renderNotesView('');
 }
 
-async function exportSession(btn) {
-  if (!selectedSessionId) return;
-  const origHTML = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Saving...';
-  try {
-    const res = await apiCall('/api/sessions/' + selectedSessionId + '/export', { method: 'POST' });
-    if (res.ok) {
-      const name = res.path ? res.path.split('/').pop() : '';
-      btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> Saved to Downloads';
-      setTimeout(() => { btn.innerHTML = origHTML; btn.disabled = false; }, 3000);
-    } else {
-      showError(res.error || 'Export failed');
-      btn.innerHTML = origHTML; btn.disabled = false;
-    }
-  } catch (e) { showError('Export failed: ' + e.message); btn.innerHTML = origHTML; btn.disabled = false; }
-}
-
 async function generateSessionNotes() {
   if (!selectedSessionId) return;
-  const btn = document.getElementById('btn-session-notes');
+  const sid = selectedSessionId;
   const promptVal = document.getElementById('session-prompt-input').value.trim();
   const notesInput = document.getElementById('session-notes-input');
-  btn.classList.add('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:currentColor;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
+  const existingNotesSnapshot = notesInput.value;
+  notesGeneratingFor = sid;
+  updateSessionNotesButton(sid);
   try {
-    const res = await apiCall('/api/sessions/' + selectedSessionId + '/generate-notes', {
+    const res = await apiCall('/api/sessions/' + sid + '/generate-notes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: promptVal || null }),
     });
-    if (res.ok && res.notes) {
-      const separator = notesInput.value.trim() ? '\n\n---\n\n' : '';
-      notesInput.value = notesInput.value.trim() + separator + res.notes;
-      await saveNotes();
-      renderNotesView(notesInput.value);
-    } else showError(res.error || 'Failed to generate notes');
-  } catch (e) { showError('Error: ' + e.message); }
-  finally { btn.classList.remove('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes'; }
+    if (selectedSessionId === sid) {
+      if (res.ok && res.notes) {
+        const separator = existingNotesSnapshot.trim() ? '\n\n---\n\n' : '';
+        notesInput.value = existingNotesSnapshot.trim() + separator + res.notes;
+        await saveNotesForSession(sid, notesInput.value);
+        renderNotesView(notesInput.value);
+      } else {
+        showError(res.error || 'Failed to generate notes');
+      }
+    } else if (res.ok && res.notes) {
+      const saved = await appendNotesToSession(sid, res.notes);
+      if (saved) {
+        const session = allSessions.find(s => s.id === sid);
+        const sessionName = session ? session.name : 'Recording';
+        showNotice('', {
+          type: 'info',
+          action: {
+            sid,
+            name: sessionName,
+            before: 'Notes generated for "',
+            after: '"',
+          },
+        });
+      }
+    }
+  } catch (e) {
+    if (selectedSessionId === sid) showError('Error: ' + e.message);
+  } finally {
+    if (notesGeneratingFor === sid) notesGeneratingFor = null;
+    if (selectedSessionId) updateSessionNotesButton(selectedSessionId);
+  }
 }
 
 async function generateNotes() {
-  const btn = document.getElementById('btn-notes');
   const out = document.getElementById('notes-output');
   const promptVal = document.getElementById('prompt-input').value.trim();
-  btn.classList.add('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:currentColor;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
-  out.className = 'visible'; out.textContent = 'Thinking...';
+  const startedInLiveView = isLiveViewActive();
+  liveNotesGenerating = true;
+  updateLiveNotesButton();
+  if (startedInLiveView) {
+    out.className = 'visible';
+    out.textContent = 'Thinking...';
+  }
   try {
     const res = await apiCall('/api/notes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: promptVal || null }),
     });
-    if (res.ok) { out.innerHTML = renderMarkdown(res.notes); out.classList.add('notes-rendered'); }
-    else out.textContent = 'Error: ' + (res.error || 'Unknown');
-  } catch (e) { out.textContent = 'Error: ' + e.message; }
-  finally { btn.classList.remove('loading'); btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes'; }
+    if (isLiveViewActive()) {
+      if (res.ok) {
+        out.innerHTML = renderMarkdown(res.notes);
+        out.classList.add('notes-rendered');
+      } else {
+        out.textContent = 'Error: ' + (res.error || 'Unknown');
+      }
+    }
+  } catch (e) {
+    if (isLiveViewActive()) out.textContent = 'Error: ' + e.message;
+  } finally {
+    liveNotesGenerating = false;
+    updateLiveNotesButton();
+  }
 }
 
 // --- Markdown rendering ---
+function applyInlineMarkdown(escaped) {
+  if (!escaped) return '';
+  let html = escaped;
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  return html;
+}
+
+function parseMarkdownTableCells(line) {
+  if (!line || !line.trim().includes('|')) return null;
+  let trimmed = line.trim();
+  if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+  return trimmed.split('|').map(cell => cell.trim());
+}
+
+function isMarkdownTableSeparatorRow(cells) {
+  if (!cells || cells.length === 0) return false;
+  return cells.every(cell => /^:?-{3,}:?$/.test(cell.replace(/\s/g, '')));
+}
+
+function convertMarkdownTables(escapedHtml) {
+  const lines = escapedHtml.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (i + 1 < lines.length) {
+      const headerCells = parseMarkdownTableCells(lines[i]);
+      const separatorCells = parseMarkdownTableCells(lines[i + 1]);
+      if (
+        headerCells && headerCells.length > 0
+        && separatorCells && isMarkdownTableSeparatorRow(separatorCells)
+      ) {
+        const colCount = headerCells.length;
+        const bodyRows = [];
+        let j = i + 2;
+        while (j < lines.length) {
+          const rowCells = parseMarkdownTableCells(lines[j]);
+          if (!rowCells || lines[j].trim() === '') break;
+          bodyRows.push(rowCells);
+          j++;
+        }
+        let tableHtml = '<div class="md-table-wrap"><table><thead><tr>';
+        for (let c = 0; c < colCount; c++) {
+          tableHtml += '<th>' + applyInlineMarkdown(headerCells[c] || '') + '</th>';
+        }
+        tableHtml += '</tr></thead><tbody>';
+        for (const row of bodyRows) {
+          tableHtml += '<tr>';
+          for (let c = 0; c < colCount; c++) {
+            const cell = row[c] !== undefined ? row[c] : '';
+            tableHtml += '<td>' + applyInlineMarkdown(cell) + '</td>';
+          }
+          tableHtml += '</tr>';
+        }
+        tableHtml += '</tbody></table></div>';
+        out.push(tableHtml);
+        i = j;
+        continue;
+      }
+    }
+    out.push(lines[i]);
+    i++;
+  }
+  return out.join('\n');
+}
+
 function renderMarkdown(text) {
   if (!text) return '';
   let html = escHtml(text);
+  html = convertMarkdownTables(html);
   html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
   html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
   html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
@@ -2278,10 +2949,7 @@ function renderMarkdown(text) {
   html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
   html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
   html = html.replace(/^---$/gm, '<hr>');
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = applyInlineMarkdown(html);
   html = html.replace(/^- \[x\]\s+(.+)$/gm, '<li><input type="checkbox" checked disabled>$1</li>');
   html = html.replace(/^- \[ \]\s+(.+)$/gm, '<li><input type="checkbox" disabled>$1</li>');
   html = html.replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>');
@@ -2671,6 +3339,7 @@ function showLiveView() {
   document.getElementById('session-view').style.display = 'none';
   document.getElementById('empty-view').style.display = 'none';
   document.getElementById('settings-view').style.display = 'none';
+  updateLiveNotesButton();
 }
 function showSessionView() {
   document.getElementById('live-view').style.display = 'none';
@@ -2679,6 +3348,7 @@ function showSessionView() {
   document.getElementById('settings-view').style.display = 'none';
   // Show "Back to Live" only when a recording is actually active.
   document.getElementById('btn-back-to-live').style.display = lastWasRecording ? '' : 'none';
+  if (selectedSessionId) updateSessionNotesButton(selectedSessionId);
 }
 function showEmptyView() {
   document.getElementById('live-view').style.display = 'none';
@@ -2709,7 +3379,10 @@ function escHtml(s) {
   d.textContent = s;
   return d.innerHTML;
 }
-function escAttr(s) { return s ? s.replace(/'/g, "\\'").replace(/"/g, '&quot;') : ''; }
+function escAttr(s) {
+  if (!s) return '';
+  return escHtml(String(s)).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 function showError(msg) {
   const b = document.getElementById('error-banner');
@@ -2789,11 +3462,17 @@ document.getElementById('session-audio').addEventListener('pause', function() {
   document.querySelectorAll('#session-transcript .segment.playing').forEach(el => el.classList.remove('playing'));
 });
 
-// Close move dropdown on click outside
+// Close move/export dropdowns on click outside
 document.addEventListener('click', function(e) {
   const dd = document.getElementById('move-dropdown');
   const btn = document.getElementById('btn-move');
-  if (!dd.contains(e.target) && e.target !== btn) dd.classList.remove('visible');
+  if (dd && btn && !dd.contains(e.target) && e.target !== btn) dd.classList.remove('visible');
+  const exportWrap = document.querySelector('.export-dropdown');
+  if (exportWrap && !exportWrap.contains(e.target)) closeExportDropdown();
+});
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeExportDropdown();
 });
 
 // --- Init ---
@@ -2825,8 +3504,11 @@ async function loadPromptTemplates() {
   renderChips('session-prompt-chips', 'session');
   registerShortcuts();
   await refreshSessionList();
+  window.addEventListener('hashchange', () => { handleDeepLink(); });
   const status = await apiCall('/api/status');
-  if (status.is_active) {
+  if (parseDeepLink()) {
+    await handleDeepLink();
+  } else if (status.is_active) {
     lastWasRecording = true;
     const badge = document.getElementById('status-badge');
     badge.className = 'recording';
