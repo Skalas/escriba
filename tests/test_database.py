@@ -633,3 +633,102 @@ def test_speaker_labels_migration_is_idempotent_with_existing_segments(
         assert db.get_speaker_labels(session_id) == {"SPEAKER_00": "Legacy Name"}
     finally:
         db.close()
+
+
+def _create_orphan_wav(db_path: Path, session_id: str) -> Path:
+    """Create a canonical WAV file for a session under the db's audio dir."""
+    audio_dir = db_path.parent / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    wav_path = audio_dir / f"{session_id}.wav"
+    wav_path.write_bytes(b"RIFF" + b"\x00" * 12)
+    return wav_path
+
+
+def test_get_session_relinks_orphaned_audio(tmp_path: Path) -> None:
+    """get_session backfills audio_path when the canonical WAV exists."""
+    db_path = tmp_path / "transcriber.db"
+    db = Database(db_path)
+    session_id = _seed_completed_session(db)
+    db._conn.execute(
+        "UPDATE sessions SET audio_path = NULL WHERE id = ?",
+        (session_id,),
+    )
+    db._conn.commit()
+    wav_path = _create_orphan_wav(db_path, session_id)
+
+    session = db.get_session(session_id)
+
+    assert session is not None
+    assert session["audio_path"] == str(wav_path.resolve())
+    row = db._conn.execute(
+        "SELECT audio_path FROM sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone()
+    assert row["audio_path"] == str(wav_path.resolve())
+    db.close()
+
+
+def test_relink_orphaned_audio_batch(tmp_path: Path) -> None:
+    """relink_orphaned_audio links every session whose WAV file is present."""
+    db_path = tmp_path / "transcriber.db"
+    db = Database(db_path)
+    linked_id = _seed_completed_session(db, name="Has WAV")
+    missing_id = _seed_completed_session(db, name="No WAV")
+    for sid in (linked_id, missing_id):
+        db._conn.execute(
+            "UPDATE sessions SET audio_path = '' WHERE id = ?",
+            (sid,),
+        )
+    db._conn.commit()
+    wav_path = _create_orphan_wav(db_path, linked_id)
+
+    count = db.relink_orphaned_audio()
+
+    assert count == 1
+    linked = db.get_session(linked_id)
+    missing = db.get_session(missing_id)
+    assert linked is not None
+    assert missing is not None
+    assert linked["audio_path"] == str(wav_path.resolve())
+    assert missing["audio_path"] == ""
+    db.close()
+
+
+def test_relink_orphaned_audio_skips_when_path_already_set(tmp_path: Path) -> None:
+    """Sessions with audio_path already set are not overwritten."""
+    db_path = tmp_path / "transcriber.db"
+    db = Database(db_path)
+    session_id = _seed_completed_session(db)
+    existing_path = str(tmp_path / "custom" / "recording.wav")
+    db.update_audio_path(session_id, existing_path)
+    _create_orphan_wav(db_path, session_id)
+
+    count = db.relink_orphaned_audio()
+
+    assert count == 0
+    session = db.get_session(session_id)
+    assert session is not None
+    assert session["audio_path"] == existing_path
+    db.close()
+
+
+def test_database_init_relinks_orphaned_audio(tmp_path: Path) -> None:
+    """Opening the database relinks orphaned audio once at startup."""
+    db_path = tmp_path / "transcriber.db"
+    db = Database(db_path)
+    session_id = _seed_completed_session(db)
+    db._conn.execute(
+        "UPDATE sessions SET audio_path = NULL WHERE id = ?",
+        (session_id,),
+    )
+    db._conn.commit()
+    db.close()
+
+    wav_path = _create_orphan_wav(db_path, session_id)
+    db_reopen = Database(db_path)
+    try:
+        session = db_reopen.get_session(session_id)
+        assert session is not None
+        assert session["audio_path"] == str(wav_path.resolve())
+    finally:
+        db_reopen.close()

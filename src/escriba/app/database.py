@@ -194,8 +194,72 @@ class Database:
             self._conn.executescript(_SCHEMA)
             _run_migrations(self._conn)
             self._close_stale_sessions()
+            relinked = self.relink_orphaned_audio()
+            if relinked:
+                logger.info("Relinked audio for %d session(s) on startup", relinked)
             self._conn.commit()
         logger.info("Database opened: %s", db_path)
+
+    def _audio_dir(self) -> Path | None:
+        """Derive the canonical audio directory from the database file location."""
+        db_path = self._db_path
+        if db_path is None:
+            return None
+        path_str = str(db_path).strip()
+        if not path_str or path_str == ":memory:":
+            return None
+        return Path(db_path).parent / "audio"
+
+    @staticmethod
+    def _is_missing_audio_path(audio_path: str | None) -> bool:
+        """Return True when audio_path is unset or blank."""
+        return not audio_path or not str(audio_path).strip()
+
+    def _relink_session_audio_if_orphaned(
+        self, session_id: str, *, commit: bool = True
+    ) -> str | None:
+        """
+        Backfill audio_path when the canonical WAV exists on disk.
+
+        Caller must hold ``self._lock``.
+        """
+        audio_dir = self._audio_dir()
+        if audio_dir is None:
+            return None
+        wav_path = audio_dir / f"{session_id}.wav"
+        if not wav_path.is_file():
+            return None
+        path_str = str(wav_path.resolve())
+        self._conn.execute(
+            "UPDATE sessions SET audio_path = ? WHERE id = ?",
+            (path_str, session_id),
+        )
+        if commit:
+            self._conn.commit()
+        logger.info("Relinked audio for session %s", session_id)
+        return path_str
+
+    def relink_orphaned_audio(self) -> int:
+        """
+        Scan sessions with empty audio_path and link any whose WAV file exists.
+
+        Returns:
+            Number of sessions relinked.
+        """
+        if self._audio_dir() is None:
+            return 0
+        count = 0
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM sessions "
+                "WHERE audio_path IS NULL OR TRIM(audio_path) = ''"
+            ).fetchall()
+            for row in rows:
+                if self._relink_session_audio_if_orphaned(row["id"], commit=False):
+                    count += 1
+            if count:
+                self._conn.commit()
+        return count
 
     def _close_stale_sessions(self):
         """Mark any leftover 'active' sessions as 'completed' on startup."""
@@ -264,7 +328,14 @@ class Database:
                 "FROM sessions s WHERE s.id = ?",
                 (session_id,),
             ).fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            session = dict(row)
+            if self._is_missing_audio_path(session.get("audio_path")):
+                relinked = self._relink_session_audio_if_orphaned(session_id, commit=True)
+                if relinked:
+                    session["audio_path"] = relinked
+            return session
 
     def list_sessions(self, limit: int = 100) -> list[dict]:
         with self._lock:
