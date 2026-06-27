@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from socketserver import ThreadingMixIn
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 from urllib.parse import parse_qs, urlparse
 
 if TYPE_CHECKING:
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 MAX_BODY_BYTES = 1_048_576
 REQUEST_TIMEOUT_SECONDS = 30
 MAX_SPEAKER_DISPLAY_NAME = 200
+_CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError)
 
 
 def _segment_speaker_label(segment: dict[str, Any]) -> str | None:
@@ -395,6 +396,40 @@ class _Handler(BaseHTTPRequestHandler):
             status=500,
         )
 
+    def _log_client_disconnect(self, context: str) -> None:
+        client = getattr(self, "client_address", None)
+        logger.debug(
+            "Client disconnected during %s from %s",
+            context,
+            client,
+        )
+
+    def _handle_request_exception(self, exc: Exception) -> None:
+        if isinstance(exc, ApiError):
+            self._respond_error(exc)
+        elif isinstance(exc, _CLIENT_DISCONNECT_ERRORS):
+            self._log_client_disconnect("request handling")
+        else:
+            self._respond_unexpected(exc)
+
+    def _stream_file_to_client(self, f: BinaryIO, length: int | None = None) -> None:
+        """Stream an open file to the client; stop quietly on disconnect."""
+        remaining = length
+        while True:
+            chunk_size = 65536 if remaining is None else min(65536, remaining)
+            if remaining is not None and remaining <= 0:
+                break
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            try:
+                self.wfile.write(chunk)
+            except _CLIENT_DISCONNECT_ERRORS:
+                self._log_client_disconnect("audio stream")
+                return
+            if remaining is not None:
+                remaining -= len(chunk)
+
     # --- Routing ---
 
     def do_GET(self) -> None:
@@ -443,8 +478,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("GET")
         except Exception as exc:
-            self._respond_unexpected(exc)
+            self._handle_request_exception(exc)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -487,8 +524,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("POST")
         except Exception as exc:
-            self._respond_unexpected(exc)
+            self._handle_request_exception(exc)
 
     def do_PUT(self) -> None:
         parsed = urlparse(self.path)
@@ -510,8 +549,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("PUT")
         except Exception as exc:
-            self._respond_unexpected(exc)
+            self._handle_request_exception(exc)
 
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
@@ -534,8 +575,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
             self._respond_error(exc)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("DELETE")
         except Exception as exc:
-            self._respond_unexpected(exc)
+            self._handle_request_exception(exc)
 
     # --- Helpers ---
 
@@ -628,7 +671,7 @@ class _Handler(BaseHTTPRequestHandler):
 
             with open(audio_path, "rb") as f:
                 f.seek(start)
-                self.wfile.write(f.read(length))
+                self._stream_file_to_client(f, length)
         else:
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")
@@ -637,16 +680,18 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
             with open(audio_path, "rb") as f:
-                while chunk := f.read(65536):
-                    self.wfile.write(chunk)
+                self._stream_file_to_client(f)
 
-    def _json_response(self, data: dict, status: int = 200):
+    def _json_response(self, data: dict, status: int = 200) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except _CLIENT_DISCONNECT_ERRORS:
+            self._log_client_disconnect("JSON response")
 
     def _parse_json_body(self) -> dict[str, Any]:
         """Read and parse a JSON object body with size limits."""

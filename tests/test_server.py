@@ -55,6 +55,7 @@ def _make_handler(app_state: AppState) -> _Handler:
     handler.rfile = BytesIO()
     handler.wfile = BytesIO()
     handler.connection = MagicMock()
+    handler.client_address = ("127.0.0.1", 12345)
     return handler
 
 
@@ -204,3 +205,57 @@ def test_set_speaker_label_rejects_unknown_speaker(app_state: AppState) -> None:
     assert payload["ok"] is False
     assert payload["error"] == "Unknown speaker for session"
     assert db.get_speaker_labels(session_id) == {}
+
+
+class _DisconnectWriter:
+    """Fake wfile that simulates a client closing the socket mid-write."""
+
+    def write(self, data: bytes) -> int:
+        raise BrokenPipeError()
+
+    def flush(self) -> None:
+        return None
+
+
+def test_serve_audio_swallows_client_disconnect(
+    app_state: AppState, tmp_path: Path
+) -> None:
+    """Aborted audio downloads must not raise or trigger error responses."""
+    db = app_state.db
+    session_id = db.create_session(name="Audio")
+    db.stop_session(session_id)
+    wav_path = tmp_path / "sample.wav"
+    wav_path.write_bytes(b"RIFF" + b"\x00" * 64)
+    db.update_audio_path(session_id, str(wav_path))
+
+    handler = _make_handler(app_state)
+    handler.headers = {}
+    handler.send_response = MagicMock()
+    handler.send_header = MagicMock()
+    handler.end_headers = MagicMock()
+    handler.wfile = _DisconnectWriter()
+
+    handler._serve_audio(session_id)
+
+    handler.send_response.assert_called_once_with(200)
+
+
+def test_respond_unexpected_swallows_client_disconnect_on_write(
+    app_state: AppState, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Error responses must not double-fault when the client already left."""
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    handler = _make_handler(app_state)
+    handler.send_response = MagicMock()
+    handler.send_header = MagicMock()
+    handler.end_headers = MagicMock()
+    handler.wfile = _DisconnectWriter()
+
+    handler._respond_unexpected(RuntimeError("boom"))
+
+    assert any(
+        "Client disconnected during JSON response" in record.getMessage()
+        for record in caplog.records
+    )
