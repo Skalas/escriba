@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-26 · Current version: `0.3.0` · next milestone: `v0.4.0` (Epic #12)_
+_Last updated: 2026-06-26 · Current version: `0.4.0` (Epic #12 shipped) · next milestone: `v0.5.0` (depth on the core loop)_
 
 ---
 
@@ -31,7 +31,7 @@ The app is feature-rich. Since `v0.2.0` we shipped (unreleased):
 - Mic-activation detection + auto session naming
 - A stack of dashboard UX and launcher/spawn fixes
 
-**The gap:** core app modules have near-zero test coverage, shared state is largely unsynchronized, the HTTP server handles one request at a time, and LLM calls have no timeout/retry. Tracked in **[Epic #12: Backend hardening](https://github.com/Skalas/escriba/issues/12)**.
+**The gap (closed in `v0.4.0`):** core app modules had near-zero test coverage, shared state was largely unsynchronized, the HTTP server handled one request at a time, and LLM calls had no timeout/retry. Addressed under **[Epic #12: Backend hardening](https://github.com/Skalas/escriba/issues/12)** — the core loop is now concurrency-safe, the server is threaded with input validation, LLM calls time out/retry, and `server.py`/`database.py`/`session.py` have meaningful coverage (84 tests).
 
 ---
 
@@ -49,37 +49,40 @@ Cut the accumulated feature work as a proper minor release.
 
 ---
 
-### `v0.4.0` — Reliability  ·  _Epic #12 (P0/P1)_
+### `v0.4.0` — Reliability  ·  _Epic #12 (P0/P1) · shipped 2026-06-26_
 
-The core stops corrupting state under concurrent load and fails gracefully. **This is the priority milestone.**
+The core stops corrupting state under concurrent load and fails gracefully. **This was the priority milestone.**
 
 **Concurrency & thread safety (P0)**
-- [ ] Guard `app_state` with an `RLock` / single-writer session manager (`server.py:129`)
-- [ ] Wrap `split_session`/`merge_sessions` in a lock + single transaction (`database.py`)
-- [ ] Serialize all `mlx-lm` calls via a global semaphore (or subprocess) (`llm_summary.py:461`)
-- [ ] Make model-download state atomic (`threading.Event`/lock) (`server.py:820`)
+- [x] Guard `app_state` with an `RLock` single-writer (`AppState`); `start()` runs outside the lock so audio init doesn't block `/api/status`
+- [x] Wrap `split_session`/`merge_sessions` in a lock + single transaction (`database.py`)
+- [x] Serialize all `mlx-lm` calls via a global `Semaphore(1)` (`llm_summary.py`)
+- [x] Make model-download state atomic (`try_begin_model_download`/`finish`)
+- [x] **DB1 (found in review):** serialize *all* DB access on the single shared connection — the per-op lock alone didn't make split/merge atomic vs concurrent `add_segments` during a live recording
 
 **HTTP server (P0/P1)**
-- [ ] Move to `ThreadingHTTPServer` so long ops don't block `/api/status` polling
-- [ ] Enforce body size cap (~1MB) + socket timeout (`server.py:375`)
-- [ ] Input validation layer → reject bad bodies with `400`
-- [ ] Correct status codes: `400`/`404`/`409` (already recording)/`503`
+- [x] Move to `ThreadingHTTPServer` so long ops don't block `/api/status` polling
+- [x] Enforce body size cap (1MB → 413) + socket timeout
+- [x] Input validation layer → bad bodies return `400`/structured errors (incl. JSON-null fields, caught in smoke)
+- [x] Correct status codes: `400`/`404`/`409`/`413`/`503`; no stack traces to clients
 
 **LLM resilience (P0/P1)**
-- [ ] Add `timeout=30` to Gemini/Claude calls (`llm_summary.py:530`)
-- [ ] Retry with exponential backoff + jitter (3 tries) on `429`/`5xx`
-- [ ] Evict local model cache on `MemoryError`/`RuntimeError`, retry once
+- [x] `timeout=30` on Gemini/Claude calls (SDK timeout + `concurrent.futures` backstop that actually unblocks the caller)
+- [x] Retry with exponential backoff + jitter (3 tries) on `429`/`5xx`; never on 4xx auth
+- [x] Evict local model cache on `MemoryError`/`RuntimeError`, retry once
 
-**Tests (P0 — land alongside the fixes)**
-- [ ] `test_database.py` — split atomicity, concurrent split+merge, idempotent migration
-- [ ] `test_server.py` — concurrent start → one session, oversized body rejected, bad input → 400
-- [ ] `test_session.py` — lifecycle, audio persisted on stop, mlx serialization
+**Tests (P0 — landed alongside the fixes)**
+- [x] `test_database.py` — split atomicity, concurrent split+merge, idempotent migration, split‖add_segments
+- [x] `test_server.py` — concurrent start → one session, oversized body rejected, bad input → 4xx (incl. null fields)
+- [x] `test_session.py` — lifecycle, audio persisted on stop, mlx serialization, notes markdown
 
-**Done when:** concurrent API calls during an active recording don't corrupt state or crash (proven by tests); LLM calls time out/retry instead of hanging the UI; the three core modules have meaningful coverage.
+**Done when:** concurrent API calls during an active recording don't corrupt state or crash (proven by tests); LLM calls time out/retry instead of hanging the UI; the three core modules have meaningful coverage. ✅
+
+**Also in this sprint:** whole-codebase mypy typing pass (0 errors); migration verified idempotent on a real 39-session/10.9k-segment DB; smoke fixes (`{"prompt": null}` → 500; raw-JSON notes → markdown). Review record: `docs/review/v0.4.0-review-findings.md`. Deferred polish filed as #30–#33.
 
 ---
 
-### `v0.5.0` — Depth on the core loop
+### `v0.5.0` — Depth on the core loop  ·  _next up_
 
 Make the existing record → transcribe → summarize flow better, not wider. _Candidates — to be scoped:_
 
