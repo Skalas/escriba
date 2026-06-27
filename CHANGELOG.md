@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-27
+
+Three "better, not wider" features plus a rigorous interview-evaluation prompt.
+
+### Added
+- **Cross-session transcript search** ([#26](https://github.com/Skalas/escriba/issues/26)) — search across all sessions; click a result to open the session and jump to / highlight the segment.
+- **Speaker labels** ([#27](https://github.com/Skalas/escriba/issues/27)) — name and edit speakers, persisted per session; renamed speakers appear in the transcript, AI notes, and exports.
+- **Richer export / share** ([#28](https://github.com/Skalas/escriba/issues/28)) — Markdown bundle, copy-to-clipboard, save to `~/Downloads` (with the path reported), and per-segment deep links (`#session/<id>/seg/<id>`).
+- **Interview Evaluation prompt** — a non-complacent quick-prompt template: evidence-demanding, demonstrated-vs-claimed, decisive hire/no-hire.
+- **GFM table rendering** in AI notes.
+- **Audio recovery** — sessions whose `audio_path` was empty are relinked to their on-disk WAV (`audio/<id>.wav`) on access and at startup; no recordings were lost.
+
+### Fixed
+- Notes generation is scoped to its session — a slow generation no longer bleeds into or sticks on another record after switching.
+- Audio streaming handles client disconnect (seek/pause/close) quietly instead of logging `BrokenPipeError` and double-faulting on a 500.
+- Re-transcribe shows a disabled state with a tooltip when a session has no audio (was hidden).
+- Dark mode: clearer surface separation across all themes, and button/control text inherits the theme color (no near-black text on dark).
+- Speaker display names are escaped (stored-XSS hardening on the rename feature); merge uses `INSERT OR IGNORE` against the segment-timing unique index.
+
 ## [0.5.0] - 2026-06-27
 
 Transcription robustness ([#29](https://github.com/Skalas/escriba/issues/29)): the transcription path no longer silently degrades output.
@@ -61,7 +80,8 @@ Cuts the accumulated feature work since `v0.2.0` as a proper minor release.
 
 Initial tracked release.
 
-[Unreleased]: https://github.com/Skalas/escriba/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Skalas/escriba/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Skalas/escriba/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Skalas/escriba/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Skalas/escriba/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Skalas/escriba/compare/v0.2.0...v0.3.0
