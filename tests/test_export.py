@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,6 +14,9 @@ from escriba.app.server import (
     build_session_export_markdown,
     build_session_export_txt,
     format_export_timestamp,
+    format_path_for_display,
+    save_session_export_to_downloads,
+    unique_export_path,
 )
 from escriba.config import AppConfig
 from tests.test_database import _add_segments, _seed_completed_session
@@ -183,6 +185,7 @@ def test_export_session_md_from_database(app_state: AppState) -> None:
     payload, status = handler._export_session(session_id, "md")
     assert status == 200
     assert payload["ok"] is True
+    assert isinstance(payload["content"], str)
     assert payload["filename"].endswith(".md")
     assert "# Interview" in payload["content"]
     assert "**Candidate**: Tell me about yourself" in payload["content"]
@@ -193,44 +196,79 @@ def test_export_session_md_from_database(app_state: AppState) -> None:
     assert "[Candidate] Tell me about yourself" in txt_payload["content"]
 
 
-def test_export_download_returns_raw_attachment(app_state: AppState) -> None:
-    """download=1 mode streams raw bytes with Content-Disposition attachment."""
+def test_save_session_export_writes_file(app_state: AppState, tmp_path: Path) -> None:
+    """POST save action writes export to Downloads and returns its path."""
     db = app_state.db
     assert db is not None
     session_id = _seed_completed_session(db, name="Team Sync", duration=30.0)
     _add_segments(db, session_id, [(5.0, "Hello everyone")])
 
+    downloads = tmp_path / "Downloads"
     handler = _make_handler(app_state)
-    headers: dict[str, str] = {}
-    handler.send_response = MagicMock()
-    handler.send_header = lambda key, value: headers.__setitem__(key, value)
-    handler.end_headers = MagicMock()
 
-    handler._serve_export_download(session_id, "md")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "escriba.app.server.save_session_export_to_downloads",
+            lambda content, filename, downloads_dir=None: save_session_export_to_downloads(
+                content, filename, downloads_dir=downloads
+            ),
+        )
+        payload, status = handler._save_session_export(session_id, "md")
 
-    handler.send_response.assert_called_once_with(200)
-    assert headers["Content-Type"] == "text/markdown; charset=utf-8"
-    assert headers["Content-Disposition"] == 'attachment; filename="Team Sync.md"'
-    body = handler.wfile.getvalue()
-    assert body.startswith(b"# Team Sync")
-    assert b'"ok"' not in body
+    assert status == 200
+    assert payload["ok"] is True
+    saved = Path(payload["path"])
+    assert saved.parent == downloads
+    assert saved.name == "Team Sync.md"
+    assert saved.read_text(encoding="utf-8").startswith("# Team Sync")
+    assert payload["display_path"] == format_path_for_display(saved)
 
 
-def test_export_download_txt_uses_plain_content_type(app_state: AppState) -> None:
-    """TXT download mode uses text/plain and attachment disposition."""
+def test_save_session_export_deduplicates_filename(
+    app_state: AppState, tmp_path: Path
+) -> None:
+    """Saving twice with the same session name picks a numeric suffix."""
     db = app_state.db
     assert db is not None
-    session_id = _seed_completed_session(db, name="Plain Notes", duration=10.0)
-    _add_segments(db, session_id, [(1.0, "Line one")])
+    session_id = _seed_completed_session(db, name="Team Sync", duration=30.0)
+    _add_segments(db, session_id, [(5.0, "Hello everyone")])
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir(parents=True)
+    (downloads / "Team Sync.md").write_text("existing", encoding="utf-8")
 
     handler = _make_handler(app_state)
-    headers: dict[str, str] = {}
-    handler.send_response = MagicMock()
-    handler.send_header = lambda key, value: headers.__setitem__(key, value)
-    handler.end_headers = MagicMock()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "escriba.app.server.save_session_export_to_downloads",
+            lambda content, filename, downloads_dir=None: save_session_export_to_downloads(
+                content, filename, downloads_dir=downloads
+            ),
+        )
+        payload, status = handler._save_session_export(session_id, "md")
 
-    handler._serve_export_download(session_id, "txt")
+    assert status == 200
+    assert payload["path"].endswith("Team Sync (2).md")
+    assert Path(payload["path"]).read_text(encoding="utf-8").startswith("# Team Sync")
 
-    assert headers["Content-Type"] == "text/plain; charset=utf-8"
-    assert headers["Content-Disposition"] == 'attachment; filename="Plain Notes.txt"'
-    assert handler.wfile.getvalue().startswith(b"Plain Notes")
+
+def test_save_session_export_missing_returns_404(app_state: AppState) -> None:
+    """Save action returns 404 for unknown sessions."""
+    handler = _make_handler(app_state)
+    payload, status = handler._save_session_export("missing-session-id", "md")
+    assert status == 404
+    assert payload["ok"] is False
+
+
+def test_unique_export_path_adds_numeric_suffix(tmp_path: Path) -> None:
+    """unique_export_path avoids overwriting an existing file."""
+    directory = tmp_path / "Downloads"
+    directory.mkdir()
+    (directory / "Notes.md").write_text("first", encoding="utf-8")
+
+    second = unique_export_path(directory, "Notes.md")
+    assert second.name == "Notes (2).md"
+    second.write_text("second", encoding="utf-8")
+
+    third = unique_export_path(directory, "Notes.md")
+    assert third.name == "Notes (3).md"

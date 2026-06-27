@@ -72,6 +72,43 @@ def safe_export_filename(name: str, ext: str) -> str:
     return f"{safe_name}.{ext}"
 
 
+def format_path_for_display(path: Path) -> str:
+    """Return a user-friendly path (~-prefixed when under home)."""
+    home = Path.home()
+    try:
+        return "~/" + str(path.relative_to(home))
+    except ValueError:
+        return str(path)
+
+
+def unique_export_path(directory: Path, filename: str) -> Path:
+    """Pick a non-colliding path under directory for filename."""
+    target = directory / filename
+    if not target.exists():
+        return target
+    stem = Path(filename).stem
+    ext = Path(filename).suffix
+    counter = 2
+    while True:
+        candidate = directory / f"{stem} ({counter}){ext}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def save_session_export_to_downloads(
+    content: str,
+    filename: str,
+    downloads_dir: Path | None = None,
+) -> Path:
+    """Write export content to ~/Downloads with a de-duplicated filename."""
+    directory = downloads_dir if downloads_dir is not None else Path.home() / "Downloads"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = unique_export_path(directory, filename)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
 def build_session_export_markdown(session: dict[str, Any], segments: list[dict[str, Any]]) -> str:
     """Build a Markdown export bundle for a session."""
     lines: list[str] = [f"# {session.get('name', 'Session')}", ""]
@@ -467,11 +504,7 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/sessions/") and path.endswith("/export"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/export", 1)[0]
                 export_format = params.get("format", ["md"])[0]
-                download_flag = params.get("download", ["0"])[0].strip().lower()
-                if download_flag in ("1", "true", "yes"):
-                    self._serve_export_download(session_id, export_format)
-                else:
-                    self._respond(self._export_session(session_id, export_format))
+                self._respond(self._export_session(session_id, export_format))
             elif path.startswith("/api/sessions/"):
                 session_id = path.split("/api/sessions/")[1]
                 if session_id:
@@ -508,6 +541,16 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(self._move_sessions(self._parse_json_body()))
             elif path == "/api/folders":
                 self._respond(self._create_folder(self._parse_json_body()))
+            elif path.startswith("/api/sessions/") and path.endswith("/export"):
+                session_id = path.split("/api/sessions/")[1].rsplit("/export", 1)[0]
+                body = self._parse_json_body()
+                if body.get("save"):
+                    export_format = str(body.get("format", "md"))
+                    self._respond(self._save_session_export(session_id, export_format))
+                else:
+                    self._respond(
+                        ({"ok": False, "error": "Use GET for JSON export or POST with save:true"}, 400)
+                    )
             elif path.startswith("/api/sessions/") and path.endswith("/retranscribe"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/retranscribe", 1)[0]
                 self._respond(self._retranscribe_session(session_id))
@@ -635,26 +678,23 @@ class _Handler(BaseHTTPRequestHandler):
             "format": export_format,
         }, 200
 
-    def _serve_export_download(self, session_id: str, fmt: str) -> None:
-        """Stream a session export as a file attachment (for Download)."""
+    def _save_session_export(self, session_id: str, fmt: str = "md") -> tuple[dict, int]:
+        """Write a session export to ~/Downloads and return its path."""
         resolved = self._resolve_session_export(session_id, fmt)
         if isinstance(resolved[0], dict):
-            self._respond(resolved)  # type: ignore[arg-type]
-            return
-        content, filename, _export_format, content_type = resolved
-        body = content.encode("utf-8")
+            return resolved  # type: ignore[return-value]
+        content, filename, export_format, _content_type = resolved
         try:
-            self.send_response(200)
-            self.send_header("Content-Type", f"{content_type}; charset=utf-8")
-            self.send_header(
-                "Content-Disposition",
-                f'attachment; filename="{filename}"',
-            )
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        except _CLIENT_DISCONNECT_ERRORS:
-            self._log_client_disconnect("export download")
+            saved_path = save_session_export_to_downloads(content, filename)
+        except OSError as exc:
+            logger.error("Failed to save export for session %s: %s", session_id, exc, exc_info=True)
+            return {"ok": False, "error": f"Failed to save export: {exc}"}, 500
+        return {
+            "ok": True,
+            "path": str(saved_path),
+            "display_path": format_path_for_display(saved_path),
+            "format": export_format,
+        }, 200
 
     def _serve_audio(self, session_id: str) -> None:
         """Serve the WAV audio file for a session with HTTP Range support."""

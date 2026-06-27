@@ -737,26 +737,29 @@
     font-size: 14px;
     font-weight: 500;
     display: none;
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
     box-shadow: var(--shadow-lg);
     max-width: min(90vw, 560px);
     text-align: center;
   }
-  #notice-banner.visible { display: block; animation: slideDown 200ms ease; }
+  #notice-banner.visible { display: block; animation: noticeSlideDown 200ms ease; }
   #notice-banner.success {
-    background: var(--badge-active);
-    color: var(--success);
     border-left: 3px solid var(--success);
   }
   #notice-banner.info {
-    background: var(--badge-completed);
-    color: var(--accent);
     border-left: 3px solid var(--accent);
   }
   #notice-banner .notice-link {
-    color: inherit;
+    color: var(--accent);
     font-weight: 700;
     text-decoration: underline;
     cursor: pointer;
+  }
+  @keyframes noticeSlideDown {
+    from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
   }
   @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -789,6 +792,11 @@
   }
   button:active:not(:disabled) { transform: scale(0.97); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #btn-retranscribe:disabled {
+    opacity: 0.55;
+    color: var(--text-secondary);
+    border-color: var(--border-light);
+  }
   .btn-start { background: var(--accent); color: var(--on-accent); }
   .btn-start:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 2px 8px var(--accent-glow); }
   .btn-stop { background: var(--danger); color: white; }
@@ -1212,7 +1220,7 @@
       <h2 id="session-title" class="editable" ondblclick="startTitleRename()">Session</h2>
       <div class="controls-row" style="margin-bottom:0;">
         <button class="btn-start" id="btn-back-to-live" onclick="backToLive()" style="display:none;">Back to Live</button>
-        <button class="btn-secondary" id="btn-retranscribe" onclick="retranscribeSession()" aria-label="Re-transcribe" title="Re-transcribe" style="display:none;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg> <span class="btn-label">Re-transcribe</span></button>
+        <button class="btn-secondary" id="btn-retranscribe" onclick="retranscribeSession()" aria-label="Re-transcribe" title="Re-transcribe" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg> <span class="btn-label">Re-transcribe</span></button>
         <div class="move-dropdown export-dropdown">
           <button class="btn-secondary" id="btn-export-menu" onclick="toggleExportDropdown(event)" aria-haspopup="menu" aria-expanded="false" aria-controls="export-dropdown-menu" title="Export session" style="display:inline-flex;align-items:center;gap:6px;">
             <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
@@ -2241,7 +2249,15 @@ async function selectSession(id) {
     const audioEl = document.getElementById('session-audio');
     const hasAudio = !!s.audio_path;
     audioCard.style.display = hasAudio ? '' : 'none';
-    document.getElementById('btn-retranscribe').style.display = hasAudio ? 'inline-flex' : 'none';
+    const retranscribeBtn = document.getElementById('btn-retranscribe');
+    retranscribeBtn.style.display = 'inline-flex';
+    if (hasAudio) {
+      retranscribeBtn.disabled = false;
+      retranscribeBtn.title = 'Re-transcribe';
+    } else {
+      retranscribeBtn.disabled = true;
+      retranscribeBtn.title = 'No saved audio to re-transcribe';
+    }
     if (hasAudio) {
       audioEl.src = '/api/sessions/' + id + '/audio';
       currentSessionSegments = res.segments || [];
@@ -2672,18 +2688,6 @@ function showNotice(message, opts = {}) {
   noticeDismissTimer = setTimeout(hideNotice, 3500);
 }
 
-function triggerAttachmentDownload(url) {
-  let iframe = document.getElementById('download-iframe');
-  if (!iframe) {
-    iframe = document.createElement('iframe');
-    iframe.id = 'download-iframe';
-    iframe.title = 'Download';
-    iframe.style.display = 'none';
-    document.body.appendChild(iframe);
-  }
-  iframe.src = url;
-}
-
 async function copyToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -2723,16 +2727,20 @@ async function copySessionExport(btn) {
   }
 }
 
-function downloadSessionMarkdown(btn) {
+async function downloadSessionMarkdown(btn) {
   if (!selectedSessionId) return;
   const origHTML = btn.innerHTML;
   btn.disabled = true;
   try {
-    triggerAttachmentDownload(
-      '/api/sessions/' + selectedSessionId + '/export?format=md&download=1'
-    );
-    showNotice('Downloaded', { type: 'success' });
-    btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> <span class="btn-label">Downloaded</span>';
+    const res = await apiCall('/api/sessions/' + selectedSessionId + '/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ format: 'md', save: true }),
+    });
+    if (!res.ok) { showError(res.error || 'Export failed'); return; }
+    const pathLabel = res.display_path || res.path || '~/Downloads';
+    showNotice('Saved to ' + pathLabel, { type: 'success' });
+    btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> <span class="btn-label">Saved</span>';
     setTimeout(() => { btn.innerHTML = origHTML; }, 2000);
   } catch (e) {
     showError('Download failed: ' + e.message);
