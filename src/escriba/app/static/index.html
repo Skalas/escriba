@@ -983,6 +983,17 @@
   .move-dropdown-item:hover { background: var(--code-bg); }
   .move-dropdown-item.new-folder { color: var(--accent); font-weight: 600; }
 
+  /* Export dropdown (session header) */
+  .export-dropdown .move-dropdown-content {
+    bottom: auto;
+    top: 100%;
+    left: auto;
+    right: 0;
+    margin-bottom: 0;
+    margin-top: 4px;
+    min-width: 168px;
+  }
+
   /* Keyboard shortcuts settings */
   .shortcut-input {
     padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
@@ -1154,8 +1165,17 @@
       <div class="controls-row" style="margin-bottom:0;">
         <button class="btn-start" id="btn-back-to-live" onclick="backToLive()" style="display:none;">Back to Live</button>
         <button class="btn-secondary" id="btn-retranscribe" onclick="retranscribeSession()" aria-label="Re-transcribe" title="Re-transcribe" style="display:none;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg> <span class="btn-label">Re-transcribe</span></button>
-        <button class="btn-secondary" id="btn-copy-export" onclick="copySessionExport(this)" aria-label="Copy export" title="Copy Markdown export" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> <span class="btn-label">Copy</span></button>
-        <button class="btn-secondary" id="btn-download-md" onclick="downloadSessionMarkdown(this)" aria-label="Download Markdown" title="Download .md" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> <span class="btn-label">Download .md</span></button>
+        <div class="move-dropdown export-dropdown">
+          <button class="btn-secondary" id="btn-export-menu" onclick="toggleExportDropdown(event)" aria-haspopup="menu" aria-expanded="false" aria-controls="export-dropdown-menu" title="Export session" style="display:inline-flex;align-items:center;gap:6px;">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span class="btn-label">Export</span>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          <div class="move-dropdown-content" id="export-dropdown-menu" role="menu">
+            <div class="move-dropdown-item" role="menuitem" onclick="runExportAction('copy')">Copy Markdown</div>
+            <div class="move-dropdown-item" role="menuitem" onclick="runExportAction('download')">Download .md</div>
+          </div>
+        </div>
         <span class="export-toast" id="export-toast" aria-live="polite"></span>
       </div>
     </header>
@@ -2486,6 +2506,34 @@ async function fetchSessionExport(format) {
   return apiCall('/api/sessions/' + selectedSessionId + '/export?format=' + encodeURIComponent(format || 'md'));
 }
 
+function closeExportDropdown() {
+  const dd = document.getElementById('export-dropdown-menu');
+  const btn = document.getElementById('btn-export-menu');
+  if (dd) dd.classList.remove('visible');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function toggleExportDropdown(event) {
+  if (event) event.stopPropagation();
+  const dd = document.getElementById('export-dropdown-menu');
+  const btn = document.getElementById('btn-export-menu');
+  if (!dd || !btn) return;
+  const open = !dd.classList.contains('visible');
+  closeExportDropdown();
+  if (open) {
+    dd.classList.add('visible');
+    btn.setAttribute('aria-expanded', 'true');
+  }
+}
+
+function runExportAction(action) {
+  closeExportDropdown();
+  const btn = document.getElementById('btn-export-menu');
+  if (!btn) return;
+  if (action === 'copy') copySessionExport(btn);
+  else if (action === 'download') downloadSessionMarkdown(btn);
+}
+
 function showExportToast(message) {
   const toast = document.getElementById('export-toast');
   if (!toast) return;
@@ -3156,11 +3204,17 @@ document.getElementById('session-audio').addEventListener('pause', function() {
   document.querySelectorAll('#session-transcript .segment.playing').forEach(el => el.classList.remove('playing'));
 });
 
-// Close move dropdown on click outside
+// Close move/export dropdowns on click outside
 document.addEventListener('click', function(e) {
   const dd = document.getElementById('move-dropdown');
   const btn = document.getElementById('btn-move');
-  if (!dd.contains(e.target) && e.target !== btn) dd.classList.remove('visible');
+  if (dd && btn && !dd.contains(e.target) && e.target !== btn) dd.classList.remove('visible');
+  const exportWrap = document.querySelector('.export-dropdown');
+  if (exportWrap && !exportWrap.contains(e.target)) closeExportDropdown();
+});
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeExportDropdown();
 });
 
 // --- Init ---
