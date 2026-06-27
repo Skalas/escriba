@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-27 · Current version: `0.6.0` (search · speakers · export · interview prompt) · next milestone: `v0.7.0` (to be scoped)_
+_Last updated: 2026-06-27 · Current version: `0.6.0` (search · speakers · export · interview prompt) · next milestone: `v0.7.0` (finish hardening + unblock local generation)_
 
 ---
 
@@ -110,9 +110,30 @@ Three "better, not wider" features + a rigorous interview-evaluation prompt.
 
 ---
 
-### `v0.7.0` — _next up (to be scoped)_
+### `v0.7.0` — Finish hardening + unblock local generation  ·  _next up_
 
-Candidates: local-LLM inference in a subprocess so generation doesn't block the app (#36); observability (Epic #12 §8); config validation (Epic #12 §6); the v0.4.0-review backlog (#30–#33).
+Close out **[Epic #12](https://github.com/Skalas/escriba/issues/12)** and fix the one reliability issue that's actually felt in use.
+
+- [ ] **Subprocess inference (#36)** — move local `mlx-lm` generation to a subprocess so it can't starve the HTTP server; the dashboard stays responsive during note generation. _(headline)_
+- [ ] **Observability — Epic #12 §8** — structured logging with `session_id`/durations, request correlation IDs, latency metrics (transcription, LLM-by-provider, handler P50/P99).
+- [ ] **Config validation — Epic #12 §6** — `AppConfig.validate()`/bounds checks, hot-reload coordination, `prompts.templates` tuple/list consistency.
+- [ ] **Remote model-probe hygiene (#33)** — stop error-spamming Gemini/Claude `/api/models` when keys are absent/invalid; cache results.
+
+**Done when:** local note generation no longer blocks the dashboard; errors carry structured, traceable logs (the last unmet Epic #12 "Done when") → **Epic #12 closeable**.
+
+---
+
+### `v0.8.0` — Frontend quality + UX polish
+
+Close the testing gap the single-file SPA exposed (this session's smoke caught XSS, table rendering, stale-state, dark-mode, and black-text bugs — none caught by the Python suite), then refine UX.
+
+- [ ] **Frontend test harness (new)** — automated coverage for the SPA's risky logic (markdown/table rendering, `escHtml`/escaping, deep-link parsing, notes-generation state scoping). Highest-leverage quality investment given ~2,800 lines of untested JS.
+- [ ] **Arrows / navigation (#37)** — keyboard nav + player controls (scope TBD with details).
+- [ ] **Design cleanup (#31)** — encapsulation/DRY in `server.py`/`llm_summary.py` (D1–D4, D6).
+- [ ] **Test depth (#32)** — lock-hold latency + on-the-wire HTTP dispatch (TG1/TG2).
+- [ ] **Body-size cap for chunked requests (#30)** — close the W5 hardening loose end.
+
+**Done when:** the SPA has a real test harness covering the bug classes smoke found; UX navigation is solid.
 
 ---
 
