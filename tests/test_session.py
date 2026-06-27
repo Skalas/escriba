@@ -311,20 +311,39 @@ def _mock_transcriber() -> MagicMock:
 def test_t1_retranscribe_mlx_passes_full_streaming_config(
     distinctive_config: AppConfig, wav_file: Path
 ) -> None:
-    """T1: retranscribe_from_wav mirrors live MLX config (VAD, hallucination, dictionary)."""
+    """T1/B2: retranscribe uses _build_transcriber with full MLX config."""
     from escriba.app.session import retranscribe_from_wav
+
+    mock_transcriber = _mock_transcriber()
+    with patch(
+        "escriba.app.session._build_transcriber",
+        return_value=mock_transcriber,
+    ) as mock_build:
+        retranscribe_from_wav(wav_file, distinctive_config)
+
+    mock_build.assert_called_once_with(
+        distinctive_config,
+        realtime_output=False,
+    )
+
+
+def test_b2_build_transcriber_mlx_passes_full_streaming_config(
+    distinctive_config: AppConfig,
+) -> None:
+    """B2: shared helper passes VAD, hallucination, and dictionary to MLX."""
+    from escriba.app.session import _build_transcriber
 
     mock_transcriber = _mock_transcriber()
     with patch(
         "escriba.transcribe.streaming_mlx.StreamingTranscriberMLX",
         return_value=mock_transcriber,
     ) as mock_cls:
-        retranscribe_from_wav(wav_file, distinctive_config)
+        _build_transcriber(distinctive_config, realtime_output=True)
 
     mock_cls.assert_called_once_with(
         model_size=distinctive_config.streaming.model_size,
         language=distinctive_config.streaming.language,
-        realtime_output=False,
+        realtime_output=True,
         vad_enabled=distinctive_config.streaming.vad_enabled,
         vad_config=distinctive_config.vad,
         hallucination_config=distinctive_config.hallucination,
@@ -335,10 +354,10 @@ def test_t1_retranscribe_mlx_passes_full_streaming_config(
 def test_t1_retranscribe_faster_whisper_passes_full_streaming_config(
     distinctive_config: AppConfig, wav_file: Path
 ) -> None:
-    """T1: retranscribe_from_wav mirrors live faster-whisper config."""
+    """T1/B2: _build_transcriber honors faster-whisper backend selection."""
     from dataclasses import replace
 
-    from escriba.app.session import retranscribe_from_wav
+    from escriba.app.session import _build_transcriber, retranscribe_from_wav
 
     config = replace(
         distinctive_config,
@@ -358,9 +377,25 @@ def test_t1_retranscribe_faster_whisper_passes_full_streaming_config(
     mock_cls.assert_called_once_with(
         model_size=config.streaming.model_size,
         language=config.streaming.language,
-        device=config.streaming.device,
         realtime_output=False,
         vad_enabled=config.streaming.vad_enabled,
         vad_config=config.vad,
         hallucination_config=config.hallucination,
+        device=config.streaming.device,
+    )
+
+    with patch(
+        "escriba.transcribe.streaming.StreamingTranscriber",
+        return_value=mock_transcriber,
+    ) as mock_cls:
+        _build_transcriber(config, realtime_output=True)
+
+    mock_cls.assert_called_once_with(
+        model_size=config.streaming.model_size,
+        language=config.streaming.language,
+        realtime_output=True,
+        vad_enabled=config.streaming.vad_enabled,
+        vad_config=config.vad,
+        hallucination_config=config.hallucination,
+        device=config.streaming.device,
     )

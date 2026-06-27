@@ -141,12 +141,10 @@ class StreamingTranscriberMLX:
         Raises:
             ChunkProcessingError: When all attempts fail with transient errors.
         """
-        last_error: Exception | None = None
         for attempt in range(1, CHUNK_INFERENCE_MAX_ATTEMPTS + 1):
             try:
                 return mlx_whisper.transcribe(audio_np, **transcribe_kwargs)
             except TRANSIENT_INFERENCE_ERRORS as exc:
-                last_error = exc
                 if attempt < CHUNK_INFERENCE_MAX_ATTEMPTS:
                     logger.warning(
                         "Transient inference error on attempt %d/%d: %s",
@@ -164,8 +162,7 @@ class StreamingTranscriberMLX:
                 raise ChunkProcessingError(
                     f"Inference failed after {CHUNK_INFERENCE_MAX_ATTEMPTS} attempts"
                 ) from exc
-
-        raise ChunkProcessingError("Inference failed") from last_error
+        raise AssertionError("unreachable")
 
     def process_wav_chunk(self, wav_data: bytes) -> Optional[str]:
         """

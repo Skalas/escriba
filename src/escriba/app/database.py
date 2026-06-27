@@ -486,7 +486,7 @@ class Database:
                     for row, (_ap, off, dur) in zip(src_rows, offsets)
                 ]:
                     self._conn.execute(
-                        "INSERT INTO segments "
+                        "INSERT OR IGNORE INTO segments "
                         "(session_id, start_time, end_time, text, speaker) "
                         "SELECT ?, "
                         "       start_time + ?, "

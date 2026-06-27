@@ -292,6 +292,32 @@ def test_t4_add_segments_ignores_duplicate_timing(db: Database) -> None:
     assert rows[0]["text"] == "first"
 
 
+def test_b1_merge_sessions_ignores_colliding_segment_timings(db: Database) -> None:
+    """B1: merge survives when rebased segments share (start_time, end_time)."""
+    session_a = _seed_completed_session(db, name="Merge A", duration=0.0)
+    session_b = _seed_completed_session(db, name="Merge B", duration=0.0)
+    db._conn.execute(
+        "UPDATE sessions SET duration_seconds = NULL WHERE id = ?",
+        (session_a,),
+    )
+    db._conn.commit()
+
+    db.add_segments(
+        session_a,
+        [{"start": 0.0, "end": 1.0, "text": "from-a"}],
+    )
+    db.add_segments(
+        session_b,
+        [{"start": 0.0, "end": 1.0, "text": "from-b"}],
+    )
+
+    merged_id, _sources = db.merge_sessions([session_a, session_b], name="Merged")
+
+    segments = db.get_segments(merged_id)
+    assert len(segments) == 1
+    assert segments[0]["text"] == "from-a"
+
+
 def test_t4_migration_dedupes_existing_rows_and_creates_unique_index(
     tmp_path: Path,
 ) -> None:

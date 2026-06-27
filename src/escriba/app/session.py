@@ -6,6 +6,7 @@ import logging
 import os
 import struct
 import threading
+import time
 import wave
 from datetime import datetime
 from pathlib import Path
@@ -114,26 +115,7 @@ class TranscriptionSession:
         )
 
         try:
-            if backend == "mlx-whisper":
-                from escriba.transcribe.streaming_mlx import (
-                    StreamingTranscriberMLX,
-                )
-
-                self.transcriber = StreamingTranscriberMLX(
-                    model_size=model_size,
-                    language=language,
-                    realtime_output=True,
-                    dictionary=self.config.dictionary,
-                )
-            else:
-                from escriba.transcribe.streaming import StreamingTranscriber
-
-                self.transcriber = StreamingTranscriber(
-                    model_size=model_size,
-                    language=language,
-                    device=self.config.streaming.device,
-                    realtime_output=True,
-                )
+            self.transcriber = _build_transcriber(self.config, realtime_output=True)
         except Exception as e:
             self.error = f"Failed to load model: {e}"
             logger.error("Failed to load model: %s", e, exc_info=True)
@@ -314,20 +296,29 @@ class TranscriptionSession:
         return self._chunk_pcm_byte_size() * AUDIO_BUFFER_CAP_FACTOR
 
     def _append_pcm_with_backpressure(self, buffer: bytearray, data: bytes) -> None:
-        """Append PCM to a live buffer, dropping oldest bytes if over the cap."""
+        """Append PCM to a live buffer, dropping oldest frame-aligned bytes if over the cap."""
         cap = self._audio_buffer_cap_bytes()
+        frame_bytes = max(self.config.audio.channels * 2, 1)
         overflow = len(buffer) + len(data) - cap
         if overflow > 0:
-            del buffer[:overflow]
-            now = datetime.now().timestamp()
-            if now - self._last_buffer_overflow_log >= AUDIO_BUFFER_OVERFLOW_LOG_INTERVAL_S:
-                logger.warning(
-                    "Audio buffer exceeded cap (%d bytes); dropped %d oldest bytes "
-                    "because transcription is behind",
-                    cap,
-                    overflow,
-                )
-                self._last_buffer_overflow_log = now
+            drop = min(
+                len(buffer),
+                ((overflow + frame_bytes - 1) // frame_bytes) * frame_bytes,
+            )
+            if drop > 0:
+                del buffer[:drop]
+                now = time.monotonic()
+                if (
+                    now - self._last_buffer_overflow_log
+                    >= AUDIO_BUFFER_OVERFLOW_LOG_INTERVAL_S
+                ):
+                    logger.warning(
+                        "Audio buffer exceeded cap (%d bytes); dropped %d oldest bytes "
+                        "because transcription is behind",
+                        cap,
+                        drop,
+                    )
+                    self._last_buffer_overflow_log = now
         buffer.extend(data)
 
     def _on_audio_data(self, data: bytes):
@@ -336,11 +327,11 @@ class TranscriptionSession:
 
     def _on_system_audio(self, data: bytes):
         with self._buffer_lock:
-            self._system_buffer.extend(data)
+            self._append_pcm_with_backpressure(self._system_buffer, data)
 
     def _on_mic_audio(self, data: bytes):
         with self._buffer_lock:
-            self._mic_buffer.extend(data)
+            self._append_pcm_with_backpressure(self._mic_buffer, data)
 
     def _mix_buffers(self) -> bytes:
         """Mix system and mic PCM buffers into one. Must be called under _buffer_lock."""
@@ -653,6 +644,40 @@ def _build_wav(pcm_data: bytes, sample_rate: int, channels: int) -> bytes:
     return header + pcm_data
 
 
+def _build_transcriber(config, *, realtime_output: bool) -> Any:
+    """
+    Construct the streaming transcriber for the configured backend.
+
+    Shared by live sessions and re-transcribe so both paths honor the same
+    VAD, hallucination, and dictionary settings from ``config``.
+    """
+    model_size = config.streaming.model_size
+    language = config.streaming.language
+    shared_kwargs = {
+        "model_size": model_size,
+        "language": language,
+        "realtime_output": realtime_output,
+        "vad_enabled": config.streaming.vad_enabled,
+        "vad_config": config.vad,
+        "hallucination_config": config.hallucination,
+    }
+
+    if config.streaming.backend == "mlx-whisper":
+        from escriba.transcribe.streaming_mlx import StreamingTranscriberMLX
+
+        return StreamingTranscriberMLX(
+            **shared_kwargs,
+            dictionary=config.dictionary,
+        )
+
+    from escriba.transcribe.streaming import StreamingTranscriber
+
+    return StreamingTranscriber(
+        **shared_kwargs,
+        device=config.streaming.device,
+    )
+
+
 def _build_custom_prompt(
     transcript: str, prompt: str, system_prompt: str | None = None
 ) -> str:
@@ -737,7 +762,6 @@ def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
 
     backend = config.streaming.backend
     model_size = config.streaming.model_size
-    language = config.streaming.language
     chunk_duration = config.streaming.chunk_duration
 
     logger.info(
@@ -745,31 +769,7 @@ def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
         audio_path.name, total_frames, backend, model_size,
     )
 
-    if backend == "mlx-whisper":
-        from escriba.transcribe.streaming_mlx import StreamingTranscriberMLX
-
-        transcriber: StreamingTranscriberMLX | Any
-        transcriber = StreamingTranscriberMLX(
-            model_size=model_size,
-            language=language,
-            realtime_output=False,
-            vad_enabled=config.streaming.vad_enabled,
-            vad_config=config.vad,
-            hallucination_config=config.hallucination,
-            dictionary=config.dictionary,
-        )
-    else:
-        from escriba.transcribe.streaming import StreamingTranscriber
-
-        transcriber = StreamingTranscriber(
-            model_size=model_size,
-            language=language,
-            device=config.streaming.device,
-            realtime_output=False,
-            vad_enabled=config.streaming.vad_enabled,
-            vad_config=config.vad,
-            hallucination_config=config.hallucination,
-        )
+    transcriber = _build_transcriber(config, realtime_output=False)
 
     chunk_bytes = int(sample_rate * channels * 2 * chunk_duration)
     min_bytes = sample_rate * 2  # at least 0.5s
