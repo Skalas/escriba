@@ -750,14 +750,25 @@ def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
 
         transcriber: StreamingTranscriberMLX | Any
         transcriber = StreamingTranscriberMLX(
-            model_size=model_size, language=language, realtime_output=False,
+            model_size=model_size,
+            language=language,
+            realtime_output=False,
+            vad_enabled=config.streaming.vad_enabled,
+            vad_config=config.vad,
+            hallucination_config=config.hallucination,
+            dictionary=config.dictionary,
         )
     else:
         from escriba.transcribe.streaming import StreamingTranscriber
 
         transcriber = StreamingTranscriber(
-            model_size=model_size, language=language,
-            device=config.streaming.device, realtime_output=False,
+            model_size=model_size,
+            language=language,
+            device=config.streaming.device,
+            realtime_output=False,
+            vad_enabled=config.streaming.vad_enabled,
+            vad_config=config.vad,
+            hallucination_config=config.hallucination,
         )
 
     chunk_bytes = int(sample_rate * channels * 2 * chunk_duration)

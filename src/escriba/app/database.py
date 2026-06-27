@@ -70,6 +70,26 @@ def _create_session_indexes(conn: sqlite3.Connection) -> None:
     )
 
 
+def _dedupe_segments_and_create_unique_index(conn: sqlite3.Connection) -> None:
+    """Collapse duplicate segment timings, then enforce uniqueness."""
+    deleted = conn.execute(
+        """
+        DELETE FROM segments
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM segments
+            GROUP BY session_id, start_time, end_time
+        )
+        """
+    ).rowcount
+    if deleted:
+        logger.info("Migration: removed %d duplicate segment row(s)", deleted)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_segments_session_timing "
+        "ON segments(session_id, start_time, end_time)"
+    )
+
+
 _MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (
         1,
@@ -87,6 +107,10 @@ _MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (
         3,
         lambda conn: _create_session_indexes(conn),
+    ),
+    (
+        4,
+        lambda conn: _dedupe_segments_and_create_unique_index(conn),
     ),
 ]
 
@@ -200,7 +224,7 @@ class Database:
             return
         with self._lock:
             self._conn.executemany(
-                "INSERT INTO segments (session_id, start_time, end_time, text, speaker) "
+                "INSERT OR IGNORE INTO segments (session_id, start_time, end_time, text, speaker) "
                 "VALUES (?, ?, ?, ?, ?)",
                 [
                     (

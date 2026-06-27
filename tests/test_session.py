@@ -260,3 +260,107 @@ def test_t3_audio_buffer_under_cap_unchanged(minimal_config: AppConfig) -> None:
 
     assert len(session._audio_buffer) == len(data) * 2
     assert len(session._audio_buffer) <= cap
+
+
+@pytest.fixture
+def distinctive_config(minimal_config: AppConfig) -> AppConfig:
+    from dataclasses import replace
+
+    from escriba.config import DictionaryConfig
+    from escriba.transcribe.config import HallucinationConfig, VADConfig
+
+    return replace(
+        minimal_config,
+        vad=VADConfig(threshold=0.42, min_silence_duration_ms=777),
+        hallucination=HallucinationConfig(
+            condition_on_previous_text=True,
+            no_speech_threshold=0.33,
+            compression_ratio_threshold=1.8,
+            logprob_threshold=-0.5,
+        ),
+        dictionary=DictionaryConfig(
+            terms=["Escriba"],
+            replacements={"acme": "ACME Corp"},
+        ),
+        streaming=replace(
+            minimal_config.streaming,
+            vad_enabled=False,
+            backend="mlx-whisper",
+            device="cpu",
+        ),
+    )
+
+
+@pytest.fixture
+def wav_file(tmp_path: Path) -> Path:
+    from escriba.app.session import _build_wav
+
+    pcm = b"\x00\x00" * 16000
+    wav_path = tmp_path / "retranscribe.wav"
+    wav_path.write_bytes(_build_wav(pcm, sample_rate=16000, channels=1))
+    return wav_path
+
+
+def _mock_transcriber() -> MagicMock:
+    mock = MagicMock()
+    mock.segments = []
+    mock.process_wav_chunk.return_value = None
+    return mock
+
+
+def test_t1_retranscribe_mlx_passes_full_streaming_config(
+    distinctive_config: AppConfig, wav_file: Path
+) -> None:
+    """T1: retranscribe_from_wav mirrors live MLX config (VAD, hallucination, dictionary)."""
+    from escriba.app.session import retranscribe_from_wav
+
+    mock_transcriber = _mock_transcriber()
+    with patch(
+        "escriba.transcribe.streaming_mlx.StreamingTranscriberMLX",
+        return_value=mock_transcriber,
+    ) as mock_cls:
+        retranscribe_from_wav(wav_file, distinctive_config)
+
+    mock_cls.assert_called_once_with(
+        model_size=distinctive_config.streaming.model_size,
+        language=distinctive_config.streaming.language,
+        realtime_output=False,
+        vad_enabled=distinctive_config.streaming.vad_enabled,
+        vad_config=distinctive_config.vad,
+        hallucination_config=distinctive_config.hallucination,
+        dictionary=distinctive_config.dictionary,
+    )
+
+
+def test_t1_retranscribe_faster_whisper_passes_full_streaming_config(
+    distinctive_config: AppConfig, wav_file: Path
+) -> None:
+    """T1: retranscribe_from_wav mirrors live faster-whisper config."""
+    from dataclasses import replace
+
+    from escriba.app.session import retranscribe_from_wav
+
+    config = replace(
+        distinctive_config,
+        streaming=replace(
+            distinctive_config.streaming,
+            backend="faster-whisper",
+            device="cpu",
+        ),
+    )
+    mock_transcriber = _mock_transcriber()
+    with patch(
+        "escriba.transcribe.streaming.StreamingTranscriber",
+        return_value=mock_transcriber,
+    ) as mock_cls:
+        retranscribe_from_wav(wav_file, config)
+
+    mock_cls.assert_called_once_with(
+        model_size=config.streaming.model_size,
+        language=config.streaming.language,
+        device=config.streaming.device,
+        realtime_output=False,
+        vad_enabled=config.streaming.vad_enabled,
+        vad_config=config.vad,
+        hallucination_config=config.hallucination,
+    )
