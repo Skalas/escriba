@@ -16,6 +16,16 @@ from escriba.transcribe.metrics import CaptureMetrics
 
 logger = logging.getLogger(__name__)
 
+# Bounded retries for transient Metal / model inference failures.
+CHUNK_INFERENCE_MAX_ATTEMPTS = 2
+CHUNK_INFERENCE_RETRY_BACKOFF_S = 0.1
+TRANSIENT_INFERENCE_ERRORS = (RuntimeError, MemoryError, OSError)
+
+
+class ChunkProcessingError(Exception):
+    """Raised when a valid audio chunk cannot be transcribed after retries."""
+
+
 # Verificar si mlx-whisper está disponible
 try:
     import mlx_whisper
@@ -122,6 +132,41 @@ class StreamingTranscriberMLX:
             logger.info("Downloading model %s (first time only)...", repo_id)
             return snapshot_download(repo_id)
 
+    def _transcribe_with_retries(
+        self, audio_np: Any, transcribe_kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Run mlx-whisper inference with bounded retries on transient failures.
+
+        Raises:
+            ChunkProcessingError: When all attempts fail with transient errors.
+        """
+        last_error: Exception | None = None
+        for attempt in range(1, CHUNK_INFERENCE_MAX_ATTEMPTS + 1):
+            try:
+                return mlx_whisper.transcribe(audio_np, **transcribe_kwargs)
+            except TRANSIENT_INFERENCE_ERRORS as exc:
+                last_error = exc
+                if attempt < CHUNK_INFERENCE_MAX_ATTEMPTS:
+                    logger.warning(
+                        "Transient inference error on attempt %d/%d: %s",
+                        attempt,
+                        CHUNK_INFERENCE_MAX_ATTEMPTS,
+                        exc,
+                    )
+                    time.sleep(CHUNK_INFERENCE_RETRY_BACKOFF_S)
+                    continue
+                logger.error(
+                    "Inference failed after %d attempts",
+                    CHUNK_INFERENCE_MAX_ATTEMPTS,
+                    exc_info=True,
+                )
+                raise ChunkProcessingError(
+                    f"Inference failed after {CHUNK_INFERENCE_MAX_ATTEMPTS} attempts"
+                ) from exc
+
+        raise ChunkProcessingError("Inference failed") from last_error
+
     def process_wav_chunk(self, wav_data: bytes) -> Optional[str]:
         """
         Procesa un chunk de audio en formato WAV.
@@ -130,7 +175,13 @@ class StreamingTranscriberMLX:
             wav_data: Audio en formato WAV completo (con header)
 
         Returns:
-            Texto transcrito o None si no hay voz detectada
+            Texto transcrito en éxito, o ``None`` cuando el chunk es inválido,
+            demasiado pequeño, o la inferencia completa sin detectar voz.
+
+        Raises:
+            ChunkProcessingError: La inferencia falló tras reintentos transitorios.
+                A diferencia de ``None``, indica que había audio procesable pero
+                no se pudo transcribir; el caller no debe tratarlo como silencio.
         """
         # Registrar inicio de procesamiento para métricas
         start_timestamp = None
@@ -201,7 +252,7 @@ class StreamingTranscriberMLX:
                 transcribe_kwargs["language"] = self.language
             if self.dictionary.initial_prompt:
                 transcribe_kwargs["initial_prompt"] = self.dictionary.initial_prompt
-            result = mlx_whisper.transcribe(audio_np, **transcribe_kwargs)
+            result = self._transcribe_with_retries(audio_np, transcribe_kwargs)
 
             texts = []
             if result and "segments" in result:
@@ -235,6 +286,14 @@ class StreamingTranscriberMLX:
 
             return result_text
 
+        except ChunkProcessingError:
+            if self.metrics:
+                self.metrics.record_error()
+                if start_timestamp:
+                    self.metrics.record_chunk_end(
+                        start_timestamp, had_transcription=False
+                    )
+            raise
         except Exception as e:
             logger.error("Error processing WAV chunk: %s", e, exc_info=True)
             if self.metrics:
@@ -243,7 +302,7 @@ class StreamingTranscriberMLX:
                     self.metrics.record_chunk_end(
                         start_timestamp, had_transcription=False
                     )
-            return None
+            raise ChunkProcessingError("Unexpected error processing WAV chunk") from e
 
     def _is_repetitive(self, text: str) -> bool:
         """

@@ -10,7 +10,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from escriba.app.database import Database
-from escriba.app.session import TranscriptionSession, _summary_to_markdown
+from escriba.app.session import (
+    TranscriptionSession,
+    _summary_to_markdown,
+)
 from escriba.config import AppConfig
 from escriba.summarize import llm_summary
 
@@ -222,3 +225,38 @@ def test_summary_to_markdown_omits_empty_sections() -> None:
     assert "## Action Items" not in markdown
     assert "## Decisions" not in markdown
     assert "## Topics" not in markdown
+
+
+def test_t3_audio_buffer_backpressure_drops_oldest_and_warns(
+    minimal_config: AppConfig,
+) -> None:
+    """T3: live PCM buffer stays capped when transcription falls behind."""
+    session = TranscriptionSession(minimal_config)
+    chunk_bytes = session._chunk_pcm_byte_size()
+    cap = session._audio_buffer_cap_bytes()
+
+    with patch.object(session, "_last_buffer_overflow_log", 0.0):
+        with patch("escriba.app.session.logger") as mock_logger:
+            session._on_audio_data(b"\x01" * (cap - 100))
+            assert len(session._audio_buffer) == cap - 100
+
+            session._on_audio_data(b"\x02" * chunk_bytes)
+            assert len(session._audio_buffer) <= cap
+            mock_logger.warning.assert_called_once()
+
+            session._on_audio_data(b"\x03" * chunk_bytes)
+            assert len(session._audio_buffer) <= cap
+            mock_logger.warning.assert_called_once()
+
+
+def test_t3_audio_buffer_under_cap_unchanged(minimal_config: AppConfig) -> None:
+    """T3: normal ingestion below the cap keeps all buffered PCM."""
+    session = TranscriptionSession(minimal_config)
+    cap = session._audio_buffer_cap_bytes()
+    data = b"\x02\x00" * 100
+
+    session._on_audio_data(data)
+    session._on_audio_data(data)
+
+    assert len(session._audio_buffer) == len(data) * 2
+    assert len(session._audio_buffer) <= cap

@@ -13,6 +13,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Cap live PCM buffer at this multiple of one transcription chunk.
+AUDIO_BUFFER_CAP_FACTOR = 2
+AUDIO_BUFFER_OVERFLOW_LOG_INTERVAL_S = 5.0
+
 
 class TranscriptionSession:
     """Manages a single transcription session: capture + transcribe + notes."""
@@ -44,6 +48,7 @@ class TranscriptionSession:
         self._title_generated: bool = False
         self._title_refined: bool = False
         self._title_thread: threading.Thread | None = None
+        self._last_buffer_overflow_log: float = 0.0
 
     def _open_audio_file(self):
         """Open a WAV file to record the session audio."""
@@ -84,6 +89,7 @@ class TranscriptionSession:
         self._mic_buffer = bytearray()
         self._last_segment_count = 0
         self.error = None
+        self._last_buffer_overflow_log = 0.0
 
         # Create DB session
         if self.db:
@@ -296,9 +302,37 @@ class TranscriptionSession:
             actual_rate, target_rate, needs_resample, mix_mode,
         )
 
+    def _chunk_pcm_byte_size(self) -> int:
+        """Bytes in one streaming chunk of raw PCM int16 audio."""
+        sample_rate = self.config.audio.sample_rate
+        channels = self.config.audio.channels
+        chunk_duration = self.config.streaming.chunk_duration
+        return int(sample_rate * channels * 2 * chunk_duration)
+
+    def _audio_buffer_cap_bytes(self) -> int:
+        """Maximum bytes retained in the live PCM buffer before dropping oldest audio."""
+        return self._chunk_pcm_byte_size() * AUDIO_BUFFER_CAP_FACTOR
+
+    def _append_pcm_with_backpressure(self, buffer: bytearray, data: bytes) -> None:
+        """Append PCM to a live buffer, dropping oldest bytes if over the cap."""
+        cap = self._audio_buffer_cap_bytes()
+        overflow = len(buffer) + len(data) - cap
+        if overflow > 0:
+            del buffer[:overflow]
+            now = datetime.now().timestamp()
+            if now - self._last_buffer_overflow_log >= AUDIO_BUFFER_OVERFLOW_LOG_INTERVAL_S:
+                logger.warning(
+                    "Audio buffer exceeded cap (%d bytes); dropped %d oldest bytes "
+                    "because transcription is behind",
+                    cap,
+                    overflow,
+                )
+                self._last_buffer_overflow_log = now
+        buffer.extend(data)
+
     def _on_audio_data(self, data: bytes):
         with self._buffer_lock:
-            self._audio_buffer.extend(data)
+            self._append_pcm_with_backpressure(self._audio_buffer, data)
 
     def _on_system_audio(self, data: bytes):
         with self._buffer_lock:
