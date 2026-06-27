@@ -788,8 +788,15 @@
   button {
     padding: 10px 20px; border: 1px solid transparent; border-radius: 10px;
     font-size: 14px; font-weight: 600; cursor: pointer;
+    color: inherit;
+    font-family: inherit;
     transition: background var(--transition-fast), border-color var(--transition-fast), transform 80ms ease, opacity var(--transition-fast), box-shadow var(--transition-fast);
   }
+  input, select, textarea {
+    color: inherit;
+    font-family: inherit;
+  }
+
   button:active:not(:disabled) { transform: scale(0.97); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   #btn-retranscribe:disabled {
@@ -1066,7 +1073,7 @@
   }
   .theme-swatch:hover { border-color: var(--accent); }
   .theme-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
-  .theme-swatch-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .theme-swatch-name { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
   .theme-swatch-dots { display: flex; gap: 5px; }
   .theme-swatch-dot { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.08); }
   .theme-swatch-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
