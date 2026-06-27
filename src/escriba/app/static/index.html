@@ -822,6 +822,31 @@
     color: var(--danger); border-color: var(--danger);
   }
   .segment-split-btn svg { width: 12px; height: 12px; }
+  .segment-link-btn {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    padding: 2px 4px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 4px;
+    line-height: 0;
+  }
+  .segment:hover .segment-link-btn { opacity: 1; }
+  .segment-link-btn:hover { background: var(--border-light); color: var(--accent); }
+  .segment-link-btn svg { width: 12px; height: 12px; }
+  .export-toast {
+    font-size: 12px;
+    color: var(--accent);
+    margin-left: 4px;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+  }
+  .export-toast.visible { opacity: 1; }
 
   /* Speaker labels */
   .speaker-list { display: flex; flex-direction: column; gap: 6px; }
@@ -1129,7 +1154,9 @@
       <div class="controls-row" style="margin-bottom:0;">
         <button class="btn-start" id="btn-back-to-live" onclick="backToLive()" style="display:none;">Back to Live</button>
         <button class="btn-secondary" id="btn-retranscribe" onclick="retranscribeSession()" aria-label="Re-transcribe" title="Re-transcribe" style="display:none;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg> <span class="btn-label">Re-transcribe</span></button>
-        <button class="btn-secondary" id="btn-export" onclick="exportSession(this)" aria-label="Download" title="Download" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> <span class="btn-label">Download</span></button>
+        <button class="btn-secondary" id="btn-copy-export" onclick="copySessionExport(this)" aria-label="Copy export" title="Copy Markdown export" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> <span class="btn-label">Copy</span></button>
+        <button class="btn-secondary" id="btn-download-md" onclick="downloadSessionMarkdown(this)" aria-label="Download Markdown" title="Download .md" style="display:inline-flex;align-items:center;gap:6px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> <span class="btn-label">Download .md</span></button>
+        <span class="export-toast" id="export-toast" aria-live="polite"></span>
       </div>
     </header>
     <div class="info-bar">
@@ -2138,7 +2165,15 @@ async function selectSession(id) {
                 <line x1="8.12" y1="8.12" x2="12" y2="12"/>
               </svg>
             </button>` : '';
-        return `<div class="segment${clickable}" data-segment-id="${seg.id}" data-start="${seg.start_time || 0}" data-end="${seg.end_time || 0}"${onclick}>${splitBtn}<span class="segment-time">${ts}</span>${speakerPrefix}${escHtml(seg.text)}</div>`;
+        const linkBtn = `<button class="segment-link-btn" aria-label="Copy segment link"
+              title="Copy link to this segment"
+              onclick="event.stopPropagation();copySegmentLink('${escAttr(id)}', ${seg.id})">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
+            </button>`;
+        return `<div class="segment${clickable}" id="seg-${seg.id}" data-segment-id="${seg.id}" data-start="${seg.start_time || 0}" data-end="${seg.end_time || 0}"${onclick}>${splitBtn}${linkBtn}<span class="segment-time">${ts}</span>${speakerPrefix}${escHtml(seg.text)}</div>`;
       }).join('');
     } else {
       box.innerHTML = '<span style="color:var(--text-secondary);font-style:italic;">No segments</span>';
@@ -2446,30 +2481,116 @@ async function saveNotes() {
   });
 }
 
+async function fetchSessionExport(format) {
+  if (!selectedSessionId) return { ok: false, error: 'No session selected' };
+  return apiCall('/api/sessions/' + selectedSessionId + '/export?format=' + encodeURIComponent(format || 'md'));
+}
+
+function showExportToast(message) {
+  const toast = document.getElementById('export-toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.add('visible');
+  setTimeout(() => toast.classList.remove('visible'), 2000);
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      return true;
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+}
+
+async function copySessionExport(btn) {
+  if (!selectedSessionId) return;
+  const origHTML = btn.innerHTML;
+  btn.disabled = true;
+  try {
+    const res = await fetchSessionExport('md');
+    if (!res.ok) { showError(res.error || 'Export failed'); return; }
+    await copyToClipboard(res.content || '');
+    showExportToast('Copied');
+    btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> <span class="btn-label">Copied</span>';
+    setTimeout(() => { btn.innerHTML = origHTML; }, 2000);
+  } catch (e) {
+    showError('Copy failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function downloadSessionMarkdown(btn) {
+  if (!selectedSessionId) return;
+  const origHTML = btn.innerHTML;
+  btn.disabled = true;
+  try {
+    const res = await fetchSessionExport('md');
+    if (!res.ok) { showError(res.error || 'Export failed'); return; }
+    const blob = new Blob([res.content || ''], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = res.filename || 'session.md';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showExportToast('Downloaded');
+  } catch (e) {
+    showError('Download failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origHTML;
+  }
+}
+
+function segmentDeepLink(sessionId, segmentId) {
+  return window.location.origin + window.location.pathname + '#session/' + sessionId + '/seg/' + segmentId;
+}
+
+async function copySegmentLink(sessionId, segmentId) {
+  try {
+    await copyToClipboard(segmentDeepLink(sessionId, segmentId));
+    showExportToast('Link copied');
+  } catch (e) {
+    showError('Copy failed: ' + e.message);
+  }
+}
+
+function parseDeepLink() {
+  const hash = (location.hash || '').replace(/^#/, '');
+  const match = hash.match(/^session\/([^/]+)\/seg\/(\d+)$/);
+  if (!match) return null;
+  return { sessionId: match[1], segmentId: parseInt(match[2], 10) };
+}
+
+async function handleDeepLink() {
+  const link = parseDeepLink();
+  if (!link) return;
+  pendingHighlightSegmentId = link.segmentId;
+  await selectSession(link.sessionId);
+}
+
 async function clearNotes() {
   if (!selectedSessionId) return;
   if (!await confirmDialog({ title: 'Clear notes?', message: 'All notes for this recording will be removed.', confirmText: 'Clear', danger: true })) return;
   document.getElementById('session-notes-input').value = '';
   await saveNotes();
   renderNotesView('');
-}
-
-async function exportSession(btn) {
-  if (!selectedSessionId) return;
-  const origHTML = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Saving...';
-  try {
-    const res = await apiCall('/api/sessions/' + selectedSessionId + '/export', { method: 'POST' });
-    if (res.ok) {
-      const name = res.path ? res.path.split('/').pop() : '';
-      btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> Saved to Downloads';
-      setTimeout(() => { btn.innerHTML = origHTML; btn.disabled = false; }, 3000);
-    } else {
-      showError(res.error || 'Export failed');
-      btn.innerHTML = origHTML; btn.disabled = false;
-    }
-  } catch (e) { showError('Export failed: ' + e.message); btn.innerHTML = origHTML; btn.disabled = false; }
 }
 
 async function generateSessionNotes() {
@@ -3068,8 +3189,11 @@ async function loadPromptTemplates() {
   renderChips('session-prompt-chips', 'session');
   registerShortcuts();
   await refreshSessionList();
+  window.addEventListener('hashchange', () => { handleDeepLink(); });
   const status = await apiCall('/api/status');
-  if (status.is_active) {
+  if (parseDeepLink()) {
+    await handleDeepLink();
+  } else if (status.is_active) {
     lastWasRecording = true;
     const badge = document.getElementById('status-badge');
     badge.className = 'recording';

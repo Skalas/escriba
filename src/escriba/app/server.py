@@ -49,6 +49,90 @@ def _segments_to_transcript(segments: list[dict[str, Any]]) -> str:
     return " ".join(parts)
 
 
+def format_export_timestamp(seconds: float | int | None) -> str:
+    """Format segment start time as HH:MM:SS for export."""
+    total = int(seconds or 0)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def format_export_duration(seconds: float | int | None) -> str:
+    """Format session duration as HH:MM:SS for export metadata."""
+    return format_export_timestamp(seconds)
+
+
+def safe_export_filename(name: str, ext: str) -> str:
+    """Build a filesystem-safe export filename."""
+    safe_name = "".join(
+        c if c.isalnum() or c in " -_" else "_"
+        for c in name
+    ).strip() or "transcript"
+    return f"{safe_name}.{ext}"
+
+
+def build_session_export_markdown(session: dict[str, Any], segments: list[dict[str, Any]]) -> str:
+    """Build a Markdown export bundle for a session."""
+    lines: list[str] = [f"# {session.get('name', 'Session')}", ""]
+
+    metadata: list[str] = []
+    if session.get("started_at"):
+        metadata.append(f"**Date:** {session['started_at']}")
+    duration = session.get("duration_seconds")
+    if duration is not None:
+        metadata.append(f"**Duration:** {format_export_duration(duration)}")
+    if metadata:
+        lines.extend(metadata)
+        lines.append("")
+
+    notes_text = (session.get("notes_text") or "").strip()
+    if notes_text:
+        lines.extend(["## Notes", "", notes_text, ""])
+
+    lines.extend(["## Transcript", ""])
+    for seg in segments:
+        seg_id = seg.get("id")
+        anchor = f'<a id="seg-{seg_id}"></a>' if seg_id is not None else ""
+        timestamp = format_export_timestamp(seg.get("start_time"))
+        text = seg.get("text") or ""
+        speaker = _segment_speaker_label(seg)
+        if speaker:
+            lines.append(f"{anchor}[{timestamp}] **{speaker}**: {text}")
+        else:
+            lines.append(f"{anchor}[{timestamp}] {text}")
+
+    return "\n".join(lines)
+
+
+def build_session_export_txt(session: dict[str, Any], segments: list[dict[str, Any]]) -> str:
+    """Build a plain-text export bundle for a session."""
+    lines: list[str] = [session.get("name", "Session"), ""]
+
+    if session.get("started_at"):
+        lines.append(f"Date: {session['started_at']}")
+    duration = session.get("duration_seconds")
+    if duration is not None:
+        lines.append(f"Duration: {format_export_duration(duration)}")
+    if session.get("started_at") or duration is not None:
+        lines.append("")
+
+    notes_text = (session.get("notes_text") or "").strip()
+    if notes_text:
+        lines.extend(["Notes", notes_text, ""])
+
+    lines.append("Transcript")
+    for seg in segments:
+        timestamp = format_export_timestamp(seg.get("start_time"))
+        text = seg.get("text") or ""
+        speaker = _segment_speaker_label(seg)
+        if speaker:
+            lines.append(f"{timestamp}  [{speaker}] {text}")
+        else:
+            lines.append(f"{timestamp}  {text}")
+
+    return "\n".join(lines)
+
+
 class ApiError(Exception):
     """Structured API error with an HTTP status code."""
 
@@ -343,6 +427,10 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/sessions/") and path.endswith("/audio"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/audio", 1)[0]
                 self._serve_audio(session_id)
+            elif path.startswith("/api/sessions/") and path.endswith("/export"):
+                session_id = path.split("/api/sessions/")[1].rsplit("/export", 1)[0]
+                export_format = params.get("format", ["md"])[0]
+                self._respond(self._export_session(session_id, export_format))
             elif path.startswith("/api/sessions/"):
                 session_id = path.split("/api/sessions/")[1]
                 if session_id:
@@ -391,9 +479,6 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/sessions/") and path.endswith("/notes"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/notes", 1)[0]
                 self._respond(self._save_notes(session_id, self._parse_json_body()))
-            elif path.startswith("/api/sessions/") and path.endswith("/export"):
-                session_id = path.split("/api/sessions/")[1].rsplit("/export", 1)[0]
-                self._respond(self._export_session(session_id))
             elif path == "/api/download-model":
                 self._respond(self._download_model(self._parse_json_body()))
             else:
@@ -464,52 +549,30 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _export_session(self, session_id: str) -> tuple[dict, int]:
-        """Save transcript + notes to ~/Downloads as a text file."""
+    def _export_session(self, session_id: str, fmt: str = "md") -> tuple[dict, int]:
+        """Build an in-browser export bundle for a session."""
         db = self._require_db()
         session = db.get_session(session_id)
         if not session:
             return {"ok": False, "error": "Session not found"}, 404
+
         segments = db.get_segments(session_id)
+        export_format = (fmt or "md").strip().lower()
+        if export_format == "md":
+            content = build_session_export_markdown(session, segments)
+            filename = safe_export_filename(session.get("name", "Session"), "md")
+        elif export_format == "txt":
+            content = build_session_export_txt(session, segments)
+            filename = safe_export_filename(session.get("name", "Session"), "txt")
+        else:
+            return {"ok": False, "error": f"Unsupported format: {fmt}"}, 400
 
-        lines: list[str] = []
-        lines.append(f"# {session.get('name', 'Session')}")
-        if session.get("started_at"):
-            lines.append(f"Date: {session['started_at']}")
-        lines.append("")
-
-        if session.get("notes_text"):
-            lines.append("## Notes")
-            lines.append(session["notes_text"])
-            lines.append("")
-
-        lines.append("## Transcript")
-        for seg in segments:
-            ts = seg.get("start_time", 0)
-            h, rem = divmod(int(ts), 3600)
-            m, s = divmod(rem, 60)
-            timestamp = f"{h:02d}:{m:02d}:{s:02d}"
-            speaker_label = _segment_speaker_label(seg)
-            speaker = f"[{speaker_label}] " if speaker_label else ""
-            lines.append(f"{timestamp}  {speaker}{seg.get('text', '')}")
-
-        content = "\n".join(lines)
-        safe_name = "".join(
-            c if c.isalnum() or c in " -_" else "_"
-            for c in session.get("name", "transcript")
-        )
-        filename = f"{safe_name.strip()}.txt"
-
-        downloads = Path.home() / "Downloads"
-        downloads.mkdir(exist_ok=True)
-        out_path = downloads / filename
-        # Avoid overwriting
-        counter = 1
-        while out_path.exists():
-            out_path = downloads / f"{safe_name.strip()} ({counter}).txt"
-            counter += 1
-        out_path.write_text(content, encoding="utf-8")
-        return {"ok": True, "path": str(out_path)}, 200
+        return {
+            "ok": True,
+            "filename": filename,
+            "content": content,
+            "format": export_format,
+        }, 200
 
     def _serve_audio(self, session_id: str) -> None:
         """Serve the WAV audio file for a session with HTTP Range support."""
