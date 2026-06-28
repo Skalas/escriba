@@ -39,6 +39,12 @@ prep:
     - CLAUDE.md
     - README.md
   techDebtFile: "ROADMAP.md"   # backlog + Epic #12 hardening items live here
+  issues:                  # file the issue ledger from the text plan at sprint start
+    create: true           # false = ledger is managed outside metate
+    tracker: github        # gh CLI
+    granularity: test-matrix  # one issue per DoD test-matrix item (T1…Tn)
+    labels: ["sprint"]     # applied to every filed issue
+    milestone: ""          # blank = none
 
 # --- smoke (metate-smoke) -------------------------------------------------
 # No automated e2e suite (menubar app). Behavior proof = run the app and exercise
@@ -59,3 +65,10 @@ ship:
   prTarget: main
   commitStyle: "conventional, bisectable, one per layer"
   issueCloseKeyword: "Closes"   # PR body keyword for auto-close
+issueLedger: ".metate/issues.json"   # issues filed by prep, read by ship for auto-close
+codebaseMemory:
+  enabled: false           # true once `codebase-memory-mcp install` wired the MCP entry + repo is indexed
+  reindex: git             # git | always | manual — refresh the graph between rounds after the implementer patches
+  indexCommand: ""         # blank = rely on the auto_index git watcher; else an explicit reindex command
+review:
+  autoFix: blockers

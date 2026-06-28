@@ -232,3 +232,14 @@ transcripts/
 .DS_Store
 # metate session handoff
 .metate/session.json
+# metate issue ledger
+.metate/issues.json
+# metate profile reconcile backups
+.metate/*.bak
+# codebase-memory Cursor rule is installed tooling (source: metate repo)
+.cursor/rules/codebase-memory.mdc
+# metate per-sprint working scratch (regenerated each sprint)
+.metate/build-prompt.md
+.metate/issue-ledger.json
+.metate/review-diff.patch
+.metate/sprint-*.md

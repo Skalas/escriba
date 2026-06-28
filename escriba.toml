@@ -24,3 +24,58 @@ condition_on_previous_text = false
 no_speech_threshold = 0.6
 compression_ratio_threshold = 2.4
 logprob_threshold = -1
+
+[auto_record]
+enabled = true
+start_mode = "prompt"
+cooldown_seconds = 60
+start_debounce_seconds = 3
+stop_debounce_seconds = 5
+
+[prompts]
+system_prompt = "You are an expert meeting and call notetaker. You turn raw transcripts into accurate, clearly structured notes.\n\n<transcript>\n{transcript}\n</transcript>\n\n<task>\n{prompt}\n</task>\n\n<instructions>\n- Base every statement strictly on the transcript. Never invent names, numbers, decisions, or events that are not present.\n- If the transcript lacks the information the task needs, say so plainly instead of guessing.\n- Write in the SAME LANGUAGE as the transcript. If it is in Spanish, use natural, fluent Spanish with correct orthography: acentos (á, é, í, ó, ú), ñ, ü, and the opening signs ¿ and ¡.\n- Format with clean Markdown (headings, bullet or numbered lists, bold for key terms). Do not wrap the whole reply in a code block.\n- Be concise and skimmable. Omit filler and meta-commentary about the task.\n</instructions>"
+
+[[prompts.templates]]
+id = "summary"
+label = "Executive Summary"
+prompt = "Write an executive summary in 3-5 sentences covering the purpose of the conversation, the main topics, the key conclusions, and any agreed next steps. Use clear, direct prose — no lists."
+
+[[prompts.templates]]
+id = "actions"
+label = "Action Items"
+prompt = "Extract every action item, task, and commitment as a Markdown checklist. For each, include the action, the owner (if stated), and the deadline or timeframe (if mentioned). Group by owner when possible. If no action items were discussed, state that clearly."
+
+[[prompts.templates]]
+id = "decisions"
+label = "Decisions"
+prompt = "List every decision that was made. For each, give: (1) what was decided, (2) the rationale or context, and (3) any alternatives discussed and rejected. If no decisions were reached, say so."
+
+[[prompts.templates]]
+id = "questions"
+label = "Open Questions"
+prompt = "List all unresolved questions, open items, and topics that need follow-up. For each, note who raised it (if mentioned) and what information or action is needed to resolve it. If nothing is open, state that."
+
+[[prompts.templates]]
+id = "keypoints"
+label = "Key Points"
+prompt = "Summarize the most important points, insights, and takeaways as a bulleted list. Capture specific figures, names, and data mentioned. Focus on substance, not a chronological recap."
+
+[[prompts.templates]]
+id = "blockers"
+label = "Risks & Blockers"
+prompt = "Identify all risks, blockers, dependencies, and concerns raised. For each, note the issue, who flagged it, and any proposed mitigation or workaround. If none were raised, state that."
+
+[[prompts.templates]]
+id = "minutes"
+label = "Meeting Minutes"
+prompt = "Write structured meeting minutes in Markdown with these sections: **Attendees**, **Agenda**, **Discussion**, **Decisions**, **Action Items**, **Next Steps**. Omit a section only if there is genuinely nothing to record under it."
+
+[[prompts.templates]]
+id = "interview"
+label = "Interview Evaluation"
+prompt = "Critically evaluate the candidate in this interview transcript. Do NOT be charitable or complacent: most candidates do not meet the bar, and your job is to find the evidence, not to give the benefit of the doubt. For each relevant competency (technical depth, problem-solving, communication, ownership and impact, and any role-specific skills discussed), give a rating (Strong / Adequate / Weak / No evidence) and cite the specific transcript evidence behind it. Sharply distinguish what the candidate DEMONSTRATED from what they merely CLAIMED. Flag vague, generic, evasive, or buzzword answers, contradictions, and moments where they dodged a question or could not go deep when pressed. Structure the output as: (1) Recommendation — one of Strong Hire / Hire / No Hire / Strong No Hire, with a one-line justification and your confidence; (2) Competency assessment — rating + evidence per competency; (3) Strengths — concrete, evidenced positives (omit if none); (4) Concerns and red flags — weaknesses, gaps, evasions, contradictions; (5) Missing signal — what the interview did not probe or the candidate did not substantiate, and what evidence would be needed to raise the rating. Hold a high bar: if evidence for a competency is thin or absent, rate it Weak or No evidence rather than assuming competence. When the overall signal is mixed or insufficient, lean toward No Hire and state exactly what evidence is missing."
+
+[[prompts.templates]]
+id = "followup"
+label = "Follow-up Email"
+prompt = "Draft a concise, professional follow-up email: a one-line recap, the decisions made, action items with owners, and next steps. Open with a greeting and close with a clear call to action."
