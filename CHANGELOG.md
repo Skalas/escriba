@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-28
+
+Last feature sprint before 1.0 — steer your summaries with live notes, and decouple export behind a pluggable adapter.
+
+### Added
+- **Live Notepad / note steering** ([#53](https://github.com/Skalas/escriba/issues/53)) — a notepad `<textarea>` lets you jot key points during a recording. Notes are persisted on the session (`user_notes`) and injected into the AI summary via a new `{user_notes}` system-prompt placeholder (with a back-compat fallback that prepends them when a custom prompt omits the placeholder). Notes steer the summary on stop, on re-generation of a saved session, and on live generation — capture-during, inject-at-generation (not live incremental re-summarization).
+- **Knowledge Adapters — pluggable export** ([#54](https://github.com/Skalas/escriba/issues/54)) — a `KnowledgeStore` port with a `local-markdown` default adapter, configured via `[knowledge_store]` in `escriba.toml`. On session end it writes one Markdown file per session into `output_dir` (`~` expanded), reusing the existing v0.6.0 export formatter. Filenames are path-sanitized (no traversal) and export failures degrade gracefully (logged, never crash the stop/notes path). Default stays fully local. `webhook` and `custom-script` adapters are deferred to a fast-follow; the port makes them drop-in.
+
+### Fixed
+- **Live note-generation ignored saved notes** (review) — generating notes during a live recording without a custom prompt previously bypassed `user_notes`; it now honors persisted notes, consistent with the saved-session path.
+
 ## [0.9.0] - 2026-06-28
 
 Frontend quality + UX polish — close the testing gap on the single-file SPA and make keyboard navigation solid.

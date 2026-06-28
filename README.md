@@ -14,6 +14,8 @@ Local audio transcription app for macOS. Captures system audio + microphone, tra
 - **Audio recording & playback** — WAV files saved alongside transcripts with seek-to-segment
 - **Re-transcribe** — retry failed transcriptions from saved audio
 - **AI notes** — generate summaries, action items, meeting minutes on-device (local `mlx-lm`) or via Gemini/Claude; local generation runs in a subprocess so the dashboard stays responsive while notes are produced
+- **Live notepad** — jot key points during a meeting; your notes steer the AI summary (persisted per session, injected into the prompt)
+- **Markdown export** — auto-save each session's notes + transcript as a Markdown file via a configurable export adapter (`[knowledge_store]` in `escriba.toml`); fully local by default
 - **Speaker detection** — simple energy-based or pyannote diarization
 - **Keyboard navigation** — arrow keys move through the session list and seek the player, Space plays/pauses, with focus rings and screen-reader labels
 - **Settings UI** — configure everything from the dashboard

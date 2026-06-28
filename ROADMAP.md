@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-28 · Current version: `0.9.0` (frontend quality + UX polish — SPA test harness) · next up: `v0.10.0` (Live Notepad + Knowledge Adapters), then `v1.0.0` (release hardening)_
+_Last updated: 2026-06-28 · Current version: `0.10.0` (Live Notepad + Knowledge Adapters) · next up: `v1.0.0` (release hardening)_
 
 ---
 
@@ -156,18 +156,20 @@ Closed the testing gap the single-file SPA exposed (earlier smoke caught XSS, ta
 
 ---
 
-### `v0.10.0` — Live Notepad + Export decoupling  ·  _next up_
+### `v0.10.0` — Live Notepad + Export decoupling  ·  _shipped 2026-06-28_
 
 Last feature sprint before 1.0. Two scoped features (HOLD mode).
 
-- [ ] **Live Notepad / note steering ([#53](https://github.com/Skalas/escriba/issues/53))** — a notepad `<textarea>` captures user notes live; notes are persisted on the session and injected into the LLM prompt (new `{user_notes}` placeholder, back-compat fallback) at stop **and** on re-generate. Mechanism is capture-during, inject-at-generation — not live incremental re-summarization.
-- [ ] **Knowledge Adapters — port + `local-markdown` MVP ([#54](https://github.com/Skalas/escriba/issues/54))** — a `KnowledgeStore` port (application layer) + a `local-markdown` default adapter, decoupling export from private second-brain integrations. Reuses the existing v0.6.0 Markdown formatter. `webhook` + `custom-script` adapters are **deferred to a fast-follow** (secrets-via-env, argv-not-shell, stdlib-only constraints set now).
+- [x] **Live Notepad / note steering ([#53](https://github.com/Skalas/escriba/issues/53))** — notepad `<textarea>` captures notes live; `user_notes` persisted on the session and injected via a `{user_notes}` placeholder (back-compat fallback) on stop, re-generate, and live generation. Capture-during, inject-at-generation.
+- [x] **Knowledge Adapters — port + `local-markdown` MVP ([#54](https://github.com/Skalas/escriba/issues/54))** — `KnowledgeStore` port + `local-markdown` default adapter via `[knowledge_store]`, reusing the v0.6.0 Markdown formatter; path-sanitized filenames, graceful export-failure degradation, default stays local. `webhook` + `custom-script` deferred to a fast-follow.
 
-**Done when:** notes steer the generated summary and survive re-generation; sessions export to local Markdown via a pluggable adapter with the default staying fully local.
+**Done when:** notes steer the generated summary and survive re-generation; sessions export to local Markdown via a pluggable adapter with the default staying fully local. ✅ (221 tests; review caught & fixed a live-path notes drop; path-traversal sanitization + graceful degradation confirmed by live smoke.)
+
+**Deferred to a follow-up (design debt):** the `local-markdown` adapter imports the formatter from `app/server.py` (infra→presentation layer inversion) — move it to a shared module; route provider dispatch through a factory rather than a bare string check; remove the dead inner `except` in `_build_custom_prompt`; dedup `_make_handler` into `tests/conftest.py`. **Fast-follow feature:** `webhook` + `custom-script` knowledge adapters (env-var secrets, argv-not-shell, stdlib HTTP).
 
 ---
 
-### `v1.0.0` — Release hardening  ·  _planned_
+### `v1.0.0` — Release hardening  ·  _next up_
 
 No new features — release-readiness only.
 
