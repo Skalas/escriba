@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-28
+
+Finish backend hardening and unblock local generation — closes [Epic #12](https://github.com/Skalas/escriba/issues/12).
+
+### Added
+- **Observability** ([#49](https://github.com/Skalas/escriba/issues/49)) — structured request logging with a per-request correlation ID (returned as the `X-Correlation-ID` response header) and latency metrics for transcription and LLM calls broken down by provider (local / Gemini / Claude), plus handler P50/P99. New `app/observability.py`.
+- **Config validation** ([#50](https://github.com/Skalas/escriba/issues/50)) — `AppConfig.validate()` bounds-checks settings (e.g. `chunk_duration > 0`, known `model_size`/`backend`/`audio_source`, in-range `mic_boost`) and raises a clear `ConfigValidationError` naming the bad field. `prompts.templates` now round-trips with a consistent type.
+
+### Changed
+- **Responsive local AI notes** ([#36](https://github.com/Skalas/escriba/issues/36)) — local `mlx-lm` note generation now runs in a dedicated subprocess (single-worker `ProcessPoolExecutor`) instead of on an HTTP worker thread, so a long on-device generation can no longer saturate the GIL/Metal and freeze `/api/status` polling or dashboard navigation. Subprocess crash/timeout degrades gracefully without wedging app state.
+- **Local-first model probe** ([#33](https://github.com/Skalas/escriba/issues/33)) — `/api/models` caches its result and no longer re-probes remote providers on every poll; a provider is only probed when its API key is present, and an invalid/expired key now logs at `warning` (user-config issue) instead of error-spamming with a full traceback.
+
+### Fixed
+- **Config save could corrupt `escriba.toml`** — a rejected `PUT /api/config` previously wrote the bad value to disk before validation ran, so an invalid setting could brick the next app startup. The merged config is now validated in a temp copy first; on failure the request returns `400` and the on-disk file is left untouched.
+- **Log hardening** — request paths are stripped of control characters before logging (no log-line forging); the local-inference subprocess error path no longer logs a full traceback (avoids leaking exception context).
+
 ## [0.7.2] - 2026-06-28
 
 ### Changed

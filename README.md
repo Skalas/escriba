@@ -13,7 +13,7 @@ Local audio transcription app for macOS. Captures system audio + microphone, tra
 - **Web dashboard** — manage sessions with folders, search, rename, view transcripts, generate AI notes with markdown rendering
 - **Audio recording & playback** — WAV files saved alongside transcripts with seek-to-segment
 - **Re-transcribe** — retry failed transcriptions from saved audio
-- **AI notes** — generate summaries, action items, meeting minutes via Gemini or Claude
+- **AI notes** — generate summaries, action items, meeting minutes on-device (local `mlx-lm`) or via Gemini/Claude; local generation runs in a subprocess so the dashboard stays responsive while notes are produced
 - **Speaker detection** — simple energy-based or pyannote diarization
 - **Settings UI** — configure everything from the dashboard
 - **100% local transcription** — Whisper runs on-device (mlx-whisper on Apple Silicon)

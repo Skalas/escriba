@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-28 · Current version: `0.7.0` (reliable call detection — Notion-style auto-record) · next up: `v0.8.0` (finish hardening + unblock local generation)_
+_Last updated: 2026-06-28 · Current version: `0.8.0` (finish hardening + unblock local generation — Epic #12 closed) · next up: `v0.9.0` (frontend quality + UX polish)_
 
 ---
 
@@ -125,20 +125,22 @@ Make mic-activation auto-record actually usable: opt-in from Settings, debounced
 
 ---
 
-### `v0.8.0` — Finish hardening + unblock local generation  ·  _next up_
+### `v0.8.0` — Finish hardening + unblock local generation  ·  _Epic #12 closeout · shipped 2026-06-28_
 
-Close out **[Epic #12](https://github.com/Skalas/escriba/issues/12)** and fix the one reliability issue that's actually felt in use.
+Closed out **[Epic #12](https://github.com/Skalas/escriba/issues/12)** and fixed the one reliability issue that was actually felt in use.
 
-- [ ] **Subprocess inference (#36)** — move local `mlx-lm` generation to a subprocess so it can't starve the HTTP server; the dashboard stays responsive during note generation. _(headline)_
-- [ ] **Observability — Epic #12 §8** — structured logging with `session_id`/durations, request correlation IDs, latency metrics (transcription, LLM-by-provider, handler P50/P99).
-- [ ] **Config validation — Epic #12 §6** — `AppConfig.validate()`/bounds checks, hot-reload coordination, `prompts.templates` tuple/list consistency.
-- [ ] **Remote model-probe hygiene (#33)** — stop error-spamming Gemini/Claude `/api/models` when keys are absent/invalid; cache results.
+- [x] **Subprocess inference (#36)** — local `mlx-lm` generation runs in a dedicated single-worker subprocess, so it can't starve the threaded HTTP server; `/api/status` polling and navigation stay responsive during note generation. Crash/timeout degrades gracefully. _(headline)_
+- [x] **Observability — Epic #12 §8** — structured logging with `session_id`/durations, per-request correlation IDs (`X-Correlation-ID` response header), latency metrics (transcription, LLM-by-provider, handler P50/P99) via new `app/observability.py`.
+- [x] **Config validation — Epic #12 §6** — `AppConfig.validate()` bounds checks raising a field-named `ConfigValidationError`; `PUT /api/config` validates in a temp copy first so a rejected save can't corrupt `escriba.toml`; `prompts.templates` tuple/list consistency.
+- [x] **Remote model-probe hygiene (#33)** — `/api/models` caches results, only probes a provider when its key is present, and downgrades invalid-key failures to `warning` instead of error-spamming.
 
-**Done when:** local note generation no longer blocks the dashboard; errors carry structured, traceable logs (the last unmet Epic #12 "Done when") → **Epic #12 closeable**.
+**Done when:** local note generation no longer blocks the dashboard; errors carry structured, traceable logs (the last unmet Epic #12 "Done when"). ✅ (178 tests; review caught & fixed a config-corruption blocker, a log-injection vector, a traceback secret-leak, and a hollow subprocess-responsiveness test. Backend DoDs proven by live smoke; the real meeting loop stays the human UX check.)
+
+**Deferred to v0.9.0 / [#31](https://github.com/Skalas/escriba/issues/31):** review leftovers — reuse `observability.timed()` for the three inline LLM-timing sites; make the module-level models cache lock-guarded (reset `_models_cache_time` on invalidate); hoist the deferred `observability` imports in `server.py`; `LatencyStore.snapshot()` per-key atomicity; cosmetic dead `future.cancel()` + stale cache-lock comment.
 
 ---
 
-### `v0.9.0` — Frontend quality + UX polish
+### `v0.9.0` — Frontend quality + UX polish  ·  _next up_
 
 Close the testing gap the single-file SPA exposed (this session's smoke caught XSS, table rendering, stale-state, dark-mode, and black-text bugs — none caught by the Python suite), then refine UX.
 
