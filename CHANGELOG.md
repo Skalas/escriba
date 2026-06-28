@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-06-28
+
+### Changed
+- **Faster app startup** — Whisper backends (faster-whisper/ctranslate2/transformers, mlx-whisper, openai-whisper/torch) are now imported lazily, only when transcription actually runs. They were loaded eagerly via `cli.py → live_capture`, adding ~1 s to every launch. Importing the CLI entry point dropped from ~1.0 s to ~0.06 s, with no ML libraries loaded at boot.
+  - `transcribe.streaming` defers `faster_whisper`; `transcribe/__init__.py` resolves `StreamingTranscriber`/`get_device_config` lazily (PEP 562); `audio.live_capture` resolves the mlx/openai-whisper backends on demand.
+
 ## [0.7.1] - 2026-06-28
 
 ### Fixed
