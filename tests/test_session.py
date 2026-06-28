@@ -123,54 +123,46 @@ def test_t8_audio_wav_persisted_on_stop(
         db.close()
 
 
-def test_t9_local_llm_calls_are_serialized() -> None:
-    """T9: the mlx-lm semaphore allows at most one generation at a time."""
-    active = 0
-    peak = 0
-    lock = threading.Lock()
-    first_entered = threading.Event()
-    release = threading.Event()
+def test_t9_local_llm_calls_use_subprocess_worker() -> None:
+    """T9: _call_llm_local delegates to _LocalInferenceProcess which uses max_workers=1.
 
-    def tracked_run(*_args, **_kwargs) -> str:
-        nonlocal active, peak
-        with lock:
-            active += 1
-            peak = max(peak, active)
-        first_entered.set()
-        release.wait(timeout=5)
-        with lock:
-            active -= 1
-        return "ok"
+    The subprocess pool (max_workers=1) is the serialization mechanism.
+    We verify: mlx_lm absent → early exit; mlx_lm present → delegates to
+    the process worker and returns whatever it returns.
+    """
+    import sys
 
-    def worker(results: list[str | None]) -> None:
-        results.append(
-            llm_summary._call_llm_local("prompt", "test-model", max_tokens=8)
-        )
+    # When mlx_lm is not importable, _call_llm_local returns None immediately.
+    saved = sys.modules.pop("mlx_lm", None)
+    try:
+        result = llm_summary._call_llm_local("prompt", "model", max_tokens=8)
+        assert result is None
+    finally:
+        if saved is not None:
+            sys.modules["mlx_lm"] = saved
 
-    with patch(
-        "escriba.summarize.llm_summary._run_local_generation",
-        side_effect=tracked_run,
-    ):
-        results: list[str | None] = []
-        t1 = threading.Thread(target=worker, args=(results,))
-        t2 = threading.Thread(target=worker, args=(results,))
-        t1.start()
-        assert first_entered.wait(timeout=2)
-        with lock:
-            assert active == 1
+    # When mlx_lm is available, delegates to _local_inference_process.run
+    calls: list[tuple] = []
 
-        t2.start()
-        threading.Event().wait(0.1)
-        with lock:
-            assert active == 1
+    def capture_run(prompt, model_id, max_tokens, enable_thinking):
+        calls.append((prompt, model_id, max_tokens, enable_thinking))
+        return "generated"
 
-        release.set()
-        t1.join(timeout=5)
-        release.set()
-        t2.join(timeout=5)
+    with patch.dict("sys.modules", {"mlx_lm": MagicMock()}):
+        with patch.object(llm_summary._local_inference_process, "run", side_effect=capture_run):
+            result = llm_summary._call_llm_local("p", "m", max_tokens=32, enable_thinking=False)
 
-    assert peak == 1
-    assert results == ["ok", "ok"]
+    assert result == "generated"
+    assert calls == [("p", "m", 32, False)]
+
+    # Verify the process pool is configured with max_workers=1 (the serialization guarantee).
+
+    proc = llm_summary._LocalInferenceProcess()
+    executor = proc._get_executor()
+    try:
+        assert executor._max_workers == 1
+    finally:
+        executor.shutdown(wait=False)
 
 
 def test_summary_to_markdown_renders_full_summary() -> None:
