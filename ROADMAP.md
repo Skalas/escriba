@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-27 · Current version: `0.6.1` (search · speakers · export · interview prompt · about panel) · in progress: `v0.9.0` (reliable call detection)_
+_Last updated: 2026-06-28 · Current version: `0.7.0` (reliable call detection — Notion-style auto-record) · next up: `v0.8.0` (finish hardening + unblock local generation)_
 
 ---
 
@@ -110,22 +110,22 @@ Three "better, not wider" features + a rigorous interview-evaluation prompt.
 
 ---
 
-### `v0.9.0` — Reliable call detection (Notion-style auto-record)  ·  _in progress_
+### `v0.7.0` — Reliable call detection (Notion-style auto-record)  ·  _shipped 2026-06-28 (#45)_
 
 Make mic-activation auto-record actually usable: opt-in from Settings, debounced start/stop, and mic-gated app labels instead of background process heuristics. **Root cause it fixed:** auto-record shipped with `enabled` defaulting to `false`, no `[auto_record]` section in config, and no Settings toggle — so the detector never ran.
 
 - [x] **Config + dashboard toggle** ([#39](https://github.com/Skalas/escriba/issues/39)) — `[auto_record]` keys round-trip through `escriba.toml` and Settings (`enabled`, `start_mode`, debounce/cooldown).
-- [x] **Debounce state machine** ([#40](https://github.com/Skalas/escriba/issues/40)) — pure `CallStateMachine` fed by CoreAudio `is_mic_running()`; no raw edge flapping.
-- [x] **Mic-gated app label** ([#42](https://github.com/Skalas/escriba/issues/42)) — meeting-app name only when mic is active *and* a known app matches; no guess from `pgrep` alone.
-- [x] **Menubar integration** ([#41](https://github.com/Skalas/escriba/issues/41)) — prompt or auto-start via `try_start_recording` (single-writer); auto-stop on debounced call end; non-blocking notifications.
-- [x] **Tests** ([#43](https://github.com/Skalas/escriba/issues/43)) — T1–T6 for state machine, config round-trip, and partial PUT deep-merge.
+- [x] **Debounce state machine** ([#40](https://github.com/Skalas/escriba/issues/40)) — pure `CallStateMachine`; no raw edge flapping.
+- [x] **Self-aware mic signal** ([#42](https://github.com/Skalas/escriba/issues/42)) — per-process audio API (macOS 14.4+) counts only *other* processes on the default input device, so Escriba's own capture doesn't pin auto-stop on and always-on daemons (`corespeechd`/Siri) are ignored; app label only when a meeting app actually holds the mic.
+- [x] **Menubar integration** ([#41](https://github.com/Skalas/escriba/issues/41)) — prompt or auto-start via `try_start_recording` (single-writer); auto-stop on debounced call end, bound to the auto-started session (a hand-started recording keeps running); non-blocking notifications.
+- [x] **Tests** ([#43](https://github.com/Skalas/escriba/issues/43)) — T1–T6 state machine, config round-trip, auto-stop gating, signal fallback.
 - [x] **Docs** ([#44](https://github.com/Skalas/escriba/issues/44)) — roadmap, CLAUDE.md `[auto_record]` keys.
 
-**Done when:** auto-record is enableable from Settings; sustained mic-on/off drives one start/stop cycle; `uv run pytest` green. ✅ (T1–T4, T6 automated; **T5 real-call auto-start pending manual verification after install** — the rumps menubar path can't be unit-tested.)
+**Done when:** auto-record is enableable from Settings; sustained mic-on/off drives one start/stop cycle; `uv run pytest` green. ✅ (140 tests; auto-stop signal validated live. Real-call auto-start/stop confirmed in use.)
 
 ---
 
-### `v0.7.0` — Finish hardening + unblock local generation  ·  _next up_
+### `v0.8.0` — Finish hardening + unblock local generation  ·  _next up_
 
 Close out **[Epic #12](https://github.com/Skalas/escriba/issues/12)** and fix the one reliability issue that's actually felt in use.
 
@@ -138,7 +138,7 @@ Close out **[Epic #12](https://github.com/Skalas/escriba/issues/12)** and fix th
 
 ---
 
-### `v0.8.0` — Frontend quality + UX polish
+### `v0.9.0` — Frontend quality + UX polish
 
 Close the testing gap the single-file SPA exposed (this session's smoke caught XSS, table rendering, stale-state, dark-mode, and black-text bugs — none caught by the Python suite), then refine UX.
 
