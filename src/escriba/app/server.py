@@ -573,6 +573,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(self._start_recording())
             elif path == "/api/recording/stop":
                 self._respond(self._stop_recording())
+            elif path == "/api/recording/user-notes":
+                self._respond(self._save_recording_user_notes(self._parse_json_body()))
             elif path == "/api/notes":
                 self._respond(self._generate_notes(self._parse_json_body()))
             elif path == "/api/prompts/enhance":
@@ -1025,6 +1027,21 @@ class _Handler(BaseHTTPRequestHandler):
     def _start_recording(self) -> tuple[dict, int]:
         return self.app_state.try_start_recording()
 
+    def _save_recording_user_notes(self, body: dict) -> tuple[dict, int]:
+        with self.app_state._lock:
+            session = self.app_state.session
+            if not session or not session.is_active:
+                return {"ok": False, "error": "Not recording"}, 409
+            db_session_id = session.db_session_id
+        if not db_session_id:
+            return {"ok": False, "error": "Session not yet created"}, 409
+        db = self._require_db()
+        user_notes = body.get("user_notes", "")
+        if user_notes is not None and not isinstance(user_notes, str):
+            raise ApiError("user_notes must be a string", 400)
+        db.save_user_notes(db_session_id, user_notes or "")
+        return {"ok": True}, 200
+
     def _stop_recording(self) -> tuple[dict, int]:
         data, status, session = self.app_state.begin_stop_recording()
         if status != 200 or session is None:
@@ -1347,7 +1364,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _generate_session_notes(self, session_id: str, body: dict) -> tuple[dict, int]:
         db = self._require_db()
-        if not db.get_session(session_id):
+        session = db.get_session(session_id)
+        if not session:
             return {"ok": False, "error": "Session not found"}, 404
         segments = db.get_segments(session_id)
         if not segments:
@@ -1359,11 +1377,13 @@ class _Handler(BaseHTTPRequestHandler):
         default_model = config.streaming.summary_model if config else "auto"
         model = body.get("model", default_model)
         system_prompt = config.prompts.effective_system_prompt if config else None
+        user_notes = session.get("user_notes") or ""
         try:
             from escriba.app.session import _generate_custom_notes
 
             notes = _generate_custom_notes(
-                transcript, prompt, model=model, system_prompt=system_prompt
+                transcript, prompt, model=model, system_prompt=system_prompt,
+                user_notes=user_notes,
             )
             if notes:
                 return {"ok": True, "notes": notes}, 200

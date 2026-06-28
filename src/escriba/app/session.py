@@ -199,6 +199,7 @@ class TranscriptionSession:
         if self.db and self.db_session_id:
             status = "error" if self.error else "completed"
             self.db.stop_session(self.db_session_id, status=status)
+            self._export_to_knowledge_store()
 
         # Wait for the preliminary title thread — running two mlx-lm
         # generations concurrently crashes Metal.
@@ -552,12 +553,17 @@ class TranscriptionSession:
 
         effective_model = model or self.config.streaming.summary_model
 
-        if prompt:
+        user_notes = ""
+        if self.db and self.db_session_id:
+            user_notes = self.db.get_user_notes(self.db_session_id)
+
+        if prompt or user_notes:
             return _generate_custom_notes(
                 transcript,
-                prompt,
+                prompt or "",
                 effective_model,
                 system_prompt=self.config.prompts.effective_system_prompt,
+                user_notes=user_notes,
             )
 
         from escriba.summarize import generate_summary
@@ -566,6 +572,28 @@ class TranscriptionSession:
         if result:
             return _summary_to_markdown(result)
         return None
+
+    def _export_to_knowledge_store(self) -> None:
+        if not self.db or not self.db_session_id:
+            return
+        try:
+            from escriba.knowledge.local_markdown import LocalMarkdownAdapter
+
+            session = self.db.get_session(self.db_session_id)
+            segments = self.db.get_segments(self.db_session_id)
+            if not session:
+                return
+            ks_config = self.config.knowledge_store
+            if ks_config.provider == "local-markdown":
+                adapter = LocalMarkdownAdapter(output_dir=ks_config.local_markdown.output_dir)
+                adapter.export(
+                    session=session,
+                    summary_json=None,
+                    audio_path=self._audio_file,
+                    segments=segments,
+                )
+        except Exception as exc:
+            logger.error("Knowledge store export failed: %s", exc, exc_info=True)
 
 
 def _markdown_list_item(value: object) -> str | None:
@@ -702,22 +730,49 @@ def _build_transcriber(config, *, realtime_output: bool) -> Any:
 
 
 def _build_custom_prompt(
-    transcript: str, prompt: str, system_prompt: str | None = None
+    transcript: str,
+    prompt: str,
+    system_prompt: str | None = None,
+    user_notes: str = "",
 ) -> str:
     """
     Render the system-prompt template with the transcript and user instruction.
 
-    ``system_prompt`` may contain ``{transcript}`` and ``{prompt}`` placeholders.
-    Falls back to the built-in default if it is empty or malformed.
+    ``system_prompt`` may contain ``{transcript}``, ``{prompt}``, and
+    optionally ``{user_notes}`` placeholders.  Falls back to the built-in
+    default if it is empty or malformed.
+
+    When the template has no ``{user_notes}`` placeholder but user_notes is
+    non-empty, the notes are prepended as an XML block before the rendered text.
     """
     from escriba.config import DEFAULT_SYSTEM_PROMPT
 
     template = (system_prompt or "").strip() or DEFAULT_SYSTEM_PROMPT
+    has_user_notes_placeholder = "{user_notes}" in template
+    fmt_kwargs: dict[str, str] = {
+        "transcript": transcript,
+        "prompt": prompt,
+    }
+    if has_user_notes_placeholder:
+        fmt_kwargs["user_notes"] = user_notes or ""
     try:
-        return template.format(transcript=transcript, prompt=prompt)
+        rendered = template.format(**fmt_kwargs)
     except (KeyError, IndexError, ValueError):
         logger.warning("Invalid system prompt template; using default")
-        return DEFAULT_SYSTEM_PROMPT.format(transcript=transcript, prompt=prompt)
+        try:
+            rendered = DEFAULT_SYSTEM_PROMPT.format(
+                transcript=transcript, prompt=prompt, user_notes=user_notes or ""
+            )
+        except (KeyError, IndexError, ValueError):
+            rendered = DEFAULT_SYSTEM_PROMPT.format(
+                transcript=transcript, prompt=prompt, user_notes=""
+            )
+
+    if not has_user_notes_placeholder and user_notes:
+        preamble = f"<user_notes>\n{user_notes}\n</user_notes>\n\n"
+        rendered = preamble + rendered
+
+    return rendered
 
 
 def _generate_custom_notes(
@@ -725,6 +780,7 @@ def _generate_custom_notes(
     prompt: str,
     model: str = "gemini",
     system_prompt: str | None = None,
+    user_notes: str = "",
 ) -> str | None:
     """Generate notes from transcript with a custom user prompt."""
     from escriba.summarize.llm_summary import (
@@ -737,7 +793,7 @@ def _generate_custom_notes(
         resolve_provider_and_model,
     )
 
-    full_prompt = _build_custom_prompt(transcript, prompt, system_prompt)
+    full_prompt = _build_custom_prompt(transcript, prompt, system_prompt, user_notes=user_notes)
 
     provider, model_id = resolve_provider_and_model(model)
 

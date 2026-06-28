@@ -24,6 +24,7 @@ VALID_BACKENDS: frozenset[str] = frozenset(
     {"mlx-whisper", "faster-whisper", "openai-whisper", "mps"}
 )
 VALID_AUDIO_SOURCES: frozenset[str] = frozenset({"system", "mic", "both"})
+VALID_KNOWLEDGE_PROVIDERS: frozenset[str] = frozenset({"local-markdown"})
 
 
 class ConfigValidationError(ValueError):
@@ -300,6 +301,18 @@ class AutoRecordConfig:
 
 
 @dataclass(frozen=True)
+class KnowledgeStoreMdConfig:
+    output_dir: str = "~/Documents/Escriba"
+    template: str = "default"
+
+
+@dataclass(frozen=True)
+class KnowledgeStoreConfig:
+    provider: str = "local-markdown"
+    local_markdown: KnowledgeStoreMdConfig = field(default_factory=KnowledgeStoreMdConfig)
+
+
+@dataclass(frozen=True)
 class AutoNameConfig:
     """Automatic session naming via LLM."""
 
@@ -326,6 +339,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "<transcript>\n"
     "{transcript}\n"
     "</transcript>\n\n"
+    "<user_notes>\n"
+    "{user_notes}\n"
+    "</user_notes>\n\n"
     "<task>\n"
     "{prompt}\n"
     "</task>\n\n"
@@ -409,6 +425,7 @@ class AppConfig:
     auto_name: AutoNameConfig = field(default_factory=AutoNameConfig)
     local_llm: LocalLLMConfig = field(default_factory=LocalLLMConfig)
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
+    knowledge_store: KnowledgeStoreConfig = field(default_factory=KnowledgeStoreConfig)
 
     config_path: Path | None = None
 
@@ -439,6 +456,14 @@ class AppConfig:
             )
         if not self.streaming.model_size.strip():
             raise ConfigValidationError("streaming.model_size cannot be empty")
+        ks = self.knowledge_store
+        if ks.provider not in VALID_KNOWLEDGE_PROVIDERS:
+            raise ConfigValidationError(
+                f"knowledge_store.provider must be one of {sorted(VALID_KNOWLEDGE_PROVIDERS)!r} "
+                f"(got {ks.provider!r})"
+            )
+        # Validate the output_dir is at least parseable (expanduser should not fail).
+        Path(ks.local_markdown.output_dir).expanduser()
 
     @classmethod
     def load(
@@ -649,6 +674,21 @@ class AppConfig:
             templates=tuple(p_templates),
         )
 
+        # Knowledge store
+        ks_section = _get_section(toml_data, "knowledge_store")
+        ks_provider = _get_toml_str(ks_section, "provider")
+        ks_md_section = _get_section(ks_section, "local-markdown")
+        ks_md_output_dir = _get_toml_str(ks_md_section, "output_dir")
+        ks_md_template = _get_toml_str(ks_md_section, "template")
+        ks_md_cfg = KnowledgeStoreMdConfig(
+            output_dir=ks_md_output_dir if ks_md_output_dir is not None else "~/Documents/Escriba",
+            template=ks_md_template if ks_md_template is not None else "default",
+        )
+        ks_cfg = KnowledgeStoreConfig(
+            provider=ks_provider if ks_provider is not None else "local-markdown",
+            local_markdown=ks_md_cfg,
+        )
+
         cfg = cls(
             audio=audio_cfg,
             streaming=streaming_cfg,
@@ -659,6 +699,7 @@ class AppConfig:
             auto_name=auto_name_cfg,
             local_llm=local_llm_cfg,
             prompts=prompts_cfg,
+            knowledge_store=ks_cfg,
             config_path=resolved_path,
         )
         cfg.validate()
@@ -776,5 +817,12 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
             "templates": cfg.prompts.effective_templates,
             "default_system_prompt": DEFAULT_SYSTEM_PROMPT,
             "default_templates": list(DEFAULT_PROMPT_TEMPLATES),
+        },
+        "knowledge_store": {
+            "provider": cfg.knowledge_store.provider,
+            "local-markdown": {
+                "output_dir": cfg.knowledge_store.local_markdown.output_dir,
+                "template": cfg.knowledge_store.local_markdown.template,
+            },
         },
     }
