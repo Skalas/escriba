@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from escriba.audio.call_state import CallEvent, CallStateMachine
+from escriba.audio.call_state import CallEvent, CallStateMachine, should_auto_stop
 
 
 def test_t1_sustained_on_emits_one_call_started() -> None:
@@ -53,3 +53,37 @@ def test_t4_off_then_on_within_stop_debounce_stays_in_call() -> None:
     assert sm.update(False, 5.0) == CallEvent.NONE
     assert sm.update(False, 9.9) == CallEvent.NONE
     assert sm.update(False, 10.0) == CallEvent.CALL_ENDED
+
+
+def test_auto_stop_only_for_auto_started_recording() -> None:
+    """CALL_ENDED stops only an auto-started recording, never a hand-started one."""
+    # Auto-started + recording + call ended -> stop.
+    assert should_auto_stop(CallEvent.CALL_ENDED, True, True) is True
+    # Hand-started recording (not auto) -> never auto-stopped.
+    assert should_auto_stop(CallEvent.CALL_ENDED, True, False) is False
+    # Not recording -> nothing to stop.
+    assert should_auto_stop(CallEvent.CALL_ENDED, False, True) is False
+    # No call-end edge -> no stop.
+    assert should_auto_stop(CallEvent.CALL_STARTED, True, True) is False
+    assert should_auto_stop(CallEvent.NONE, True, True) is False
+
+
+def test_call_mic_active_falls_back_when_process_api_unavailable(monkeypatch) -> None:
+    """call_mic_active() falls back to is_mic_running when the process API is absent."""
+    from escriba.audio import mic_monitor
+
+    monkeypatch.setattr(mic_monitor, "external_mic_active", lambda exclude_pid=None: None)
+    monkeypatch.setattr(mic_monitor, "is_mic_running", lambda: True)
+    assert mic_monitor.call_mic_active() is True
+
+    monkeypatch.setattr(mic_monitor, "is_mic_running", lambda: False)
+    assert mic_monitor.call_mic_active() is False
+
+
+def test_call_mic_active_uses_process_api_when_available(monkeypatch) -> None:
+    """When the process API works, its (self-excluding) result wins."""
+    from escriba.audio import mic_monitor
+
+    monkeypatch.setattr(mic_monitor, "external_mic_active", lambda exclude_pid=None: True)
+    monkeypatch.setattr(mic_monitor, "is_mic_running", lambda: False)
+    assert mic_monitor.call_mic_active() is True
