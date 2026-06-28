@@ -11,7 +11,6 @@ import ctypes
 import ctypes.util
 import logging
 import struct
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -89,19 +88,3 @@ def is_mic_running() -> bool:
         return False
     val = _get_property_u32(device_id, _PROP_IS_RUNNING)
     return bool(val)
-
-
-def identify_mic_app() -> Optional[str]:
-    """Try to identify which meeting app activated the mic.
-
-    Cross-references with the process-based detection in
-    ``call_detection.py``.  Returns the app name or None.
-    """
-    try:
-        from escriba.audio.call_detection import detect_active_call
-
-        is_call, app_name = detect_active_call()
-        return app_name if is_call else None
-    except Exception:
-        logger.debug("Could not identify mic app", exc_info=True)
-        return None
