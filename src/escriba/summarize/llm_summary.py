@@ -20,11 +20,22 @@ LLM_TIMEOUT_SECONDS = 30
 LLM_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY_SECONDS = 1.0
 LOCAL_MODEL_MAX_ATTEMPTS = 2
-
-# Serialize all mlx-lm inference — parallel Metal calls crash the process.
-_local_llm_semaphore = threading.Semaphore(1)
+_LOCAL_INFERENCE_TIMEOUT = 300  # seconds; covers model loading + generation
 
 T = TypeVar("T")
+
+# ---------------------------------------------------------------------------
+# Model listing cache (T4)
+# ---------------------------------------------------------------------------
+_models_cache: dict[str, Any] | None = None
+_models_cache_time: float = 0.0
+_MODELS_CACHE_TTL = 300.0  # seconds
+
+
+def invalidate_models_cache() -> None:
+    """Discard the cached model list (e.g. after API keys change)."""
+    global _models_cache
+    _models_cache = None
 
 
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
@@ -143,6 +154,100 @@ class _LocalModelCache:
 
 
 _model_cache = _LocalModelCache()
+
+
+# ---------------------------------------------------------------------------
+# T1: Subprocess-based local inference
+# ---------------------------------------------------------------------------
+
+def _subprocess_run_generation(
+    prompt: str,
+    model_id: str,
+    max_tokens: int,
+    enable_thinking: bool,
+) -> str | None:
+    """Worker entry point — runs inside the persistent subprocess.
+
+    The subprocess has its own ``_model_cache`` singleton, so the model
+    stays loaded between successive calls to the same worker process.
+    Must be a top-level function so it is picklable by ProcessPoolExecutor.
+    """
+    return _run_local_generation(prompt, model_id, max_tokens, enable_thinking)
+
+
+class _LocalInferenceProcess:
+    """Manages a single persistent worker subprocess for mlx-lm inference.
+
+    Moving Metal GPU computation out of the server thread pool means:
+    - The server's GIL is released while the parent thread waits on the future.
+    - GPU saturation and long generations cannot starve status polling.
+    - A subprocess crash is isolated: the worker restarts on the next call.
+    """
+
+    def __init__(self) -> None:
+        self._executor: concurrent.futures.ProcessPoolExecutor | None = None
+        self._lock = threading.Lock()
+
+    def _get_executor(self) -> concurrent.futures.ProcessPoolExecutor:
+        with self._lock:
+            if self._executor is None:
+                self._executor = concurrent.futures.ProcessPoolExecutor(max_workers=1)
+            return self._executor
+
+    def _reset_executor(self) -> None:
+        with self._lock:
+            if self._executor is not None:
+                try:
+                    self._executor.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
+                self._executor = None
+
+    def run(
+        self,
+        prompt: str,
+        model_id: str,
+        max_tokens: int,
+        enable_thinking: bool,
+    ) -> str | None:
+        for attempt in range(LOCAL_MODEL_MAX_ATTEMPTS):
+            executor = self._get_executor()
+            future = executor.submit(
+                _subprocess_run_generation,
+                prompt,
+                model_id,
+                max_tokens,
+                enable_thinking,
+            )
+            try:
+                return future.result(timeout=_LOCAL_INFERENCE_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                future.cancel()
+                self._reset_executor()
+                raise TimeoutError(
+                    f"Local inference timed out after {_LOCAL_INFERENCE_TIMEOUT}s"
+                )
+            except ImportError:
+                logger.warning("mlx-lm not installed — local models unavailable")
+                return None
+            except (MemoryError, RuntimeError) as exc:
+                logger.error(
+                    "Local inference subprocess failed (attempt %d/%d): %s",
+                    attempt + 1,
+                    LOCAL_MODEL_MAX_ATTEMPTS,
+                    exc,
+                )
+                self._reset_executor()
+                if attempt >= LOCAL_MODEL_MAX_ATTEMPTS - 1:
+                    return None
+            except Exception as exc:
+                logger.error("Local inference subprocess error: %s", exc)
+                self._reset_executor()
+                return None
+        return None
+
+
+_local_inference_process = _LocalInferenceProcess()
 
 
 def configure_local_cache(ttl: int = 300) -> None:
@@ -280,7 +385,13 @@ def _gemini_generate_text(model_id: str, prompt: str) -> str:
             raise ValueError("Empty response from Gemini")
         return response.text.strip()
 
-    return _retry_cloud_call(f"Gemini({model_id})", _call)
+    from escriba.app.observability import latency_store
+
+    t0 = time.monotonic()
+    try:
+        return _retry_cloud_call(f"Gemini({model_id})", _call)
+    finally:
+        latency_store.record("llm.gemini", (time.monotonic() - t0) * 1000)
 
 
 def _claude_generate_text(
@@ -302,7 +413,13 @@ def _claude_generate_text(
             raise ValueError("Empty response from Claude")
         return message.content[0].text.strip()
 
-    return _retry_cloud_call(f"Claude({model_id})", _call)
+    from escriba.app.observability import latency_store
+
+    t0 = time.monotonic()
+    try:
+        return _retry_cloud_call(f"Claude({model_id})", _call)
+    finally:
+        latency_store.record("llm.claude", (time.monotonic() - t0) * 1000)
 
 
 def resolve_provider_and_model(model: str) -> tuple[str, str | None]:
@@ -632,37 +749,25 @@ def _call_llm_local(
     max_tokens: int = 256,
     enable_thinking: bool = True,
 ) -> str | None:
-    """Call a local MLX model via the hybrid cache.
+    """Call a local MLX model via a persistent worker subprocess.
 
-    Serialized with a module-level semaphore so concurrent Metal calls cannot
-    run in parallel. On OOM/runtime failure the cache is evicted and retried once.
+    Metal GPU work runs in a separate process so the GIL and GPU saturation
+    cannot block HTTP status polling or other concurrent requests.
+    Subprocess serialises calls (max_workers=1); crashes degrade gracefully.
     """
-    with _local_llm_semaphore:
-        for attempt in range(LOCAL_MODEL_MAX_ATTEMPTS):
-            try:
-                return _run_local_generation(
-                    prompt, model_id, max_tokens, enable_thinking
-                )
-            except ImportError:
-                logger.warning("mlx-lm not installed — local models unavailable")
-                return None
-            except (MemoryError, RuntimeError) as e:
-                logger.error(
-                    "Local model generation failed (attempt %d/%d): %s",
-                    attempt + 1,
-                    LOCAL_MODEL_MAX_ATTEMPTS,
-                    e,
-                )
-                _model_cache.evict()
-                if attempt >= LOCAL_MODEL_MAX_ATTEMPTS - 1:
-                    return None
-            except TypeError as e:
-                logger.error("Local model template error: %s", e, exc_info=True)
-                return None
-            except OSError as e:
-                logger.error("Local model I/O error: %s", e, exc_info=True)
-                return None
-    return None
+    try:
+        import mlx_lm as _  # noqa: F401
+    except ImportError:
+        logger.warning("mlx-lm not installed — local models unavailable")
+        return None
+
+    from escriba.app.observability import latency_store
+
+    t0 = time.monotonic()
+    try:
+        return _local_inference_process.run(prompt, model_id, max_tokens, enable_thinking)
+    finally:
+        latency_store.record("llm.local", (time.monotonic() - t0) * 1000)
 
 
 def generate_session_title(
@@ -852,11 +957,24 @@ def enhance_prompt(
 def list_available_models() -> dict[str, Any]:
     """Fetch available model IDs from all configured providers.
 
-    Returns a dict with model lists, recommended model, and AI availability status.
+    Result is cached for ``_MODELS_CACHE_TTL`` seconds so the dashboard
+    does not re-probe remote APIs on every poll cycle.
     """
+    global _models_cache, _models_cache_time
+    now = time.monotonic()
+    if _models_cache is not None and (now - _models_cache_time) < _MODELS_CACHE_TTL:
+        return _models_cache
+    result = _list_available_models_uncached()
+    _models_cache = result
+    _models_cache_time = now
+    return result
+
+
+def _list_available_models_uncached() -> dict[str, Any]:
+    """Inner implementation that always probes all providers."""
     models: dict[str, list[str]] = {}
 
-    # Local models
+    # Local models — no network call needed.
     local_models = [repo for _, repo in LOCAL_MODEL_PRESETS]
     mlx_available = False
     try:
@@ -869,7 +987,7 @@ def list_available_models() -> dict[str, Any]:
     if mlx_available:
         models["local"] = local_models
 
-    # Remote models
+    # Remote models — only probe when key is present.
     if os.getenv("GEMINI_API_KEY", "").strip():
         models["gemini"] = _list_gemini_models()
 
@@ -919,10 +1037,10 @@ def _list_gemini_models() -> list[str]:
     try:
         return _call_with_timeout(_call, LLM_TIMEOUT_SECONDS)
     except TimeoutError:
-        logger.error("Timed out listing Gemini models")
+        logger.warning("Timed out listing Gemini models — check connectivity")
         return [DEFAULT_GEMINI_MODEL]
     except Exception as e:
-        logger.error("Failed to list Gemini models: %s", e, exc_info=True)
+        logger.warning("Failed to list Gemini models (check GEMINI_API_KEY): %s", e)
         return [DEFAULT_GEMINI_MODEL]
 
 
@@ -948,8 +1066,8 @@ def _list_claude_models() -> list[str]:
     try:
         return _call_with_timeout(_call, LLM_TIMEOUT_SECONDS)
     except TimeoutError:
-        logger.error("Timed out listing Claude models")
+        logger.warning("Timed out listing Claude models — check connectivity")
         return [DEFAULT_CLAUDE_MODEL]
     except Exception as e:
-        logger.error("Failed to list Claude models: %s", e, exc_info=True)
+        logger.warning("Failed to list Claude models (check ANTHROPIC_API_KEY): %s", e)
         return [DEFAULT_CLAUDE_MODEL]
