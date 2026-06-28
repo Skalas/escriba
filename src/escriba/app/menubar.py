@@ -120,6 +120,9 @@ class TranscriberMenuBar(rumps.App):
         # Mic activation detection state
         self._prompt_cooldown_until: float = 0
         self._last_detected_app: str | None = None
+        # session_id of the recording auto-started by call detection; only that
+        # session is auto-stopped on hangup (a hand-started one keeps running).
+        self._auto_started_session_id: str | None = None
         self._call_state = self._make_call_state_machine(config)
         self._call_item = rumps.MenuItem("", callback=self._record_detected_call)
         self._call_item.hidden = True
@@ -191,17 +194,22 @@ class TranscriberMenuBar(rumps.App):
             import threading
 
             from escriba.audio.call_detection import get_call_app_label_if_mic_active
-            from escriba.audio.call_state import CallEvent
-            from escriba.audio.mic_monitor import is_mic_running
+            from escriba.audio.call_state import CallEvent, should_auto_stop
+            from escriba.audio.mic_monitor import call_mic_active
 
-            running = is_mic_running()
+            running = call_mic_active()
             event = self._call_state.update(running, time.monotonic())
 
             with self.app_state._lock:
                 session = self.app_state.session
                 is_recording = bool(session and session.is_active)
+                current_id = session.session_id if session else None
 
-            if event == CallEvent.CALL_ENDED and is_recording:
+            auto_started = (
+                self._auto_started_session_id is not None
+                and current_id == self._auto_started_session_id
+            )
+            if should_auto_stop(event, is_recording, auto_started):
                 logger.info("Call ended, auto-stopping recording")
                 self._begin_stop_recording_session()
                 return
@@ -229,7 +237,7 @@ class TranscriberMenuBar(rumps.App):
 
             if self.config.auto_record.start_mode == "auto":
                 self._call_item.hidden = True
-                self._begin_start_recording_session(detected_app=app_name)
+                self._begin_start_recording_session(detected_app=app_name, auto=True)
                 return
 
             logger.info("Mic activation detected, prompting user")
@@ -258,7 +266,9 @@ class TranscriberMenuBar(rumps.App):
             )
             if "Record" in result.stdout:
                 self._call_item.hidden = True
-                self.toggle_recording(self._recording_item)
+                self._begin_start_recording_session(
+                    detected_app=app_name, auto=True
+                )
             else:
                 self._prompt_cooldown_until = (
                     time.time() + self.config.auto_record.cooldown_seconds
@@ -268,9 +278,11 @@ class TranscriberMenuBar(rumps.App):
             logger.debug("Call dialog failed, menu item still available", exc_info=True)
 
     def _record_detected_call(self, _):
-        """User clicked the 'Record Call' menu item."""
+        """User clicked the 'Record Call' menu item (responds to a detected call)."""
         self._call_item.hidden = True
-        self.toggle_recording(self._recording_item)
+        self._begin_start_recording_session(
+            detected_app=self._last_detected_app, auto=True
+        )
 
     def reload_config(self, _):
         self._do_reload()
@@ -281,6 +293,7 @@ class TranscriberMenuBar(rumps.App):
 
         self._recording_item.title = "Start Recording"
         self.title = "\u3030"
+        self._auto_started_session_id = None
 
         _data, status, session = self.app_state.begin_stop_recording()
         if status != 200 or session is None:
@@ -298,14 +311,27 @@ class TranscriberMenuBar(rumps.App):
         threading.Thread(target=_stop_async, daemon=True).start()
         return True
 
-    def _begin_start_recording_session(self, detected_app: str | None = None) -> bool:
-        """Start a recording session. Returns True if start succeeded."""
+    def _begin_start_recording_session(
+        self, detected_app: str | None = None, auto: bool = False
+    ) -> bool:
+        """Start a recording session. Returns True if start succeeded.
+
+        When ``auto`` is True the recording was initiated by call detection, so
+        its session id is remembered and it will be auto-stopped on hangup; a
+        hand-started recording (``auto`` False) is never auto-stopped.
+        """
         data, _status = self.app_state.try_start_recording(detected_app=detected_app)
         self._last_detected_app = None
 
         if not data.get("ok"):
             _notify("Escriba", "Error", data.get("error", "Failed to start"))
             return False
+
+        with self.app_state._lock:
+            session = self.app_state.session
+            self._auto_started_session_id = (
+                session.session_id if (auto and session) else None
+            )
 
         self._recording_item.title = "Stop Recording"
         self.title = "\u3030\u25cf"

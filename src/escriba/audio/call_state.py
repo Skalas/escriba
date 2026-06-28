@@ -13,6 +13,18 @@ class CallEvent(enum.Enum):
     CALL_ENDED = "call_ended"
 
 
+def should_auto_stop(
+    event: "CallEvent", is_recording: bool, auto_started: bool
+) -> bool:
+    """
+    Whether a debounced call-end should auto-stop the recording.
+
+    Only recordings that were auto-started by call detection are auto-stopped;
+    a recording the user started by hand stays running when the call ends.
+    """
+    return event is CallEvent.CALL_ENDED and is_recording and auto_started
+
+
 class CallStateMachine:
     """
     Debounce mic-running booleans into stable call start/end events.
