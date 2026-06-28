@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-28
+
 ### Added
 - **Reliable call detection / Notion-style auto-record** ([#39](https://github.com/Skalas/escriba/issues/39)–[#44](https://github.com/Skalas/escriba/issues/44)) — mic-activation auto-record is now usable end to end:
   - **Settings → Auto-record on call** toggle plus `start_mode` (Prompt / Automatic), cooldown, and start/stop debounces, all round-tripping through `[auto_record]` in `escriba.toml`. Still opt-in (`enabled = false` by default).
