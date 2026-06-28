@@ -29,13 +29,15 @@ T = TypeVar("T")
 # ---------------------------------------------------------------------------
 _models_cache: dict[str, Any] | None = None
 _models_cache_time: float = 0.0
+_models_cache_lock = threading.Lock()
 _MODELS_CACHE_TTL = 300.0  # seconds
 
 
 def invalidate_models_cache() -> None:
     """Discard the cached model list (e.g. after API keys change)."""
-    global _models_cache
-    _models_cache = None
+    global _models_cache_time
+    with _models_cache_lock:
+        _models_cache_time = 0.0
 
 
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
@@ -222,7 +224,7 @@ class _LocalInferenceProcess:
             try:
                 return future.result(timeout=_LOCAL_INFERENCE_TIMEOUT)
             except concurrent.futures.TimeoutError:
-                future.cancel()
+                # The subprocess is still running; reset the pool to reclaim it.
                 self._reset_executor()
                 raise TimeoutError(
                     f"Local inference timed out after {_LOCAL_INFERENCE_TIMEOUT}s"
@@ -385,13 +387,10 @@ def _gemini_generate_text(model_id: str, prompt: str) -> str:
             raise ValueError("Empty response from Gemini")
         return response.text.strip()
 
-    from escriba.app.observability import latency_store
+    from escriba.app.observability import timed
 
-    t0 = time.monotonic()
-    try:
+    with timed("llm.gemini"):
         return _retry_cloud_call(f"Gemini({model_id})", _call)
-    finally:
-        latency_store.record("llm.gemini", (time.monotonic() - t0) * 1000)
 
 
 def _claude_generate_text(
@@ -413,13 +412,10 @@ def _claude_generate_text(
             raise ValueError("Empty response from Claude")
         return message.content[0].text.strip()
 
-    from escriba.app.observability import latency_store
+    from escriba.app.observability import timed
 
-    t0 = time.monotonic()
-    try:
+    with timed("llm.claude"):
         return _retry_cloud_call(f"Claude({model_id})", _call)
-    finally:
-        latency_store.record("llm.claude", (time.monotonic() - t0) * 1000)
 
 
 def resolve_provider_and_model(model: str) -> tuple[str, str | None]:
@@ -761,13 +757,10 @@ def _call_llm_local(
         logger.warning("mlx-lm not installed — local models unavailable")
         return None
 
-    from escriba.app.observability import latency_store
+    from escriba.app.observability import timed
 
-    t0 = time.monotonic()
-    try:
+    with timed("llm.local"):
         return _local_inference_process.run(prompt, model_id, max_tokens, enable_thinking)
-    finally:
-        latency_store.record("llm.local", (time.monotonic() - t0) * 1000)
 
 
 def generate_session_title(
@@ -959,14 +952,19 @@ def list_available_models() -> dict[str, Any]:
 
     Result is cached for ``_MODELS_CACHE_TTL`` seconds so the dashboard
     does not re-probe remote APIs on every poll cycle.
+    The cache is guarded by ``_models_cache_lock``; the slow network probe
+    runs outside the lock so concurrent callers don't pile up.
     """
     global _models_cache, _models_cache_time
     now = time.monotonic()
-    if _models_cache is not None and (now - _models_cache_time) < _MODELS_CACHE_TTL:
-        return _models_cache
+    with _models_cache_lock:
+        if _models_cache is not None and (now - _models_cache_time) < _MODELS_CACHE_TTL:
+            return _models_cache
+    # Slow network probe runs outside the lock; last writer wins.
     result = _list_available_models_uncached()
-    _models_cache = result
-    _models_cache_time = now
+    with _models_cache_lock:
+        _models_cache = result
+        _models_cache_time = time.monotonic()
     return result
 
 
