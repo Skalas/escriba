@@ -122,6 +122,12 @@ Single-file SPA at `src/escriba/app/static/index.html`. Contains all CSS, HTML, 
 - Never put inline comments on `.env` values — python-dotenv parses them as part of the value
 - `[prompts]` section holds the user-customizable AI `system_prompt` (must keep the `{transcript}` and `{prompt}` placeholders) and `[[prompts.templates]]` quick-prompt chips; empty values fall back to `DEFAULT_SYSTEM_PROMPT` / `DEFAULT_PROMPT_TEMPLATES` in `config.py`
 - `PUT /api/config` deep-merges into existing `escriba.toml` (via `update_config_toml`), so partial saves no longer overwrite other sections
+- `[auto_record]` — mic-activation auto-record (opt-in, `enabled = false` by default):
+  - `start_mode`: `"prompt"` (dialog + menu item) or `"auto"` (start immediately via `try_start_recording`)
+  - `cooldown_seconds`: after dismissing the prompt, ignore new detections for this long (default 60)
+  - `poll_interval`: menubar poll interval in seconds (default 3)
+  - `start_debounce_seconds`: mic must stay active this long before a call is considered started (default 3.0)
+  - `stop_debounce_seconds`: mic must stay inactive this long before a call is considered ended (default 5.0)
 
 ## Dependencies
 

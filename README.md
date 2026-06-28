@@ -9,6 +9,7 @@ Local audio transcription app for macOS. Captures system audio + microphone, tra
 
 - **Real-time transcription** — system audio + microphone capture via ScreenCaptureKit
 - **Menu bar app** — start/stop recording from the macOS menu bar
+- **Auto-record on call** — opt-in mic-activation detection (Notion-style): debounced auto start/stop when you join and leave a call, with a prompt or fully-automatic mode (Settings → Auto-record on call)
 - **Web dashboard** — manage sessions with folders, search, rename, view transcripts, generate AI notes with markdown rendering
 - **Audio recording & playback** — WAV files saved alongside transcripts with seek-to-segment
 - **Re-transcribe** — retry failed transcriptions from saved audio

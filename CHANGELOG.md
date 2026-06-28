@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Reliable call detection / Notion-style auto-record** ([#39](https://github.com/Skalas/escriba/issues/39)–[#44](https://github.com/Skalas/escriba/issues/44)) — mic-activation auto-record is now usable end to end:
+  - **Settings → Auto-record on call** toggle plus `start_mode` (Prompt / Automatic), cooldown, and start/stop debounces, all round-tripping through `[auto_record]` in `escriba.toml`. Still opt-in (`enabled = false` by default).
+  - **Debounced detection** via a pure `CallStateMachine` — a sustained mic-on drives one start and a sustained mic-off one stop; brief blips (notifications, dictation) no longer trigger.
+  - **Self-aware mic signal** — call detection uses the macOS 14.4+ per-process audio API to count only *other* processes on the default input device, so Escriba's own recording capture doesn't pin the signal on (which previously made auto-stop never fire), and always-on system daemons like `corespeechd`/Siri are ignored. Falls back to the global device flag on older macOS.
+  - **Auto-stop pairs with auto-start** — a recording is auto-stopped on hangup only if call detection started it (tracked by session id); a recording you started by hand keeps running.
+  - **Automatic mode** starts/stops recording without a blocking dialog and posts a non-blocking notification; both paths go through `try_start_recording` so there is never a second active session.
+  - **Mic-gated app labels** — a meeting-app name is shown only when the mic is actually active and a known app matches, instead of guessing from background process presence.
+
+### Fixed
+- Auto-record was effectively dead: it defaulted to disabled with no `[auto_record]` config section and no Settings control, so the mic-activation loop never ran.
+- `auto_record.poll_interval` now actually drives the menubar poll timer (was a hardcoded literal; the configured value was ignored).
+- Auto start/stop no longer race the dashboard's HTTP start/stop (could previously start a recording while auto-stopping, or stop one while auto-starting).
+- Debounce/cooldown values are clamped to non-negative on load.
+
 ## [0.6.1] - 2026-06-27
 
 ### Added

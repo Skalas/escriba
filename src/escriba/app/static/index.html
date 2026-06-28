@@ -1476,6 +1476,34 @@
       </div>
 
       <div class="card settings-card">
+        <h3>Auto-record on call</h3>
+        <p class="theme-swatch-desc" style="margin-bottom:12px;">Detect when your microphone is active during a call and offer to record — or start automatically.</p>
+        <div class="settings-row">
+          <span class="settings-label">Enabled</span>
+          <label class="settings-toggle"><input type="checkbox" id="s-auto-record-enabled" aria-label="Enable auto-record on call"><span class="slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Start mode</span>
+          <select class="settings-input" id="s-auto-record-start-mode" aria-label="Auto-record start mode">
+            <option value="prompt">Prompt</option>
+            <option value="auto">Automatic</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Prompt cooldown (s)</span>
+          <input type="number" class="settings-input" id="s-auto-record-cooldown" step="1" min="0" aria-label="Auto-record prompt cooldown seconds">
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Start debounce (s)</span>
+          <input type="number" class="settings-input" id="s-auto-record-start-debounce" step="0.1" min="0" aria-label="Auto-record start debounce seconds">
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Stop debounce (s)</span>
+          <input type="number" class="settings-input" id="s-auto-record-stop-debounce" step="0.1" min="0" aria-label="Auto-record stop debounce seconds">
+        </div>
+      </div>
+
+      <div class="card settings-card">
         <h3>Speaker Detection</h3>
         <div class="settings-row">
           <span class="settings-label">Mode</span>
@@ -3155,6 +3183,12 @@ async function loadSettings() {
     document.getElementById('s-language').value = c.streaming.language;
     document.getElementById('s-backend').value = c.streaming.backend;
     document.getElementById('s-chunk-duration').value = c.streaming.chunk_duration;
+    const ar = c.auto_record || {};
+    document.getElementById('s-auto-record-enabled').checked = !!ar.enabled;
+    document.getElementById('s-auto-record-start-mode').value = ar.start_mode || 'prompt';
+    document.getElementById('s-auto-record-cooldown').value = ar.cooldown_seconds ?? 60;
+    document.getElementById('s-auto-record-start-debounce').value = ar.start_debounce_seconds ?? 3;
+    document.getElementById('s-auto-record-stop-debounce').value = ar.stop_debounce_seconds ?? 5;
     document.getElementById('s-speaker-mode').value = c.streaming.speaker.mode;
     document.getElementById('s-speaker-threshold').value = c.streaming.speaker.threshold;
     // Store the configured value, then populate dropdown from /api/models
@@ -3330,6 +3364,13 @@ async function saveSettings() {
       no_speech_threshold: parseFloat(document.getElementById('s-no-speech').value),
       compression_ratio_threshold: parseFloat(document.getElementById('s-compression').value),
       logprob_threshold: parseFloat(document.getElementById('s-logprob').value),
+    },
+    auto_record: {
+      enabled: document.getElementById('s-auto-record-enabled').checked,
+      start_mode: document.getElementById('s-auto-record-start-mode').value,
+      cooldown_seconds: parseInt(document.getElementById('s-auto-record-cooldown').value, 10),
+      start_debounce_seconds: parseFloat(document.getElementById('s-auto-record-start-debounce').value),
+      stop_debounce_seconds: parseFloat(document.getElementById('s-auto-record-stop-debounce').value),
     },
   };
   // Prompts: validate system prompt placeholders, clean up templates

@@ -25,48 +25,13 @@ MEETING_APPS = {
 }
 
 
-def _is_meeting_app_running() -> bool:
+def _find_running_meeting_app() -> Optional[str]:
     """
-    Detecta si alguna aplicación de videollamadas está corriendo.
+    Best-effort lookup of a known meeting app process.
 
     Returns:
-        True si hay una app de meeting activa
+        App label (e.g. ``zoom``) or None if no known app is running.
     """
-    try:
-        # Listar procesos activos
-        result = subprocess.run(
-            ["ps", "aux"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-
-        processes = result.stdout.lower()
-
-        # Buscar procesos de meeting apps
-        for app_name, process_names in MEETING_APPS.items():
-            for process_name in process_names:
-                if process_name.lower() in processes:
-                    logger.debug(
-                        "Found meeting app: %s (process: %s)", app_name, process_name
-                    )
-                    return True
-
-        return False
-    except Exception as e:
-        logger.error("Error checking meeting apps: %s", e, exc_info=True)
-        return False
-
-
-def detect_active_call() -> tuple[bool, Optional[str]]:
-    """
-    Detecta si hay una llamada activa.
-
-    Returns:
-        Tuple (is_call_active, app_name)
-        app_name será None si no se puede determinar
-    """
-    # Verificar apps de meeting
     for app_name, process_names in MEETING_APPS.items():
         try:
             result = subprocess.run(
@@ -75,12 +40,40 @@ def detect_active_call() -> tuple[bool, Optional[str]]:
                 timeout=1,
             )
             if result.returncode == 0:
-                logger.info("Detected active call in: %s", app_name)
-                return True, app_name
+                logger.debug("Found meeting app process: %s", app_name)
+                return app_name
         except Exception:
             continue
+    return None
 
+
+def detect_active_call() -> tuple[bool, Optional[str]]:
+    """
+    Detecta si hay una llamada activa (CLI / legacy path).
+
+    Uses process presence only — suitable for ``wait_for_call_start`` but not
+    for menubar auto-record, which must gate on mic activity.
+
+    Returns:
+        Tuple (is_call_active, app_name)
+        app_name será None si no se puede determinar
+    """
+    app_name = _find_running_meeting_app()
+    if app_name is not None:
+        logger.info("Detected active call in: %s", app_name)
+        return True, app_name
     return False, None
+
+
+def get_call_app_label_if_mic_active(mic_running: bool) -> Optional[str]:
+    """
+    Return a meeting-app label only when the mic is active and a known app matches.
+
+    Background process presence alone is not treated as an active call.
+    """
+    if not mic_running:
+        return None
+    return _find_running_meeting_app()
 
 
 def wait_for_call_start(
