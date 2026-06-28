@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-28
+
+### Fixed
+- Sync `uv.lock` to the package version (was left at `0.6.1` when `0.7.0` shipped).
+
+### Changed
+- Ignore metate/cursor tooling scratch (`.metate/` working files, `.cursor/rules/codebase-memory.mdc`).
+- Persist the materialized `[prompts]` defaults and `[auto_record]` settings to `escriba.toml`.
+
 ## [0.7.0] - 2026-06-28
 
 ### Added
