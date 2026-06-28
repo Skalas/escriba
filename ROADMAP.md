@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-27 · Current version: `0.6.0` (search · speakers · export · interview prompt) · next milestone: `v0.7.0` (finish hardening + unblock local generation)_
+_Last updated: 2026-06-27 · Current version: `0.6.1` (search · speakers · export · interview prompt · about panel) · in progress: `v0.9.0` (reliable call detection)_
 
 ---
 
@@ -28,7 +28,7 @@ The app is feature-rich. Since `v0.2.0` we shipped (unreleased):
 - Session split & merge with audio support
 - Dynamic AI model selection (API-fetched lists)
 - Custom dictionary for transcription accuracy
-- Mic-activation detection + auto session naming
+- Mic-activation detection (shipped disabled — enable via Settings → Auto-record on call) + auto session naming
 - A stack of dashboard UX and launcher/spawn fixes
 
 **The gap (closed in `v0.4.0`):** core app modules had near-zero test coverage, shared state was largely unsynchronized, the HTTP server handled one request at a time, and LLM calls had no timeout/retry. Addressed under **[Epic #12: Backend hardening](https://github.com/Skalas/escriba/issues/12)** — the core loop is now concurrency-safe, the server is threaded with input validation, LLM calls time out/retry, and `server.py`/`database.py`/`session.py` have meaningful coverage (84 tests).
@@ -107,6 +107,21 @@ Three "better, not wider" features + a rigorous interview-evaluation prompt.
 **Also (surfaced in smoke):** recovered orphaned audio (relink canonical WAV when `audio_path` was empty — no data lost); GFM table rendering in notes; notes-generation scoped to its session (no cross-record bleed); audio-stream client-disconnect handled (no BrokenPipe spam); dark-mode surface separation + button/control text inherit theme color; markdown-table/XSS escaping on speaker names.
 
 **Done when:** the three features work end-to-end and the interview prompt yields a critical evaluation. ✅ (130 tests; review caught a stored-XSS via the rename feature.)
+
+---
+
+### `v0.9.0` — Reliable call detection (Notion-style auto-record)  ·  _in progress_
+
+Make mic-activation auto-record actually usable: opt-in from Settings, debounced start/stop, and mic-gated app labels instead of background process heuristics. **Root cause it fixed:** auto-record shipped with `enabled` defaulting to `false`, no `[auto_record]` section in config, and no Settings toggle — so the detector never ran.
+
+- [x] **Config + dashboard toggle** ([#39](https://github.com/Skalas/escriba/issues/39)) — `[auto_record]` keys round-trip through `escriba.toml` and Settings (`enabled`, `start_mode`, debounce/cooldown).
+- [x] **Debounce state machine** ([#40](https://github.com/Skalas/escriba/issues/40)) — pure `CallStateMachine` fed by CoreAudio `is_mic_running()`; no raw edge flapping.
+- [x] **Mic-gated app label** ([#42](https://github.com/Skalas/escriba/issues/42)) — meeting-app name only when mic is active *and* a known app matches; no guess from `pgrep` alone.
+- [x] **Menubar integration** ([#41](https://github.com/Skalas/escriba/issues/41)) — prompt or auto-start via `try_start_recording` (single-writer); auto-stop on debounced call end; non-blocking notifications.
+- [x] **Tests** ([#43](https://github.com/Skalas/escriba/issues/43)) — T1–T6 for state machine, config round-trip, and partial PUT deep-merge.
+- [x] **Docs** ([#44](https://github.com/Skalas/escriba/issues/44)) — roadmap, CLAUDE.md `[auto_record]` keys.
+
+**Done when:** auto-record is enableable from Settings; sustained mic-on/off drives one start/stop cycle; `uv run pytest` green. ✅ (T1–T4, T6 automated; **T5 real-call auto-start pending manual verification after install** — the rumps menubar path can't be unit-tested.)
 
 ---
 
