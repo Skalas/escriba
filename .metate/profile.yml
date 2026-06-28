@@ -7,8 +7,8 @@ shipGate: "uv run ruff check . && uv run mypy . && uv run pytest"  # full pre-PR
 
 # --- implementer (the only writer) ---------------------------------------
 implementer:
-  backend: cursor          # cursor | codex | claude | gemini
-  model: auto              # blank = adapter default
+  backend: claude          # cursor | codex | claude | gemini
+  model: claude-sonnet-4-6 # blank = adapter default
 
 sessionFile: ".metate/session.json"
 isolation: none            # none | worktree
