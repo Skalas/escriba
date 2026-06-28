@@ -1272,6 +1272,12 @@
       <h3>Transcript</h3>
       <div id="transcript-box"></div>
     </div>
+    <div class="card" id="live-notepad-card">
+      <h3>Notepad</h3>
+      <textarea id="live-notepad" placeholder="Type your notes here during the recording — they'll be included when generating AI notes..." rows="4"
+        style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;"
+        oninput="onLiveNotepadInput()" aria-label="Live recording notepad"></textarea>
+    </div>
     <div id="notes-section">
       <div class="card">
         <h3>Generate Notes (AI)</h3>
@@ -1313,6 +1319,10 @@
       <div class="card" id="session-speakers-card" style="display:none;">
         <h3>Speakers</h3>
         <div class="speaker-list" id="session-speakers-list"></div>
+      </div>
+      <div class="card" id="session-user-notes-card" style="display:none;">
+        <h3>Recording Notes</h3>
+        <div id="session-user-notes-display" style="white-space:pre-wrap;font-size:14px;color:var(--text);"></div>
       </div>
       <div class="card">
         <h3>Notes <button class="btn-secondary" id="btn-toggle-notes-edit" onclick="toggleNotesEdit()" style="font-size:11px;padding:4px 10px;">Edit</button></h3>
@@ -1757,6 +1767,8 @@ function updateLiveNotesButton() {
   }
 }
 
+let _liveNotepadTimer = null;
+
 // --- In-app modal (themed replacement for native confirm/prompt) ---
 let _modalResolve = null;
 let _modalIsPrompt = false;
@@ -2027,6 +2039,8 @@ async function toggleRecording() {
     btn.disabled = false;
     if (!res.ok) { showError(res.error || 'Failed to start'); return; }
     viewingHistory = false;
+    const liveNotepadEl = document.getElementById('live-notepad');
+    if (liveNotepadEl) liveNotepadEl.value = '';
     showLiveView();
   }
 }
@@ -2430,6 +2444,16 @@ async function selectSession(id) {
 
     document.getElementById('session-notes-input').value = s.notes_text || '';
     renderNotesView(s.notes_text || '');
+    const userNotes = (s.user_notes || '').trim();
+    const unCard = document.getElementById('session-user-notes-card');
+    if (unCard) {
+      if (userNotes) {
+        document.getElementById('session-user-notes-display').textContent = userNotes;
+        unCard.style.display = '';
+      } else {
+        unCard.style.display = 'none';
+      }
+    }
     showSessionView();
     // Update selection highlight in-place instead of full re-render
     document.querySelectorAll('.session-item').forEach(el => {
@@ -2719,6 +2743,20 @@ async function deleteSessionById(id) {
   checkedSessions.delete(id);
   if (selectedSessionId === id) { selectedSessionId = null; showEmptyView(); }
   refreshSessionList();
+}
+
+function onLiveNotepadInput() {
+  clearTimeout(_liveNotepadTimer);
+  _liveNotepadTimer = setTimeout(saveLiveNotepad, 1000);
+}
+
+async function saveLiveNotepad() {
+  const notes = document.getElementById('live-notepad').value;
+  await apiCall('/api/recording/user-notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_notes: notes }),
+  });
 }
 
 // --- Notes ---
