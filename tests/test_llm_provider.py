@@ -194,6 +194,10 @@ class TestLocalModelCache:
 class TestListAvailableModels:
     """Test model listing with AI availability."""
 
+    def setup_method(self):
+        from escriba.summarize.llm_summary import invalidate_models_cache
+        invalidate_models_cache()
+
     def test_includes_local_when_mlx_available(self):
         from escriba.summarize.llm_summary import list_available_models
 

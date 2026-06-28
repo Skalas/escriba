@@ -16,6 +16,23 @@ from escriba.utils.env import (
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Validation constants and error type
+# ---------------------------------------------------------------------------
+
+VALID_BACKENDS: frozenset[str] = frozenset(
+    {"mlx-whisper", "faster-whisper", "openai-whisper", "mps"}
+)
+VALID_AUDIO_SOURCES: frozenset[str] = frozenset({"system", "mic", "both"})
+
+
+class ConfigValidationError(ValueError):
+    """Raised by ``AppConfig.validate()`` for an invalid config field.
+
+    The message always names the offending field so the caller can surface
+    a clear, actionable error to the user.
+    """
+
 
 def _load_toml(path: Path) -> dict[str, Any]:
     """
@@ -395,6 +412,34 @@ class AppConfig:
 
     config_path: Path | None = None
 
+    def validate(self) -> None:
+        """Raise ``ConfigValidationError`` for any invalid field value.
+
+        Called automatically from ``load()``.  Can also be called explicitly
+        after constructing an ``AppConfig`` programmatically.
+        """
+        if self.streaming.chunk_duration <= 0:
+            raise ConfigValidationError(
+                f"streaming.chunk_duration must be > 0 (got {self.streaming.chunk_duration!r})"
+            )
+        if not (0.1 <= self.audio.mic_boost <= 5.0):
+            raise ConfigValidationError(
+                f"audio.mic_boost must be between 0.1 and 5.0 "
+                f"(got {self.audio.mic_boost!r})"
+            )
+        if self.streaming.backend not in VALID_BACKENDS:
+            raise ConfigValidationError(
+                f"streaming.backend must be one of {sorted(VALID_BACKENDS)!r} "
+                f"(got {self.streaming.backend!r})"
+            )
+        if self.audio.audio_source not in VALID_AUDIO_SOURCES:
+            raise ConfigValidationError(
+                f"audio.audio_source must be one of {sorted(VALID_AUDIO_SOURCES)!r} "
+                f"(got {self.audio.audio_source!r})"
+            )
+        if not self.streaming.model_size.strip():
+            raise ConfigValidationError("streaming.model_size cannot be empty")
+
     @classmethod
     def load(
         cls,
@@ -604,7 +649,7 @@ class AppConfig:
             templates=tuple(p_templates),
         )
 
-        return cls(
+        cfg = cls(
             audio=audio_cfg,
             streaming=streaming_cfg,
             vad=vad_cfg,
@@ -616,6 +661,8 @@ class AppConfig:
             prompts=prompts_cfg,
             config_path=resolved_path,
         )
+        cfg.validate()
+        return cfg
 
 
 def save_config_to_toml(config_dict: dict[str, Any], path: Path) -> None:

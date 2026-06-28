@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import threading
+import time
 import uuid
 from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -498,6 +499,7 @@ class _Handler(BaseHTTPRequestHandler):
     # --- Routing ---
 
     def do_GET(self) -> None:
+        cid, t0 = self._begin_request("GET")
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         params = parse_qs(parsed.query)
@@ -549,8 +551,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._log_client_disconnect("GET")
         except Exception as exc:
             self._handle_request_exception(exc)
+        finally:
+            self._end_request("GET", cid, t0)
 
     def do_POST(self) -> None:
+        cid, t0 = self._begin_request("POST")
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
@@ -605,8 +610,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._log_client_disconnect("POST")
         except Exception as exc:
             self._handle_request_exception(exc)
+        finally:
+            self._end_request("POST", cid, t0)
 
     def do_PUT(self) -> None:
+        cid, t0 = self._begin_request("PUT")
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
@@ -630,8 +638,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._log_client_disconnect("PUT")
         except Exception as exc:
             self._handle_request_exception(exc)
+        finally:
+            self._end_request("PUT", cid, t0)
 
     def do_DELETE(self) -> None:
+        cid, t0 = self._begin_request("DELETE")
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
@@ -656,6 +667,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._log_client_disconnect("DELETE")
         except Exception as exc:
             self._handle_request_exception(exc)
+        finally:
+            self._end_request("DELETE", cid, t0)
 
     # --- Helpers ---
 
@@ -790,15 +803,53 @@ class _Handler(BaseHTTPRequestHandler):
                 self._stream_file_to_client(f)
 
     def _json_response(self, data: dict, status: int = 200) -> None:
+        from escriba.app.observability import get_correlation_id
+
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         try:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            cid = get_correlation_id()
+            if cid:
+                self.send_header("X-Correlation-ID", cid)
             self.end_headers()
             self.wfile.write(body)
         except _CLIENT_DISCONNECT_ERRORS:
             self._log_client_disconnect("JSON response")
+
+    # --- Observability helpers ---
+
+    def _begin_request(self, method: str) -> tuple[str, float]:
+        """Generate a correlation ID, set it in thread-local, start the clock."""
+        from escriba.app.observability import new_correlation_id, set_correlation_id
+
+        cid = new_correlation_id()
+        set_correlation_id(cid)
+        safe_path = "".join(c for c in self.path if c >= " ")
+        logger.debug(
+            "request.start method=%s path=%s corr_id=%s",
+            method,
+            safe_path,
+            cid,
+            extra={"corr_id": cid, "op": f"request.{method}"},
+        )
+        return cid, time.monotonic()
+
+    def _end_request(self, method: str, cid: str, t0: float) -> None:
+        from escriba.app.observability import latency_store
+
+        dur_ms = (time.monotonic() - t0) * 1000
+        latency_store.record(f"handler.{method}", dur_ms)
+        safe_path = "".join(c for c in self.path if c >= " ")
+        logger.debug(
+            "request.done method=%s path=%s corr_id=%s duration_ms=%.1f",
+            method,
+            safe_path,
+            cid,
+            dur_ms,
+            extra={"corr_id": cid, "op": f"request.{method}", "duration_ms": dur_ms},
+        )
 
     def _parse_json_body(self) -> dict[str, Any]:
         """Read and parse a JSON object body with size limits."""
@@ -1377,8 +1428,12 @@ class _Handler(BaseHTTPRequestHandler):
             if session and session.is_active:
                 return {"ok": False, "error": "Stop recording before changing settings"}, 409
 
+        import shutil
+        import tempfile
+
         from escriba.config import (
             AppConfig,
+            ConfigValidationError,
             config_to_dict,
             resolve_config_path,
             update_config_toml,
@@ -1398,6 +1453,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._update_env_file(env_updates)
             for k, v in env_updates.items():
                 os.environ[k] = v
+            # API keys changed — flush the models cache so next /api/models reflects them.
+            from escriba.summarize.llm_summary import invalidate_models_cache
+            invalidate_models_cache()
 
         toml_data = {k: v for k, v in body.items() if k not in env_key_names}
         # Drop read-only fields surfaced by config_to_dict for the UI.
@@ -1415,6 +1473,26 @@ class _Handler(BaseHTTPRequestHandler):
                 if isinstance(current_config, AppConfig) and current_config.config_path
                 else resolve_config_path() or Path("escriba.toml")
             )
+            # Validate the merged config IN MEMORY before touching the real file.
+            # Strategy: copy the real TOML to a temp file, apply the update there,
+            # then run AppConfig.load() (which calls validate()). Only on success
+            # do we write to the real path.
+            tmp_path = Path(
+                tempfile.mktemp(suffix=".toml", dir=config_path.parent)
+            )
+            try:
+                if config_path.exists():
+                    shutil.copy2(config_path, tmp_path)
+                update_config_toml(toml_data, tmp_path)
+                AppConfig.load(tmp_path)
+            except ConfigValidationError as exc:
+                tmp_path.unlink(missing_ok=True)
+                return {"ok": False, "error": str(exc)}, 400
+            except Exception:
+                tmp_path.unlink(missing_ok=True)
+                raise
+            else:
+                tmp_path.unlink(missing_ok=True)
             update_config_toml(toml_data, config_path)
 
         with self.app_state._lock:
