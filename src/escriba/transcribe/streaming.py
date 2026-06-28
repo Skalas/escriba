@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
-from faster_whisper import WhisperModel
 
 from escriba.transcribe.config import HallucinationConfig, VADConfig
 from escriba.transcribe.metrics import CaptureMetrics
@@ -140,7 +139,10 @@ class StreamingTranscriber:
         # Lock para thread-safety
         self.lock = threading.Lock()
 
-        # Cargar modelo
+        # Cargar modelo (import diferido: faster-whisper arrastra ctranslate2 +
+        # transformers, ~1 s de import que no debe pagarse al arrancar la app)
+        from faster_whisper import WhisperModel
+
         logger.info(
             "Loading Whisper model: %s (device=%s, compute_type=%s)", model_size, device, compute_type
         )

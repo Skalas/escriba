@@ -28,32 +28,30 @@ from escriba.watch.watch_folder import watch_folder, wait_for_queue_empty
 if TYPE_CHECKING:
     from escriba.config import AppConfig
 
-# Intentar importar StreamingTranscriberMPS (requiere openai-whisper y torch)
-MPS_AVAILABLE = False
-StreamingTranscriberMPS: Any = None
-try:
-    from escriba.transcribe.streaming_mps import (
-        StreamingTranscriberMPS as _StreamingTranscriberMPS,
-    )
+# Optional backends are imported lazily: openai-whisper/torch (MPS) and
+# mlx-whisper each cost ~0.5 s to import, which must not be paid at app
+# startup when no streaming transcription is happening. Resolved on demand.
+def _load_mlx_transcriber() -> Any | None:
+    """Return the mlx-whisper transcriber class, or None if unavailable."""
+    try:
+        from escriba.transcribe.streaming_mlx import (
+            MLX_AVAILABLE,
+            StreamingTranscriberMLX,
+        )
 
-    StreamingTranscriberMPS = _StreamingTranscriberMPS
-    MPS_AVAILABLE = True
-except ImportError:
-    pass
+        return StreamingTranscriberMLX if MLX_AVAILABLE else None
+    except ImportError:
+        return None
 
-# Intentar importar StreamingTranscriberMLX (requiere mlx-whisper)
-MLX_WHISPER_AVAILABLE = False
-StreamingTranscriberMLX: Any = None
-try:
-    from escriba.transcribe.streaming_mlx import (
-        MLX_AVAILABLE,
-        StreamingTranscriberMLX as _StreamingTranscriberMLX,
-    )
 
-    StreamingTranscriberMLX = _StreamingTranscriberMLX
-    MLX_WHISPER_AVAILABLE = MLX_AVAILABLE
-except ImportError:
-    pass
+def _load_mps_transcriber() -> Any | None:
+    """Return the openai-whisper/MPS transcriber class, or None if unavailable."""
+    try:
+        from escriba.transcribe.streaming_mps import StreamingTranscriberMPS
+
+        return StreamingTranscriberMPS
+    except ImportError:
+        return None
 
 # Intentar importar ScreenCaptureKit (CLI Swift)
 try:
@@ -473,7 +471,8 @@ def run_streaming_capture(
 
     # Inicializar transcriber según el backend
     if backend == "mlx-whisper":
-        if not MLX_WHISPER_AVAILABLE:
+        mlx_transcriber_cls = _load_mlx_transcriber()
+        if mlx_transcriber_cls is None:
             logger.warning(
                 "mlx-whisper backend requested but not available. "
                 "Falling back to faster-whisper. "
@@ -482,7 +481,7 @@ def run_streaming_capture(
             backend = "faster-whisper"
         else:
             logger.info("Using mlx-whisper backend (Apple Silicon GPU optimized)")
-            transcriber = StreamingTranscriberMLX(
+            transcriber = mlx_transcriber_cls(
                 model_size=model_size,
                 language=language,
                 output_file=output_file,
@@ -492,7 +491,8 @@ def run_streaming_capture(
                 hallucination_config=config.hallucination,
             )
     elif backend == "openai-whisper" or backend == "mps":
-        if not MPS_AVAILABLE:
+        mps_transcriber_cls = _load_mps_transcriber()
+        if mps_transcriber_cls is None:
             logger.warning(
                 "openai-whisper backend requested but not available. "
                 "Falling back to faster-whisper. "
@@ -505,7 +505,7 @@ def run_streaming_capture(
                 "openai-whisper has known stability issues with MPS (GPU). "
                 "It will use CPU by default. For better performance, consider using faster-whisper."
             )
-            transcriber = StreamingTranscriberMPS(
+            transcriber = mps_transcriber_cls(
                 model_size=model_size,
                 language=language,
                 output_file=output_file,
