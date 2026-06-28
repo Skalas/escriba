@@ -16,6 +16,13 @@ from socketserver import ThreadingMixIn
 from typing import TYPE_CHECKING, Any, BinaryIO
 from urllib.parse import parse_qs, urlparse
 
+from escriba.app.observability import (
+    get_correlation_id,
+    latency_store,
+    new_correlation_id,
+    set_correlation_id,
+)
+
 if TYPE_CHECKING:
     from escriba.app.database import Database
     from escriba.app.session import TranscriptionSession
@@ -803,8 +810,6 @@ class _Handler(BaseHTTPRequestHandler):
                 self._stream_file_to_client(f)
 
     def _json_response(self, data: dict, status: int = 200) -> None:
-        from escriba.app.observability import get_correlation_id
-
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         try:
             self.send_response(status)
@@ -822,8 +827,6 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _begin_request(self, method: str) -> tuple[str, float]:
         """Generate a correlation ID, set it in thread-local, start the clock."""
-        from escriba.app.observability import new_correlation_id, set_correlation_id
-
         cid = new_correlation_id()
         set_correlation_id(cid)
         safe_path = "".join(c for c in self.path if c >= " ")
@@ -837,8 +840,6 @@ class _Handler(BaseHTTPRequestHandler):
         return cid, time.monotonic()
 
     def _end_request(self, method: str, cid: str, t0: float) -> None:
-        from escriba.app.observability import latency_store
-
         dur_ms = (time.monotonic() - t0) * 1000
         latency_store.record(f"handler.{method}", dur_ms)
         safe_path = "".join(c for c in self.path if c >= " ")
@@ -865,10 +866,22 @@ class _Handler(BaseHTTPRequestHandler):
         return data
 
     def _read_body_bytes(self) -> bytes:
-        """Read the request body, rejecting oversize payloads."""
+        """Read the request body, enforcing MAX_BODY_BYTES on actual bytes read.
+
+        When Content-Length is present and valid it is used directly (after cap
+        check).  When absent — chunked transfer-encoding, HTTP/1.0 bodies, or
+        any other case — we stream-and-count so oversized payloads are still
+        rejected with 413 regardless of what the headers claim.
+        """
         raw_length = self.headers.get("Content-Length")
         if raw_length is None:
-            return b""
+            # Stream-and-count: read one byte over the cap so we can detect it.
+            data = self.rfile.read(MAX_BODY_BYTES + 1)
+            if len(data) > MAX_BODY_BYTES:
+                raise ApiError(
+                    f"Request body exceeds {MAX_BODY_BYTES} bytes", 413
+                )
+            return data
         try:
             length = int(raw_length)
         except ValueError as exc:
