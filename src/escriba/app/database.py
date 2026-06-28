@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     backend TEXT,
     status TEXT DEFAULT 'active',
     notes_text TEXT,
+    user_notes TEXT,
     parent_session_ids TEXT,
     audio_path TEXT,
     folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL
@@ -129,6 +130,10 @@ _MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (
         5,
         lambda conn: _create_speaker_labels_table(conn),
+    ),
+    (
+        6,
+        lambda conn: _add_column_if_missing(conn, "sessions", "user_notes", "TEXT"),
     ),
 ]
 
@@ -779,6 +784,24 @@ class Database:
                 (notes_text, session_id),
             )
             self._conn.commit()
+
+    def save_user_notes(self, session_id: str, user_notes: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET user_notes = ? WHERE id = ?",
+                (user_notes, session_id),
+            )
+            self._conn.commit()
+
+    def get_user_notes(self, session_id: str) -> str:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT user_notes FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return ""
+        return row["user_notes"] or ""
 
     # --- Folders ---
 
