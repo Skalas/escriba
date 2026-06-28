@@ -113,3 +113,93 @@ def test_update_config_toml_preserves_sections(tmp_path: Path) -> None:
     assert data["audio"]["mic_boost"] == 1.4
     assert data["streaming"]["model_size"] == "medium"
     assert data["prompts"]["system_prompt"] == "X {transcript} {prompt}"
+
+
+def test_auto_record_round_trip_from_toml(tmp_path: Path) -> None:
+    """All auto_record keys load from TOML and serialize back."""
+    from escriba.config import config_to_dict
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        """
+[auto_record]
+enabled = true
+start_mode = "auto"
+cooldown_seconds = 45
+poll_interval = 2
+start_debounce_seconds = 2.5
+stop_debounce_seconds = 4.0
+""".strip(),
+        encoding="utf-8",
+    )
+
+    cfg = AppConfig.load(cfg_path)
+    assert cfg.auto_record.enabled is True
+    assert cfg.auto_record.start_mode == "auto"
+    assert cfg.auto_record.cooldown_seconds == 45
+    assert cfg.auto_record.poll_interval == 2
+    assert cfg.auto_record.start_debounce_seconds == 2.5
+    assert cfg.auto_record.stop_debounce_seconds == 4.0
+
+    serialized = config_to_dict(cfg)["auto_record"]
+    assert serialized == {
+        "enabled": True,
+        "start_mode": "auto",
+        "cooldown_seconds": 45,
+        "poll_interval": 2,
+        "start_debounce_seconds": 2.5,
+        "stop_debounce_seconds": 4.0,
+    }
+
+
+def test_auto_record_invalid_start_mode_falls_back_to_prompt(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        '[auto_record]\nstart_mode = "instant"\n',
+        encoding="utf-8",
+    )
+
+    cfg = AppConfig.load(cfg_path)
+    assert cfg.auto_record.start_mode == "prompt"
+
+
+def test_t6_put_auto_record_partial_save_deep_merges(tmp_path: Path) -> None:
+    """T6: PUT [auto_record] partial save deep-merges; other sections intact."""
+    from escriba.config import _load_toml, update_config_toml
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        """
+[audio]
+mic_boost = 1.4
+
+[streaming]
+model_size = "medium"
+
+[auto_record]
+enabled = false
+cooldown_seconds = 60
+""".strip(),
+        encoding="utf-8",
+    )
+
+    update_config_toml(
+        {
+            "auto_record": {
+                "enabled": True,
+                "start_mode": "prompt",
+                "start_debounce_seconds": 3.0,
+                "stop_debounce_seconds": 5.0,
+            }
+        },
+        cfg_path,
+    )
+
+    data = _load_toml(cfg_path)
+    assert data["audio"]["mic_boost"] == 1.4
+    assert data["streaming"]["model_size"] == "medium"
+    assert data["auto_record"]["enabled"] is True
+    assert data["auto_record"]["start_mode"] == "prompt"
+    assert data["auto_record"]["cooldown_seconds"] == 60
+    assert data["auto_record"]["start_debounce_seconds"] == 3.0
+    assert data["auto_record"]["stop_debounce_seconds"] == 5.0
