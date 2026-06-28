@@ -261,13 +261,25 @@ class StreamingConfig:
     speaker: SpeakerConfig = field(default_factory=SpeakerConfig)
 
 
+def _normalize_auto_record_start_mode(value: str | None) -> str:
+    """Return a valid auto-record start mode, defaulting to ``prompt``."""
+    if value in ("prompt", "auto"):
+        return value
+    if value is not None:
+        logger.warning("Invalid auto_record.start_mode %r, using 'prompt'", value)
+    return "prompt"
+
+
 @dataclass(frozen=True)
 class AutoRecordConfig:
-    """Mic-activation detection: prompt user to record when mic is active."""
+    """Mic-activation detection: prompt or auto-start recording when mic is active."""
 
     enabled: bool = False
+    start_mode: str = "prompt"  # "prompt" | "auto"
     cooldown_seconds: int = 60
     poll_interval: int = 3
+    start_debounce_seconds: float = 3.0
+    stop_debounce_seconds: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -521,12 +533,24 @@ class AppConfig:
         # Auto-record (mic activation detection)
         ar_section = _get_section(toml_data, "auto_record")
         ar_enabled = _get_toml_bool(ar_section, "enabled")
+        ar_start_mode = _get_toml_str(ar_section, "start_mode")
         ar_cooldown = _get_toml_int(ar_section, "cooldown_seconds")
         ar_poll = _get_toml_int(ar_section, "poll_interval")
+        ar_start_debounce = _get_toml_float(ar_section, "start_debounce_seconds")
+        ar_stop_debounce = _get_toml_float(ar_section, "stop_debounce_seconds")
         auto_record_cfg = AutoRecordConfig(
             enabled=ar_enabled if ar_enabled is not None else False,
-            cooldown_seconds=ar_cooldown if ar_cooldown is not None else 60,
+            start_mode=_normalize_auto_record_start_mode(ar_start_mode),
+            cooldown_seconds=max(0, ar_cooldown if ar_cooldown is not None else 60),
             poll_interval=ar_poll if ar_poll is not None else 3,
+            start_debounce_seconds=max(
+                0.0,
+                ar_start_debounce if ar_start_debounce is not None else 3.0,
+            ),
+            stop_debounce_seconds=max(
+                0.0,
+                ar_stop_debounce if ar_stop_debounce is not None else 5.0,
+            ),
         )
 
         # Auto-name (LLM session naming)
@@ -685,8 +709,11 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
         },
         "auto_record": {
             "enabled": cfg.auto_record.enabled,
+            "start_mode": cfg.auto_record.start_mode,
             "cooldown_seconds": cfg.auto_record.cooldown_seconds,
             "poll_interval": cfg.auto_record.poll_interval,
+            "start_debounce_seconds": cfg.auto_record.start_debounce_seconds,
+            "stop_debounce_seconds": cfg.auto_record.stop_debounce_seconds,
         },
         "auto_name": {
             "enabled": cfg.auto_name.enabled,
