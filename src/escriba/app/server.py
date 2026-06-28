@@ -28,6 +28,34 @@ MAX_SPEAKER_DISPLAY_NAME = 200
 _CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError)
 
 
+def _git_info() -> dict[str, Any] | None:
+    """Best-effort git state of the working tree: short commit + dirty flag."""
+    import subprocess
+
+    project_dir = Path(__file__).resolve().parents[3]
+    if not (project_dir / ".git").exists():
+        return None
+
+    def _run(*args: str) -> str | None:
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    commit = _run("rev-parse", "--short", "HEAD")
+    if commit is None:
+        return None
+    status = _run("status", "--porcelain")
+    return {"commit": commit, "dirty": bool(status)}
+
+
 def _segment_speaker_label(segment: dict[str, Any]) -> str | None:
     """Resolved speaker label for display/export (custom name or raw)."""
     display = segment.get("speaker_display")
@@ -479,6 +507,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._serve_file("index.html", "text/html")
             elif path == "/api/status":
                 self._respond(self._get_status())
+            elif path == "/api/version":
+                self._respond(self._get_version())
             elif path == "/api/transcript":
                 session_id = params.get("session_id", [None])[0]
                 self._respond(self._get_transcript(session_id))
@@ -819,6 +849,33 @@ class _Handler(BaseHTTPRequestHandler):
             if session:
                 return {"ok": True, **session.get_status()}
         return {"ok": True, "is_active": False, "session_id": None}
+
+    def _get_version(self) -> dict:
+        import platform
+
+        from escriba import __version__
+
+        with self.app_state._lock:
+            config = self.app_state.config
+
+        backend = model = None
+        if config is not None:
+            streaming = getattr(config, "streaming", None)
+            backend = getattr(streaming, "backend", None)
+            model = getattr(streaming, "model_size", None)
+
+        return {
+            "ok": True,
+            "version": __version__,
+            "git": _git_info(),
+            "python_version": platform.python_version(),
+            "platform": f"{platform.system()} {platform.release()}",
+            "machine": platform.machine(),
+            "project_dir": str(Path(__file__).resolve().parents[3]),
+            "backend": backend,
+            "model": model,
+            "repo_url": "https://github.com/Skalas/escriba",
+        }
 
     def _get_transcript(self, session_id: str | None = None) -> dict:
         if session_id:

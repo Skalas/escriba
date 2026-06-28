@@ -9,11 +9,25 @@ import plistlib
 import stat
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
+
 APP_NAME = "Escriba"
 BUNDLE_ID = "com.escriba.app"
-VERSION = "0.1.0"
 
 PROJECT_DIR = Path(__file__).parent.resolve()
+
+
+def _read_version() -> str:
+    """Single source of truth: the version in pyproject.toml."""
+    with open(PROJECT_DIR / "pyproject.toml", "rb") as f:
+        return tomllib.load(f)["project"]["version"]
+
+
+VERSION = _read_version()
+
 DIST_DIR = PROJECT_DIR / "dist"
 APP_DIR = DIST_DIR / f"{APP_NAME}.app"
 CONTENTS = APP_DIR / "Contents"

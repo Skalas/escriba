@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-27
+
+### Added
+- **About / version panel** in Settings — version badge, git commit with a clean/uncommitted-changes indicator, active transcription backend/model, Python and platform info, the project directory, and a link to the repo. Backed by a new `GET /api/version` endpoint.
+
+### Fixed
+- Version is now sourced from `pyproject.toml` everywhere: `escriba.__version__` reads installed package metadata, and the `.app` bundle version is read from `pyproject.toml` at build time (both were stale at `0.1.0`).
+
 ## [0.6.0] - 2026-06-27
 
 Three "better, not wider" features plus a rigorous interview-evaluation prompt.

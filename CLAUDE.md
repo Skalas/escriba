@@ -97,6 +97,7 @@ Single-file SPA at `src/escriba/app/static/index.html`. Contains all CSS, HTML, 
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/status` | Recording status |
+| GET | `/api/version` | App version, git build, backend/model, platform |
 | GET | `/api/sessions` | List all sessions + folders |
 | GET | `/api/sessions/:id` | Session detail + segments |
 | GET | `/api/sessions/:id/audio` | Serve WAV with Range support |
