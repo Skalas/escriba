@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-28
+
+Frontend quality + UX polish — close the testing gap on the single-file SPA and make keyboard navigation solid.
+
+### Added
+- **Frontend test harness** ([#52](https://github.com/Skalas/escriba/issues/52)) — Playwright-driven pytest suite (`tests/test_spa.py`) that serves the real `index.html`, drives headless Chromium, and asserts on the actual inline JS + rendered DOM/CSS. No bundler, no framework, no file split; `playwright` added as a **dev** dependency. Covers the bug classes earlier smoke runs caught: HTML/attr escaping & XSS, GFM table rendering, deep-link parsing, notes-generation session scoping, and dark-mode legibility (24 browser tests; skip gracefully if Chromium isn't installed).
+- **Keyboard navigation + player controls** ([#37](https://github.com/Skalas/escriba/issues/37)) — Arrow Up/Down navigate the session list, Enter/Space select, Space toggles audio play/pause, Arrow Left/Right seek ±5 s. Session items are focusable (`tabindex`/`role`/`aria-label`) with a `:focus-visible` ring; nav keys are ignored while typing in inputs/textareas and on modifier combos.
+
+### Changed
+- **Design cleanup / DRY** ([#31](https://github.com/Skalas/escriba/issues/31)) — added a `timed()` context manager to `observability.py` and reused it across the Gemini/Claude/local LLM timing sites; made `LatencyStore.snapshot()` atomic (single lock-protected copy); guarded the `/api/models` cache with a dedicated lock and reset its timestamp on invalidation; removed a no-op `future.cancel()`; hoisted deferred `observability` imports to module level.
+
+### Fixed
+- **Body-size cap bypass** ([#30](https://github.com/Skalas/escriba/issues/30)) — requests without `Content-Length` (or chunked) previously skipped the 1 MB cap; `_read_body_bytes()` now stream-and-counts and returns `413` past the limit.
+- **Keyboard Space double-fire** (review) — pressing Space on a focused session item no longer both selects the session and toggles audio (`_sessionItemKeyDown` now stops propagation).
+
+### Testing
+- Test depth ([#32](https://github.com/Skalas/escriba/issues/32)) — TG1 proves a slow recording start doesn't hold `app_state`'s lock; TG2 exercises real HTTP dispatch over a socket (status codes, oversized-body 413). 211 tests total (was 140).
+
 ## [0.8.0] - 2026-06-28
 
 Finish backend hardening and unblock local generation — closes [Epic #12](https://github.com/Skalas/escriba/issues/12).
