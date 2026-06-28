@@ -1,8 +1,11 @@
 """Structured observability: per-request correlation IDs and latency metrics."""
 from __future__ import annotations
 
+import contextlib
 import threading
+import time
 import uuid
+from collections.abc import Generator
 from typing import Any
 
 _ctx = threading.local()
@@ -55,8 +58,25 @@ class LatencyStore:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            keys = list(self._data.keys())
-        return {k: {"p50_ms": self.p50(k), "p99_ms": self.p99(k)} for k in keys}
+            # Take one deep copy under the lock; compute percentiles outside it.
+            data_copy = {k: sorted(list(v)) for k, v in self._data.items()}
+        return {
+            k: {
+                "p50_ms": samples[max(0, int(len(samples) * 0.50) - 1)] if samples else None,
+                "p99_ms": samples[max(0, int(len(samples) * 0.99) - 1)] if samples else None,
+            }
+            for k, samples in data_copy.items()
+        }
 
 
 latency_store = LatencyStore()
+
+
+@contextlib.contextmanager
+def timed(key: str) -> Generator[None, None, None]:
+    """Record the wall-clock duration of a block to *latency_store*."""
+    t0 = time.monotonic()
+    try:
+        yield
+    finally:
+        latency_store.record(key, (time.monotonic() - t0) * 1000)

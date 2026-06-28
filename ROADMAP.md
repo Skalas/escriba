@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-28 · Current version: `0.8.0` (finish hardening + unblock local generation — Epic #12 closed) · next up: `v0.9.0` (frontend quality + UX polish)_
+_Last updated: 2026-06-28 · Current version: `0.9.0` (frontend quality + UX polish — SPA test harness) · next up: `v0.10.0` (Live Notepad + Knowledge Adapters), then `v1.0.0` (release hardening)_
 
 ---
 
@@ -140,17 +140,43 @@ Closed out **[Epic #12](https://github.com/Skalas/escriba/issues/12)** and fixed
 
 ---
 
-### `v0.9.0` — Frontend quality + UX polish  ·  _next up_
+### `v0.9.0` — Frontend quality + UX polish  ·  _shipped 2026-06-28_
 
-Close the testing gap the single-file SPA exposed (this session's smoke caught XSS, table rendering, stale-state, dark-mode, and black-text bugs — none caught by the Python suite), then refine UX.
+Closed the testing gap the single-file SPA exposed (earlier smoke caught XSS, table rendering, stale-state, dark-mode, and black-text bugs — none caught by the Python suite), then refined UX.
 
-- [ ] **Frontend test harness (new)** — automated coverage for the SPA's risky logic (markdown/table rendering, `escHtml`/escaping, deep-link parsing, notes-generation state scoping). Highest-leverage quality investment given ~2,800 lines of untested JS.
-- [ ] **Arrows / navigation (#37)** — keyboard nav + player controls (scope TBD with details).
-- [ ] **Design cleanup (#31)** — encapsulation/DRY in `server.py`/`llm_summary.py` (D1–D4, D6).
-- [ ] **Test depth (#32)** — lock-hold latency + on-the-wire HTTP dispatch (TG1/TG2).
-- [ ] **Body-size cap for chunked requests (#30)** — close the W5 hardening loose end.
+- [x] **Frontend test harness (new, #52)** — Playwright-driven pytest harness serving the real `index.html` against headless Chromium; 24 browser tests covering escaping/XSS, GFM tables, deep-link parsing, notes-generation session scoping, dark-mode legibility. No bundler, single-file SPA preserved; `playwright` is a dev-only dep.
+- [x] **Arrows / navigation (#37)** — keyboard nav (Arrow Up/Down, Enter/Space) + player controls (Space play/pause, Arrow Left/Right seek ±5 s); focusable session items with `aria-label` + `:focus-visible`, ignored while typing.
+- [x] **Design cleanup (#31)** — `observability.timed()` reused across LLM timing sites; atomic `snapshot()`; lock-guarded `/api/models` cache; hoisted imports.
+- [x] **Test depth (#32)** — TG1 lock-hold latency + TG2 on-the-wire HTTP dispatch.
+- [x] **Body-size cap for chunked requests (#30)** — `_read_body_bytes()` stream-and-counts → 413; closed the W5 loose end.
 
-**Done when:** the SPA has a real test harness covering the bug classes smoke found; UX navigation is solid.
+**Done when:** the SPA has a real test harness covering the bug classes smoke found; UX navigation is solid. ✅ (211 tests; review caught & fixed a Space-key double-fire and two hollow notes-scoping tests; T5 413 confirmed by live raw-socket smoke.)
+
+**Deferred to a #31 follow-up:** migrate `_end_request` to `timed()`; dedup the percentile formula (`snapshot()` vs `percentile()`); extract shared `test_spa.py` helpers (session-setup + page fixtures) for v0.10.0 reuse; name the `SEEK_STEP_SECONDS` magic number.
+
+---
+
+### `v0.10.0` — Live Notepad + Export decoupling  ·  _next up_
+
+Last feature sprint before 1.0. Two scoped features (HOLD mode).
+
+- [ ] **Live Notepad / note steering ([#53](https://github.com/Skalas/escriba/issues/53))** — a notepad `<textarea>` captures user notes live; notes are persisted on the session and injected into the LLM prompt (new `{user_notes}` placeholder, back-compat fallback) at stop **and** on re-generate. Mechanism is capture-during, inject-at-generation — not live incremental re-summarization.
+- [ ] **Knowledge Adapters — port + `local-markdown` MVP ([#54](https://github.com/Skalas/escriba/issues/54))** — a `KnowledgeStore` port (application layer) + a `local-markdown` default adapter, decoupling export from private second-brain integrations. Reuses the existing v0.6.0 Markdown formatter. `webhook` + `custom-script` adapters are **deferred to a fast-follow** (secrets-via-env, argv-not-shell, stdlib-only constraints set now).
+
+**Done when:** notes steer the generated summary and survive re-generation; sessions export to local Markdown via a pluggable adapter with the default staying fully local.
+
+---
+
+### `v1.0.0` — Release hardening  ·  _planned_
+
+No new features — release-readiness only.
+
+- [ ] Real-meeting soak across the record → transcribe → summarize loop.
+- [ ] Clean install-from-scratch verification (one-liner installer → `/Applications`).
+- [ ] Docs/onboarding pass; version-string + `uv.lock` audit.
+- [ ] Triage the remaining P2 backlog (persistence indexes, schema versioning, typing) — pull in only what release quality demands.
+
+**Done when:** a clean install runs a real meeting end-to-end without manual intervention; docs match behavior; version metadata is consistent.
 
 ---
 
