@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import http.client
+import json
 import threading
 from io import BytesIO
 from pathlib import Path
@@ -15,6 +17,7 @@ from escriba.app.server import (
     ApiError,
     AppState,
     _Handler,
+    start_server,
 )
 from escriba.config import AppConfig
 
@@ -259,3 +262,167 @@ def test_respond_unexpected_swallows_client_disconnect_on_write(
         "Client disconnected during JSON response" in record.getMessage()
         for record in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# T4 — TG1: lock-hold latency
+# ---------------------------------------------------------------------------
+
+def test_tg1_try_start_recording_releases_lock_before_slow_start(
+    app_state: AppState,
+) -> None:
+    """try_start_recording must not hold app_state._lock while session.start() runs."""
+    in_start = threading.Event()
+    allow_finish = threading.Event()
+    lock_acquired_during_start = threading.Event()
+
+    class SlowSession:
+        def __init__(self, config, database=None):
+            self.config = config
+            self.db = database
+            self.is_active = False
+            self.error = None
+
+        def start(self) -> None:
+            in_start.set()
+            allow_finish.wait(timeout=5)
+            self.is_active = True
+
+    def _do_start() -> None:
+        app_state.try_start_recording()
+
+    def _probe_lock() -> None:
+        in_start.wait(timeout=5)
+        # The lock must be acquirable while start() is running.
+        acquired = app_state._lock.acquire(timeout=1.0)
+        if acquired:
+            lock_acquired_during_start.set()
+            app_state._lock.release()
+        allow_finish.set()
+
+    with patch("escriba.app.session.TranscriptionSession", SlowSession):
+        t_start = threading.Thread(target=_do_start)
+        t_probe = threading.Thread(target=_probe_lock)
+        t_start.start()
+        t_probe.start()
+        t_start.join(timeout=10)
+        t_probe.join(timeout=10)
+
+    assert lock_acquired_during_start.is_set(), (
+        "app_state._lock was held during session.start(), "
+        "which would block /api/status and other reads"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T4 — TG2: on-the-wire HTTP dispatch
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def live_server(minimal_config: AppConfig, tmp_path: Path):
+    """Start the real HTTP server on an ephemeral port; yield (server, port)."""
+    db = Database(tmp_path / "tg2-test.db")
+    state = AppState(config=minimal_config, db=db)
+    server = start_server(state, port=0)
+    port = server.server_address[1]
+    yield server, port
+    server.shutdown()
+    db.close()
+
+
+def _http(port: int, method: str, path: str, body: bytes = b"", headers: dict | None = None) -> tuple[int, dict]:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.request(method, path, body=body or None, headers=headers or {})
+    resp = conn.getresponse()
+    status = resp.status
+    data = json.loads(resp.read())
+    conn.close()
+    return status, data
+
+
+def test_tg2_get_status_returns_200_ok(live_server) -> None:
+    """GET /api/status over a real socket returns 200 with ok:true."""
+    _, port = live_server
+    status, body = _http(port, "GET", "/api/status")
+    assert status == 200
+    assert body["ok"] is True
+    assert body["is_active"] is False
+
+
+def test_tg2_stop_when_not_recording_returns_409(live_server) -> None:
+    """POST /api/recording/stop when idle returns 409 with structured error."""
+    _, port = live_server
+    status, body = _http(port, "POST", "/api/recording/stop")
+    assert status == 409
+    assert body["ok"] is False
+    assert "error" in body
+
+
+def test_tg2_unknown_session_returns_404(live_server) -> None:
+    """GET /api/sessions/<nonexistent> returns 404 with ok:false."""
+    _, port = live_server
+    status, body = _http(port, "GET", "/api/sessions/no-such-session-xyz")
+    assert status == 404
+    assert body["ok"] is False
+
+
+def test_tg2_oversized_content_length_returns_413(live_server) -> None:
+    """POST with Content-Length > MAX_BODY_BYTES returns 413 — server checks header before read."""
+    _, port = live_server
+    # Declare a huge Content-Length but don't send a body; the server rejects
+    # on the header check before attempting any body read.
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.putrequest("POST", "/api/notes")
+    conn.putheader("Content-Length", str(MAX_BODY_BYTES + 1))
+    conn.putheader("Content-Type", "application/json")
+    conn.endheaders()
+    resp = conn.getresponse()
+    assert resp.status == 413
+    body = json.loads(resp.read())
+    assert body["ok"] is False
+    conn.close()
+
+
+def test_tg2_unknown_route_returns_404(live_server) -> None:
+    """GET to an unknown path returns 404."""
+    _, port = live_server
+    status, body = _http(port, "GET", "/api/does-not-exist")
+    assert status == 404
+    assert body["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# T5 — chunked / missing Content-Length body-size cap
+# ---------------------------------------------------------------------------
+
+def test_t5_no_content_length_oversized_body_rejected_413(app_state: AppState) -> None:
+    """Bodies without Content-Length that exceed the cap must return 413."""
+    handler = _make_handler(app_state)
+    handler.headers = {}  # no Content-Length header
+    handler.rfile = BytesIO(b"x" * (MAX_BODY_BYTES + 1))
+
+    with pytest.raises(ApiError) as exc_info:
+        handler._read_body_bytes()
+
+    assert exc_info.value.status == 413
+
+
+def test_t5_no_content_length_small_body_allowed(app_state: AppState) -> None:
+    """A small body without Content-Length is accepted normally."""
+    handler = _make_handler(app_state)
+    handler.headers = {}
+    payload = b'{"key": "value"}'
+    handler.rfile = BytesIO(payload)
+
+    result = handler._read_body_bytes()
+    assert result == payload
+
+
+def test_t5_no_content_length_body_at_exact_cap_allowed(app_state: AppState) -> None:
+    """A body exactly at the cap (not over) must be accepted."""
+    handler = _make_handler(app_state)
+    handler.headers = {}
+    handler.rfile = BytesIO(b"x" * MAX_BODY_BYTES)
+
+    result = handler._read_body_bytes()
+    assert len(result) == MAX_BODY_BYTES
