@@ -115,7 +115,7 @@ def test_generate_notes_no_prompt_honors_user_notes(tmp_path: Path) -> None:
 
 # T53.5 — DOM test: live-notepad textarea and session-user-notes-card are in index.html
 def test_dom_elements_present_in_index_html() -> None:
-    """index.html contains the live-notepad textarea and session-user-notes-card."""
+    """index.html contains the live-notepad textarea and the unified notes card elements."""
     index_path = (
         Path(__file__).parent.parent
         / "src"
@@ -126,6 +126,5 @@ def test_dom_elements_present_in_index_html() -> None:
     )
     content = index_path.read_text(encoding="utf-8")
     assert 'id="live-notepad"' in content, "live-notepad textarea missing from index.html"
-    assert 'id="session-user-notes-card"' in content, (
-        "session-user-notes-card div missing from index.html"
-    )
+    assert 'id="notes-rendered"' in content, "notes-rendered div missing from index.html"
+    assert 'id="session-notes-input"' in content, "session-notes-input missing from index.html"

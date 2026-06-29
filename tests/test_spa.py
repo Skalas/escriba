@@ -597,3 +597,120 @@ def test_space_on_focused_session_item_selects_it_without_toggling_audio(page) -
         "Space on a session item must NOT toggle audio — "
         "stopPropagation() is missing from _sessionItemKeyDown"
     )
+
+
+# ---------------------------------------------------------------------------
+# T1–T4: Notepad-flow redesign (v0.10.1)
+# ---------------------------------------------------------------------------
+
+def test_t1_transcript_panel_collapsed_by_default(page) -> None:
+    """Transcript body is hidden by default; toggling it makes it visible."""
+    body_visible = page.evaluate("""() => {
+        const body = document.getElementById('live-tr-body');
+        if (!body) return null;
+        return body.classList.contains('open');
+    }""")
+    assert body_visible is False, "live-tr-body should be collapsed (no .open) by default"
+    # Now toggle it open
+    page.evaluate("""() => {
+        const toggle = document.getElementById('live-tr-toggle');
+        if (toggle) toggle.click();
+    }""")
+    page.wait_for_timeout(100)
+    body_open = page.evaluate("document.getElementById('live-tr-body').classList.contains('open')")
+    assert body_open is True, "live-tr-body should be open after clicking the toggle"
+
+
+def test_t2_enhance_no_instructions_triggers_generation(page) -> None:
+    """Clicking 'Enhance notes' with no instructions calls /api/notes."""
+    page.evaluate("""() => {
+        viewingHistory = false;
+        document.getElementById('live-view').style.display = '';
+        document.getElementById('notes-section').classList.add('visible');
+    }""")
+    called = []
+
+    def _on_notes(r) -> None:
+        called.append(True)
+        r.fulfill(status=200, content_type="application/json",
+                  body='{"ok":true,"notes":"AI enhanced text"}')
+
+    page.route("**/api/notes", _on_notes)
+    page.evaluate("void generateNotes()")
+    page.wait_for_timeout(800)
+    page.unroute("**/api/notes")
+    assert called, "generateNotes() must call /api/notes"
+
+
+def test_t2_add_instructions_disclosure_hidden_by_default(page) -> None:
+    """The 'Add instructions' panel is hidden by default, opens on first click, closes on second."""
+    panel_hidden = page.evaluate("""() => {
+        const panel = document.getElementById('live-instructions-panel');
+        if (!panel) return null;
+        return !panel.classList.contains('open');
+    }""")
+    assert panel_hidden is True, "live-instructions-panel must be hidden (no .open class) by default"
+    # First click — opens
+    page.evaluate("""() => {
+        const btn = document.getElementById('btn-add-instructions');
+        if (btn) btn.click();
+    }""")
+    page.wait_for_timeout(100)
+    panel_open = page.evaluate("document.getElementById('live-instructions-panel').classList.contains('open')")
+    assert panel_open is True, "live-instructions-panel should have .open after first click"
+    aria_expanded = page.evaluate("document.getElementById('btn-add-instructions').getAttribute('aria-expanded')")
+    assert aria_expanded == "true", "aria-expanded must be 'true' when panel is open"
+    # Second click — closes
+    page.evaluate("""() => {
+        const btn = document.getElementById('btn-add-instructions');
+        if (btn) btn.click();
+    }""")
+    page.wait_for_timeout(100)
+    panel_closed = page.evaluate("!document.getElementById('live-instructions-panel').classList.contains('open')")
+    assert panel_closed is True, "live-instructions-panel should lose .open on second click"
+    aria_collapsed = page.evaluate("document.getElementById('btn-add-instructions').getAttribute('aria-expanded')")
+    assert aria_collapsed == "false", "aria-expanded must be 'false' when panel is closed"
+    # Chips container must exist inside it
+    has_chips = page.evaluate("!!document.getElementById('live-prompt-chips')")
+    assert has_chips, "live-prompt-chips must exist inside the instructions panel"
+
+
+def test_t3_ai_content_has_provenance_markers(page) -> None:
+    """After Enhance, AI-added content has .live-ai-block and .live-chip-ai — not color alone."""
+    page.evaluate("""() => {
+        // Make live-view visible so isLiveViewActive() returns true
+        viewingHistory = false;
+        document.getElementById('live-view').style.display = '';
+        document.getElementById('notes-section').classList.add('visible');
+    }""")
+    page.route("**/api/notes", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body='{"ok":true,"notes":"Summary: this is AI-generated text."}'
+    ))
+    page.evaluate("void generateNotes()")
+    page.wait_for_timeout(900)
+    page.unroute("**/api/notes")
+    has_rail = page.evaluate("document.querySelector('.live-ai-block') !== null")
+    has_chip = page.evaluate("document.querySelector('.live-chip-ai') !== null")
+    assert has_rail, ".live-ai-block (provenance rail) must be present after enhance"
+    assert has_chip, ".live-chip-ai (AI-added chip) must be present after enhance"
+    # aria-live polite must be on the output container
+    aria_live = page.evaluate("document.getElementById('notes-output').getAttribute('aria-live')")
+    assert aria_live == "polite", "#notes-output must have aria-live='polite'"
+
+
+def test_t4_user_only_notes_are_not_dropped(page) -> None:
+    """renderNotesView with user jots but no AI notes must still display the user content (B4).
+
+    Without the user-only branch, passing notesText='' falls through to renderMarkdown('')
+    which clears the user's jotted notes silently.
+    """
+    page.evaluate("""() => {
+        _currentSessionUserNotes = 'Meeting recap: ship by Friday';
+        renderNotesView('');
+    }""")
+    rendered_html = page.evaluate("document.getElementById('notes-rendered').innerHTML")
+    assert "Meeting recap" in rendered_html, (
+        "User jotted notes must appear in notes-rendered even when AI notes are absent. "
+        "The user-only branch in renderNotesView() is missing or broken."
+    )
