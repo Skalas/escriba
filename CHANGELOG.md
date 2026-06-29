@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-06-29
+
+### Changed
+- **Saved-session notes view now matches the live "jot & enhance" treatment** — clean "Enhanced notes · Your words kept · AI marked" header, a single **Enhance / Re-enhance** action, prompt chips + custom prompt tucked behind an optional **Add instructions** disclosure, and the same provenance legend. (Previously the session view kept the old always-visible 9-chip + prompt + "Generate Notes" block.)
+- **Slim sidebar record button** — the centered red circle is now a full-width, left-aligned **Start recording** button (red dot + label) that toggles to **Stop recording** when active.
+
 ## [0.10.2] - 2026-06-29
 
 Polish on the jot-and-enhance flow (surfaced running the real app).
