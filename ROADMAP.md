@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-29 · Current version: `0.10.2` (Notepad flow polish) · next up: `v1.0.0` (release hardening)_
+_Last updated: 2026-06-29 · Current version: `0.10.3` (session-view unify + sidebar record) · next up: `v1.0.0` (release hardening)_
 
 ---
 
