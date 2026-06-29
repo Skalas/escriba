@@ -714,3 +714,114 @@ def test_t4_user_only_notes_are_not_dropped(page) -> None:
         "User jotted notes must appear in notes-rendered even when AI notes are absent. "
         "The user-only branch in renderNotesView() is missing or broken."
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.10.2: Enhance action bar visibility + enabled gating (T1) and
+#          no duplicate "Your notes" heading in live view (T2)
+# ---------------------------------------------------------------------------
+
+def test_v0102_t1_enhance_section_visible_in_idle_live_view(page) -> None:
+    """#notes-section must be visible in the idle/empty live view (no segments, no notepad text)."""
+    page.evaluate("""() => {
+        viewingHistory = false;
+        showLiveView();
+    }""")
+    visible = page.evaluate("""() => {
+        const el = document.getElementById('notes-section');
+        return el.classList.contains('visible');
+    }""")
+    assert visible, "#notes-section must have .visible after showLiveView() — even with no segments"
+
+
+def test_v0102_t1_enhance_button_disabled_in_empty_idle_live_view(page) -> None:
+    """#btn-notes must be disabled when notepad is empty and segments_count == 0,
+    and must have a clearly-disabled visual appearance (reduced opacity, not-allowed cursor)."""
+    page.evaluate("""() => {
+        viewingHistory = false;
+        document.getElementById('live-notepad').value = '';
+        document.getElementById('seg-count').textContent = '0';
+        showLiveView();
+    }""")
+    disabled = page.evaluate("document.getElementById('btn-notes').disabled")
+    assert disabled, "#btn-notes must be disabled when notepad is empty and there are no segments"
+
+    styles = page.evaluate("""() => {
+        const btn = document.getElementById('btn-notes');
+        const cs = getComputedStyle(btn);
+        return { opacity: cs.opacity, cursor: cs.cursor };
+    }""")
+    opacity = float(styles["opacity"])
+    assert opacity < 0.6, (
+        f"Disabled #btn-notes must have reduced opacity (got {opacity}) — "
+        "it renders at full coral strength and looks clickable without a :disabled rule"
+    )
+    assert styles["cursor"] == "not-allowed", (
+        f"Disabled #btn-notes must have cursor:not-allowed (got {styles['cursor']!r})"
+    )
+
+
+def test_v0102_t1_enhance_button_enabled_after_typing_note(page) -> None:
+    """Typing into #live-notepad must enable #btn-notes (even with segments_count == 0)."""
+    page.evaluate("""() => {
+        viewingHistory = false;
+        document.getElementById('live-notepad').value = '';
+        document.getElementById('seg-count').textContent = '0';
+        showLiveView();
+        // Simulate typing
+        document.getElementById('live-notepad').value = 'Hello';
+        onLiveNotepadInput();
+    }""")
+    page.wait_for_timeout(50)
+    disabled = page.evaluate("document.getElementById('btn-notes').disabled")
+    assert not disabled, "#btn-notes must be enabled after typing a note into the notepad"
+
+
+def test_v0102_t1_enhance_button_enabled_when_segments_present(page) -> None:
+    """#btn-notes must be enabled when segments_count > 0 even with empty notepad."""
+    page.evaluate("""() => {
+        viewingHistory = false;
+        document.getElementById('live-notepad').value = '';
+        document.getElementById('seg-count').textContent = '3';
+        showLiveView();
+    }""")
+    disabled = page.evaluate("document.getElementById('btn-notes').disabled")
+    assert not disabled, "#btn-notes must be enabled when segments_count > 0"
+
+
+def test_v0102_t2_live_enhance_no_duplicate_your_notes_heading(page) -> None:
+    """After enhancing in the live view, the provenance output must NOT contain 'Your notes'
+    (the editable textarea above already is the user's notes)."""
+    page.evaluate("""() => {
+        viewingHistory = false;
+        document.getElementById('live-view').style.display = '';
+        document.getElementById('notes-section').classList.add('visible');
+        document.getElementById('live-notepad').value = 'Meeting notes here';
+    }""")
+    page.route("**/api/notes", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body='{"ok":true,"notes":"Summary: AI-generated additions."}'
+    ))
+    page.evaluate("void generateNotes()")
+    page.wait_for_timeout(900)
+    page.unroute("**/api/notes")
+    output_html = page.evaluate("document.getElementById('notes-output').innerHTML")
+    assert "Your notes" not in output_html, (
+        "Live view provenance output must NOT contain a 'Your notes' heading — "
+        "the editable textarea directly above already labels the user's content"
+    )
+    assert "AI additions" in output_html, "AI additions block must still be labeled in live view"
+
+
+def test_v0102_t2_saved_session_view_keeps_your_notes_heading(page) -> None:
+    """In the saved-session notes view (renderNotesView), the 'Your notes' heading must appear
+    — there is no editable textarea visible there to label the user's content."""
+    page.evaluate("""() => {
+        _currentSessionUserNotes = 'Pre-meeting jots';
+        renderNotesView('Summary: AI additions here.');
+    }""")
+    rendered_html = page.evaluate("document.getElementById('notes-rendered').innerHTML")
+    assert "Your notes" in rendered_html, (
+        "Saved-session renderNotesView must include the 'Your notes' heading — "
+        "no textarea is visible there to label the user content"
+    )
