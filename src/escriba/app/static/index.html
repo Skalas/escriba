@@ -23,6 +23,7 @@
     --coral-subtle: rgba(249, 115, 22, 0.10);
     --danger: #ef4444;
     --danger-hover: #dc2626;
+    --danger-glow: rgba(239,68,68,.20);
     --success: #16a34a;
     --warning: #b45309;
     --warning-subtle: rgba(180, 83, 9, 0.12);
@@ -94,6 +95,7 @@
     --coral-subtle: rgba(180, 83, 9, 0.10);
     --danger: #dc2626;
     --danger-hover: #b91c1c;
+    --danger-glow: rgba(220,38,38,.20);
     --success: #15803d;
     --warning: #b45309;
     --warning-subtle: rgba(180, 83, 9, 0.12);
@@ -127,6 +129,7 @@
       --coral-subtle: rgba(217, 119, 6, 0.16);
       --danger: #ef4444;
       --danger-hover: #dc2626;
+      --danger-glow: rgba(239,68,68,.22);
       --success: #4ade80;
       --warning: #fbbf24;
       --warning-subtle: rgba(251, 191, 36, 0.14);
@@ -162,6 +165,7 @@
     --coral-subtle: rgba(245, 158, 11, 0.12);
     --danger: #ef4444;
     --danger-hover: #dc2626;
+    --danger-glow: rgba(239,68,68,.20);
     --success: #16a34a;
     --warning: #b45309;
     --warning-subtle: rgba(180, 83, 9, 0.12);
@@ -195,6 +199,7 @@
       --coral-subtle: rgba(251, 191, 36, 0.16);
       --danger: #ef4444;
       --danger-hover: #dc2626;
+      --danger-glow: rgba(239,68,68,.22);
       --success: #34d399;
       --warning: #fbbf24;
       --warning-subtle: rgba(251, 191, 36, 0.14);
@@ -230,6 +235,7 @@
     --coral-subtle: rgba(37, 99, 235, 0.12);
     --danger: #dc2626;
     --danger-hover: #b91c1c;
+    --danger-glow: rgba(220,38,38,.20);
     --success: #16a34a;
     --warning: #b45309;
     --warning-subtle: rgba(180, 83, 9, 0.12);
@@ -263,6 +269,7 @@
       --coral-subtle: rgba(96, 165, 250, 0.16);
       --danger: #f87171;
       --danger-hover: #ef4444;
+      --danger-glow: rgba(248,113,113,.22);
       --success: #34d399;
       --warning: #fbbf24;
       --warning-subtle: rgba(251, 191, 36, 0.14);
@@ -286,6 +293,94 @@
       transition-duration: 0.01ms !important;
     }
   }
+
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+  /* ======= v0.11.0: Home + Sidebar redesign ======= */
+  .topbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px 10px 56px;
+    border-bottom: 1px solid transparent;
+    transition: border-bottom-color var(--transition-normal);
+    min-height: 52px; flex-shrink: 0;
+  }
+  body:not(.sidebar-collapsed) .topbar { padding-left: 20px; }
+  .topbar-sp { flex: 1; }
+  .btn-record-topbar { width: auto; margin-top: 0; padding: 7px 14px; font-size: 13px; }
+  body:not(.on-session):not(.on-live) #btn-record { display: none !important; }
+  body.on-live #btn-record { display: none !important; }
+  body.on-session .topbar,
+  body.on-live .topbar { border-bottom-color: var(--border); }
+
+  .home-view { max-width: 720px; margin: 0 auto; padding: 36px 32px 48px; }
+  .home-greeting { font-size: 13px; color: var(--text-secondary); font-weight: 500; margin-bottom: 18px; }
+  .home-greeting strong { color: var(--text); }
+  .home-hero {
+    background: var(--card); border: 1px solid var(--border-light);
+    border-radius: var(--radius); padding: 28px 30px;
+    box-shadow: var(--shadow-sm); margin-bottom: 28px;
+  }
+  .home-hero h2 { font-size: 22px; font-weight: 700; letter-spacing: -.02em; margin-bottom: 6px; }
+  .home-hero p { font-size: 14px; color: var(--text-secondary); line-height: 1.55; margin-bottom: 20px; max-width: 50ch; }
+  .home-hero-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .btn-hero-record {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: var(--danger); color: #fff; border: none; border-radius: 10px;
+    padding: 12px 22px; font: inherit; font-size: 15px; font-weight: 650; cursor: pointer;
+    box-shadow: 0 2px 10px var(--danger-glow);
+    transition: transform 100ms ease, filter 150ms ease;
+  }
+  .btn-hero-record:hover { filter: brightness(1.06); }
+  .btn-hero-record:active { transform: scale(.98); }
+  .btn-hero-record:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .hero-rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #fff; flex-shrink: 0; }
+  .home-recents-header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+  .home-recents-header h3 {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--text-secondary); margin: 0;
+  }
+  .home-recents-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 600px) { .home-recents-grid { grid-template-columns: 1fr; } }
+  .session-recent-card {
+    text-align: left; background: var(--card); border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm); padding: 14px 16px;
+    cursor: pointer; font: inherit; color: inherit;
+    transition: transform 120ms ease, border-color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .session-recent-card:hover { transform: translateY(-2px); border-color: var(--border); box-shadow: var(--shadow-md); }
+  .session-recent-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .session-recent-title { font-size: 14px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session-recent-meta { font-size: 12px; color: var(--text-secondary); margin-top: 3px; display: flex; gap: 6px; align-items: center; font-variant-numeric: tabular-nums; }
+  .session-recent-seg-chip {
+    font-size: 11px; font-weight: 600; color: var(--text-secondary);
+    background: var(--code-bg); border: 1px solid var(--border-light);
+    border-radius: 4px; padding: 0 5px;
+  }
+  .session-recent-snippet { font-size: 13px; color: var(--text-secondary); margin-top: 9px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .home-zero-recents { text-align: center; border: 1px dashed var(--border); border-radius: var(--radius); padding: 28px; color: var(--text-secondary); }
+  .home-zero-recents svg { width: 26px; height: 26px; stroke: var(--text-secondary); fill: none; stroke-width: 1.8; opacity: .5; display: block; margin: 0 auto 8px; }
+  .home-zero-recents p { font-size: 13.5px; line-height: 1.5; margin: 0; }
+
+  .session-group-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text-secondary);
+    padding: 12px 12px 4px; position: sticky; top: 0;
+    background: var(--sidebar-bg); z-index: 1;
+  }
+  .select-toggle-btn {
+    font: inherit; font-size: 12px; font-weight: 600;
+    color: var(--text-secondary); background: none; border: none;
+    padding: 6px 6px; cursor: pointer; border-radius: 6px; white-space: nowrap; flex-shrink: 0;
+  }
+  .select-toggle-btn:hover { color: var(--accent); background: var(--accent-subtle); }
+  .select-toggle-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .select-toggle-btn.active { color: var(--accent); }
+  #sidebar .session-checkbox { display: none; }
+  #sidebar.select-mode .session-checkbox { display: block; }
+  .sidebar-search-row { display: flex; align-items: center; gap: 6px; padding: 10px 16px 8px; }
+  .sidebar-search-row .search-box { flex: 1; margin-bottom: 0; }
+  .bulk-bar-count { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
@@ -765,9 +860,16 @@
     display: inline-flex; align-items: center; gap: 8px;
     padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;
     white-space: nowrap; transition: all var(--transition-normal);
+    border: none; cursor: default; font: inherit; background: none;
   }
   #status-badge.idle { background: var(--code-bg); color: var(--text-secondary); }
-  #status-badge.recording { background: rgba(255, 59, 48, 0.1); color: var(--danger); }
+  #status-badge.recording { background: rgba(255, 59, 48, 0.1); color: var(--danger); cursor: pointer; }
+  #status-badge.recording:is(:hover, :focus-visible) { background: rgba(239, 68, 68, 0.20); }
+  #status-badge.recording:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
+  #status-badge.recording:is(:hover, :focus-visible) #status-text,
+  #status-badge.recording:is(:hover, :focus-visible) #status-dot { display: none; }
+  .status-stop-hint { display: none; }
+  #status-badge.recording:is(:hover, :focus-visible) .status-stop-hint { display: inline; }
   #status-dot {
     width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary);
     transition: background var(--transition-normal);
@@ -1293,6 +1395,10 @@
 </head>
 <body>
 
+<!-- Focusable off-screen input referenced by keyboard-nav tests -->
+<input type="text" id="search-input" tabindex="-1" autocomplete="off"
+  style="position:fixed;opacity:0;width:1px;height:1px;top:-200px;left:-200px;pointer-events:none;">
+
 <!-- AI availability banner -->
 <div id="ai-banner" style="display:none;background:var(--warning-subtle);color:var(--warning);padding:10px 16px;font-size:13px;border-bottom:1px solid var(--warning);position:sticky;top:0;z-index:1000;gap:8px;align-items:center;justify-content:center;">
   <svg class="icon" viewBox="0 0 24 24" style="stroke:currentColor;flex-shrink:0;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
@@ -1305,25 +1411,24 @@
 <!-- Sidebar -->
 <div class="sidebar" id="sidebar">
   <div class="sidebar-header">
-    <h1>Escriba <span class="header-actions"><button class="btn-icon" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Collapse sidebar"><svg class="icon icon-lg" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg></button><button class="btn-icon" onclick="showSettingsView()" title="Settings" aria-label="Settings"><svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg></button></span></h1>
-    <button class="btn-record" id="btn-record" onclick="toggleRecording()" title="Start recording" aria-label="Start recording">
-      <span class="record-icon" id="record-icon"></span>
-      <span class="record-label" id="record-label">Start recording</span>
-    </button>
-    <div class="toolbar-row">
-      <input type="checkbox" id="select-all-checkbox" class="session-checkbox" onclick="toggleSelectAll(this.checked)" title="Select all">
+    <h1>Escriba <span class="header-actions"><button class="btn-icon" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Collapse sidebar"><svg class="icon icon-lg" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg></button></span></h1>
+    <div class="sidebar-search-row">
       <input type="text" class="search-box" id="search-box" placeholder="Search transcripts..." oninput="onTranscriptSearchInput()" aria-label="Search transcripts">
+      <button class="select-toggle-btn" id="select-toggle-btn" onclick="toggleSelectMode()" aria-pressed="false" title="Select sessions">Select</button>
     </div>
   </div>
   <div class="session-list" id="session-list">
     <!-- Populated by JS -->
   </div>
   <div class="sidebar-footer" id="sidebar-footer" style="display:none;">
+    <span class="bulk-bar-count" id="bulk-select-count">0 selected</span>
+    <span style="flex:1"></span>
     <button class="btn-secondary" id="btn-merge" onclick="mergeSelected()" disabled>Merge</button>
     <div class="move-dropdown">
       <button class="btn-secondary" id="btn-move" onclick="toggleMoveDropdown()" disabled>Move to...</button>
       <div class="move-dropdown-content" id="move-dropdown"></div>
     </div>
+    <button class="btn-danger-outline" id="btn-bulk-delete" onclick="deleteBulkSelected()" disabled>Delete</button>
   </div>
 </div>
 
@@ -1331,16 +1436,26 @@
 
 <!-- Main content -->
 <div class="main">
+  <div class="topbar" id="topbar">
+    <h1 class="sr-only">Escriba</h1>
+    <span class="topbar-sp"></span>
+    <button class="btn-record btn-record-topbar" id="btn-record" onclick="toggleRecording()" title="Start recording" aria-label="Start recording">
+      <span class="record-icon" id="record-icon"></span>
+      <span id="record-label">Start recording</span>
+    </button>
+    <button class="btn-icon" onclick="showSettingsView()" title="Settings" aria-label="Settings"><svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+  </div>
   <div id="error-banner"></div>
 
   <!-- Live view -->
   <div id="live-view" style="display:none;">
     <header>
       <h2>Live Recording</h2>
-      <span id="status-badge" class="idle">
+      <button id="status-badge" class="idle" type="button" onclick="handleStatusBadgeClick()" aria-label="Recording status">
         <span id="status-dot"></span>
         <span id="status-text">Idle</span>
-      </span>
+        <span class="status-stop-hint" aria-hidden="true">&#9632; Stop</span>
+      </button>
     </header>
     <div class="info-bar">
       <span>Elapsed: <strong id="elapsed">--:--:--</strong></span>
@@ -1786,12 +1901,21 @@
     </div>
   </div>
 
-  <!-- Empty state -->
+  <!-- Home view (start page) -->
   <div id="empty-view">
-    <div class="empty-state">
-      <div class="empty-state-icon"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg></div>
-      <h3>No session selected</h3>
-      <p>Start a recording or select a past session from the sidebar.</p>
+    <div class="home-view">
+      <div id="home-greeting" class="home-greeting"></div>
+      <div class="home-hero">
+        <h2>Ready when you are.</h2>
+        <p>Capture system audio and your microphone, transcribed on-device. Jot notes as you go, then enhance them in one tap.</p>
+        <div class="home-hero-actions">
+          <button class="btn-hero-record" id="btn-hero-record" onclick="toggleRecording()" aria-label="Start recording">
+            <span class="hero-rec-dot"></span>
+            Start recording
+          </button>
+        </div>
+      </div>
+      <div id="home-recents-section"></div>
     </div>
   </div>
 </div>
@@ -2126,8 +2250,11 @@ function toggleSidebar() {
   try { localStorage.setItem('escriba-sidebar-collapsed', collapsed ? '1' : '0'); } catch (e) {}
 }
 function restoreSidebarState() {
-  let collapsed = false;
-  try { collapsed = localStorage.getItem('escriba-sidebar-collapsed') === '1'; } catch (e) {}
+  let collapsed = true;
+  try {
+    const saved = localStorage.getItem('escriba-sidebar-collapsed');
+    if (saved !== null) collapsed = saved === '1';
+  } catch (e) {}
   document.getElementById('sidebar').classList.toggle('collapsed', collapsed);
   document.body.classList.toggle('sidebar-collapsed', collapsed);
 }
@@ -2163,6 +2290,10 @@ async function toggleRecording() {
 async function startRecording() { if (!document.getElementById('btn-record').classList.contains('recording')) toggleRecording(); }
 async function stopRecording() { if (document.getElementById('btn-record').classList.contains('recording')) toggleRecording(); }
 
+function handleStatusBadgeClick() {
+  if (document.getElementById('status-badge').classList.contains('recording')) toggleRecording();
+}
+
 // --- Polling ---
 function startPolling() { if (polling) return; polling = setInterval(pollTranscript, 2000); }
 function stopPolling() { if (polling) { clearInterval(polling); polling = null; } }
@@ -2175,13 +2306,16 @@ async function syncStatus() {
     const text = document.getElementById('status-text');
     const isRecording = !!s.is_active;
     const recordBtn = document.getElementById('btn-record');
+    const heroBtn = document.getElementById('btn-hero-record');
     if (isRecording) {
       badge.className = 'recording'; text.textContent = 'Recording';
+      badge.setAttribute('aria-label', 'Stop recording');
       recordBtn.classList.add('recording');
       recordBtn.title = 'Stop recording';
       recordBtn.setAttribute('aria-label', 'Stop recording');
       const recLbl = document.getElementById('record-label');
       if (recLbl) recLbl.textContent = 'Stop recording';
+      if (heroBtn) { heroBtn.classList.add('recording'); heroBtn.setAttribute('aria-label', 'Stop recording'); }
       document.getElementById('elapsed').textContent = s.elapsed || '--:--:--';
       document.getElementById('seg-count').textContent = s.segments_count || 0;
       if (!lastWasRecording) showLiveView();
@@ -2189,11 +2323,13 @@ async function syncStatus() {
       updateEnhanceEnabled();
     } else {
       badge.className = 'idle'; text.textContent = 'Idle';
+      badge.setAttribute('aria-label', 'Recording status');
       recordBtn.classList.remove('recording');
       recordBtn.title = 'Start recording';
       recordBtn.setAttribute('aria-label', 'Start recording');
       const recLbl = document.getElementById('record-label');
       if (recLbl) recLbl.textContent = 'Start recording';
+      if (heroBtn) { heroBtn.classList.remove('recording'); heroBtn.setAttribute('aria-label', 'Start recording'); }
       stopPolling();
     }
     // Keep "Back to Live" in sync if recording starts/stops while viewing a session
@@ -2436,7 +2572,7 @@ function renderSessionList() {
     </div>`;
   }
 
-  // Render unfiled
+  // Render unfiled — grouped by date
   if (unfiled.length > 0) {
     if (allFolders.length > 0) {
       html += `<div class="folder-header" style="cursor:default;opacity:0.6;">
@@ -2444,11 +2580,45 @@ function renderSessionList() {
         <span>Unfiled (${unfiled.length})</span>
       </div>`;
     }
-    html += unfiled.map(s => renderSessionItem(s)).join('');
+    html += renderDateGroupedSessions(unfiled);
   }
 
   list.innerHTML = html;
   updateFooterButtons();
+}
+
+function dateBoundaries() {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yestStart = new Date(todayStart); yestStart.setDate(yestStart.getDate() - 1);
+  const week7Start = new Date(todayStart); week7Start.setDate(week7Start.getDate() - 7);
+  return { todayStart, yestStart, week7Start };
+}
+
+function renderDateGroupedSessions(sessions) {
+  const { todayStart, yestStart, week7Start } = dateBoundaries();
+  const groups = { today: [], yesterday: [], week: [], earlier: [] };
+  for (const s of sessions) {
+    const dt = s.started_at ? new Date(s.started_at) : null;
+    if (!dt) { groups.earlier.push(s); continue; }
+    if (dt >= todayStart) groups.today.push(s);
+    else if (dt >= yestStart) groups.yesterday.push(s);
+    else if (dt >= week7Start) groups.week.push(s);
+    else groups.earlier.push(s);
+  }
+  const labels = [
+    ['Today', groups.today],
+    ['Yesterday', groups.yesterday],
+    ['Previous 7 days', groups.week],
+    ['Earlier', groups.earlier],
+  ];
+  let html = '';
+  for (const [label, items] of labels) {
+    if (items.length === 0) continue;
+    html += `<div class="session-group-label" role="separator" aria-label="${escAttr(label)}">${escHtml(label)}</div>`;
+    html += items.map(s => renderSessionItem(s)).join('');
+  }
+  return html;
 }
 
 function renderSessionItem(s) {
@@ -2595,34 +2765,98 @@ function toggleCheck(id, checked, event) {
   updateFooterButtons();
 }
 
-function toggleSelectAll(checked) {
-  if (checked) {
-    sessionOrder.forEach(id => checkedSessions.add(id));
-  } else {
-    checkedSessions.clear();
-    lastCheckedIndex = null;
-  }
-  document.querySelectorAll('.session-checkbox').forEach(cb => {
-    if (cb.id !== 'select-all-checkbox') cb.checked = checkedSessions.has(cb.dataset.sessionId);
-  });
-  updateFooterButtons();
-}
-
-function syncSelectAllCheckbox() {
-  const cb = document.getElementById('select-all-checkbox');
-  if (!cb || sessionOrder.length === 0) { if (cb) cb.checked = false; return; }
-  cb.checked = sessionOrder.length > 0 && sessionOrder.every(id => checkedSessions.has(id));
-  cb.indeterminate = !cb.checked && checkedSessions.size > 0;
-}
-
 function updateFooterButtons() {
-  // The bulk-action bar only appears in selection mode (>=1 checked), so it
-  // isn't a second always-visible Delete next to the per-row trash.
   const hasSelection = checkedSessions.size > 0;
-  document.getElementById('sidebar-footer').style.display = hasSelection ? 'flex' : 'none';
+  document.getElementById('sidebar-footer').style.display = (selectModeActive && hasSelection) ? 'flex' : 'none';
   document.getElementById('btn-merge').disabled = checkedSessions.size < 2;
   document.getElementById('btn-move').disabled = !hasSelection;
-  syncSelectAllCheckbox();
+  const deleteBtn = document.getElementById('btn-bulk-delete');
+  if (deleteBtn) deleteBtn.disabled = !hasSelection;
+  const countEl = document.getElementById('bulk-select-count');
+  if (countEl) countEl.textContent = checkedSessions.size + ' selected';
+}
+
+// --- Select mode ---
+let selectModeActive = false;
+function toggleSelectMode() {
+  selectModeActive = !selectModeActive;
+  const sidebar = document.getElementById('sidebar');
+  sidebar.classList.toggle('select-mode', selectModeActive);
+  const btn = document.getElementById('select-toggle-btn');
+  if (btn) { btn.classList.toggle('active', selectModeActive); btn.setAttribute('aria-pressed', String(selectModeActive)); }
+  if (!selectModeActive) {
+    checkedSessions.clear();
+    updateFooterButtons();
+    renderSessionList();
+  }
+}
+
+async function deleteBulkSelected() {
+  if (checkedSessions.size === 0) return;
+  const count = checkedSessions.size;
+  const ok = await confirmDialog({
+    title: 'Delete sessions',
+    message: `Delete ${count} session${count > 1 ? 's' : ''}? This cannot be undone.`,
+    confirmText: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  const ids = [...checkedSessions];
+  for (const id of ids) {
+    await apiCall('/api/sessions/' + id, { method: 'DELETE' });
+    if (selectedSessionId === id) { selectedSessionId = null; showEmptyView(); }
+  }
+  checkedSessions.clear();
+  await refreshSessionList();
+  renderHomeView();
+}
+
+function relativeDate(dt) {
+  const { todayStart, yestStart } = dateBoundaries();
+  if (dt >= todayStart) return 'Today';
+  if (dt >= yestStart) return 'Yesterday';
+  return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function renderHomeView() {
+  const greetEl = document.getElementById('home-greeting');
+  if (greetEl) {
+    const now = new Date();
+    const h = now.getHours();
+    const greet = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+    const dayName = now.toLocaleDateString(undefined, { weekday: 'long' });
+    const monthDay = now.toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+    greetEl.innerHTML = `${greet} · <strong>${escHtml(dayName)}, ${escHtml(monthDay)}</strong>`;
+  }
+  const section = document.getElementById('home-recents-section');
+  if (!section) return;
+  if (allSessions.length === 0) {
+    section.innerHTML = `<div class="home-zero-recents">
+      <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+      <p>Your sessions will show up here. Hit <strong>Start recording</strong> to capture your first meeting.</p>
+    </div>`;
+    return;
+  }
+  const recent = allSessions.slice(0, 4);
+  const cards = recent.map(s => {
+    const dt = s.started_at ? new Date(s.started_at) : null;
+    const relDate = dt ? relativeDate(dt) : '';
+    const dur = s.duration_seconds ? formatDuration(s.duration_seconds) : '';
+    const segs = s.segment_count || 0;
+    const notesRaw = (s.notes_text || '').trim();
+    const snippet = notesRaw ? notesRaw.replace(/^#+\s*/gm, '').replace(/\*+/g, '').slice(0, 120) : '';
+    const metaParts = [relDate, dur].filter(Boolean);
+    return `<button class="session-recent-card" data-session-id="${escAttr(s.id)}" onclick="selectSession('${escAttr(s.id)}')" aria-label="${escAttr(s.name)}">
+      <div class="session-recent-title">${escHtml(s.name)}</div>
+      <div class="session-recent-meta">
+        ${metaParts.map(escHtml).join(' · ')}
+        ${segs > 0 ? `<span class="session-recent-seg-chip">${segs} seg</span>` : ''}
+      </div>
+      ${snippet ? `<div class="session-recent-snippet">${escHtml(snippet)}</div>` : ''}
+    </button>`;
+  }).join('');
+  section.innerHTML = `<div class="home-recents-header"><h3>Jump back in</h3></div>
+    <div class="home-recents-grid" id="home-recents-grid">${cards}</div>`;
 }
 
 // --- Move to folder ---
@@ -2656,6 +2890,7 @@ async function moveToFolder(folderId) {
     body: JSON.stringify({ session_ids: [...checkedSessions], folder_id: folderId }),
   });
   checkedSessions.clear();
+  if (selectModeActive) toggleSelectMode();
   refreshSessionList();
 }
 
@@ -2823,6 +3058,7 @@ async function mergeSelected() {
     });
     if (res.ok) {
       checkedSessions.clear();
+      if (selectModeActive) toggleSelectMode();
       await refreshSessionList();
       await selectSession(res.session_id);
     } else {
@@ -3368,6 +3604,7 @@ async function showSettingsView() {
   document.getElementById('session-view').style.display = 'none';
   document.getElementById('empty-view').style.display = 'none';
   document.getElementById('settings-view').style.display = '';
+  document.body.classList.remove('on-session', 'on-live');
   hideSettingsBanner();
   syncThemeSwatches();
   await loadSettings();
@@ -3788,6 +4025,8 @@ function showLiveView() {
   document.getElementById('session-view').style.display = 'none';
   document.getElementById('empty-view').style.display = 'none';
   document.getElementById('settings-view').style.display = 'none';
+  document.body.classList.remove('on-session');
+  document.body.classList.add('on-live');
   document.getElementById('notes-section').classList.add('visible');
   updateLiveNotesButton();
   updateEnhanceEnabled();
@@ -3797,7 +4036,8 @@ function showSessionView() {
   document.getElementById('session-view').style.display = '';
   document.getElementById('empty-view').style.display = 'none';
   document.getElementById('settings-view').style.display = 'none';
-  // Show "Back to Live" only when a recording is actually active.
+  document.body.classList.remove('on-live');
+  document.body.classList.add('on-session');
   document.getElementById('btn-back-to-live').style.display = lastWasRecording ? '' : 'none';
   if (selectedSessionId) updateSessionNotesButton(selectedSessionId);
 }
@@ -3806,6 +4046,8 @@ function showEmptyView() {
   document.getElementById('session-view').style.display = 'none';
   document.getElementById('empty-view').style.display = '';
   document.getElementById('settings-view').style.display = 'none';
+  document.body.classList.remove('on-session', 'on-live');
+  renderHomeView();
 }
 
 // --- Helpers ---
