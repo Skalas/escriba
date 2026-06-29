@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-06-28
+
+Reshaped the live note experience into a Granola-style **jot & enhance** flow (the capability shipped in 0.10.0; this fixes the flow).
+
+### Changed
+- **Notepad is the primary surface** — the live view now leads with your notepad; the transcript is demoted to a single "Show transcript" toggle, collapsed by default.
+- **One Enhance action** — a single "Enhance notes" button replaces the separate generate-notes card; prompt chips + a custom-instruction box now live behind an optional "Add instructions" disclosure (hidden by default). Enhancing with no instructions uses the default summary path.
+- **In-place provenance** — the enhanced result renders in place: your own lines keep full text weight; AI additions are marked with a left rail, an "AI" chip, and an "AI additions" label (distinguished by more than color, for accessibility), inside an `aria-live` region with a short legend.
+- **Unified session note** — a saved session now shows one notes document (your notes + AI additions together) instead of separate "Recording Notes" and "Notes" cards, via a shared provenance renderer.
+
+### Fixed
+- "Add instructions" disclosure could not be closed once opened.
+- The "AI" provenance chip failed contrast in most themes — re-tokenized to stay legible (≥4.5:1) in every theme, light and dark.
+- The "Enhancing…" spinner ignored `prefers-reduced-motion`.
+- A saved session with notes but no AI summary silently dropped the user's notes from the view.
+
 ## [0.10.0] - 2026-06-28
 
 Last feature sprint before 1.0 — steer your summaries with live notes, and decouple export behind a pluggable adapter.
