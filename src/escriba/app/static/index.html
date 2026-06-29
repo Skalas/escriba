@@ -985,8 +985,88 @@
   .audio-player-card audio { width: 100%; }
   .audio-player-card .no-audio { color: var(--text-secondary); font-style: italic; font-size: 14px; }
 
-  #notes-section { display: none; }
-  #notes-section.visible { display: block; }
+  /* AI provenance tokens — rail uses coral per theme; chip uses neutral --code-bg/--text for guaranteed ≥4.5:1 contrast */
+  :root, [data-theme="teal"], [data-theme="ink"], [data-theme="indigo"], [data-theme="graphite"] {
+    --ai-note: var(--text-secondary);
+    --ai-rail: var(--coral-fill);
+    --ai-chip-bg: var(--code-bg);
+    --ai-chip-text: var(--text);
+  }
+  /* Live notepad flow */
+  .live-pad-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+  .live-pad-hint { font-size: 12px; color: var(--text-secondary); margin-left: auto; font-style: italic; }
+  #notes-section { display: none; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--border-light); margin-top: 10px; }
+  #notes-section.visible { display: flex; }
+  .live-link-btn {
+    background: none; border: none; font-family: inherit; font-size: 13px;
+    color: var(--text-secondary); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 4px; border-radius: 6px;
+  }
+  .live-link-btn:hover { color: var(--text); }
+  .live-link-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .live-link-chev { transition: transform 200ms ease; }
+  .live-link-btn[aria-expanded="true"] .live-link-chev { transform: rotate(180deg); }
+  .live-instructions { display: none; padding-top: 10px; }
+  .live-instructions.open { display: block; }
+  /* Reduced-motion-safe spinner for Enhance button */
+  .live-spinner { animation: spin 1s linear infinite; stroke: currentColor; }
+  /* Provenance block */
+  .live-ai-block { position: relative; margin: 10px 0; padding-left: 14px; }
+  .live-ai-block::before {
+    content: ""; position: absolute; left: 0; top: 4px; bottom: 4px;
+    width: 3px; border-radius: 3px; background: var(--ai-rail);
+  }
+  .live-ai-block-label {
+    font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--text-secondary); margin: 0 0 5px; display: flex; align-items: center; gap: 6px; font-weight: 650;
+  }
+  .live-chip-ai {
+    font-size: 10px; font-weight: 700; letter-spacing: .04em;
+    color: var(--ai-chip-text); background: var(--ai-chip-bg);
+    border: 1px solid var(--ai-rail); border-radius: 5px; padding: 1px 6px; text-transform: none;
+  }
+  .live-ai-text { color: var(--ai-note); font-size: 14px; line-height: 1.65; }
+  .live-you-label {
+    font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--text-secondary); margin: 0 0 5px; font-weight: 650; display: block;
+  }
+  .live-you-text { color: var(--text); font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+  .live-legend {
+    display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+    font-size: 12px; color: var(--text-secondary); padding: 8px 0 2px;
+    border-top: 1px solid var(--border-light); margin-top: 6px;
+  }
+  .live-legend-sw { display: inline-flex; align-items: center; gap: 6px; }
+  .live-legend-bar { width: 12px; height: 3px; border-radius: 3px; display: inline-block; }
+  /* Shimmer skeleton */
+  .live-skel {
+    height: 13px; border-radius: 6px; margin: 10px 0;
+    background: linear-gradient(90deg, var(--border) 0%, var(--border-light) 50%, var(--border) 100%);
+    background-size: 200% 100%; animation: liveSkelSh 1.1s linear infinite;
+  }
+  @keyframes liveSkelSh { to { background-position: -200% 0; } }
+  /* Transcript demoted */
+  .live-transcript-section { border-top: 1px solid var(--border-light); margin-top: 8px; }
+  .live-tr-toggle {
+    width: 100%; text-align: left; background: transparent; border: none;
+    font-family: inherit; font-size: 13px; color: var(--text-secondary); padding: 10px 0;
+    cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: 500;
+  }
+  .live-tr-toggle:hover { color: var(--text); }
+  .live-tr-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .live-tr-chev { margin-left: auto; transition: transform 200ms ease; }
+  .live-tr-toggle[aria-expanded="true"] .live-tr-chev { transform: rotate(180deg); }
+  .live-tr-body { display: none; }
+  .live-tr-body.open { display: block; }
+  /* T4 session unified notes */
+  .session-notes-enhance-row {
+    border-top: 1px solid var(--border-light); margin-top: 14px; padding-top: 14px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-link-chev, .live-tr-chev { transition: none; }
+    .live-skel { animation: none; background: var(--border); }
+    .live-spinner { animation: none; }
+  }
 
   #prompt-input {
     width: 100%; padding: 12px 16px; border: 1px solid var(--border); border-radius: 10px;
@@ -1000,10 +1080,7 @@
   .btn-generate:hover:not(:disabled) { background: var(--coral-fill-hover); box-shadow: 0 2px 8px var(--coral-subtle); }
   .btn-generate.loading { pointer-events: none; opacity: 0.7; }
 
-  #notes-output {
-    margin-top: 16px; padding: 16px; background: var(--code-bg); border-radius: 10px;
-    font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; display: none;
-  }
+  #notes-output { margin-top: 12px; font-size: 14px; line-height: 1.65; display: none; }
   #notes-output.visible { display: block; }
 
   .empty-state { text-align: center; padding: 80px 24px; color: var(--text-secondary); }
@@ -1268,23 +1345,38 @@
       <span>Elapsed: <strong id="elapsed">--:--:--</strong></span>
       <span>Segments: <strong id="seg-count">0</strong></span>
     </div>
-    <div class="card">
-      <h3>Transcript</h3>
-      <div id="transcript-box"></div>
-    </div>
     <div class="card" id="live-notepad-card">
-      <h3>Notepad</h3>
-      <textarea id="live-notepad" placeholder="Type your notes here during the recording — they'll be included when generating AI notes..." rows="4"
+      <div class="live-pad-head">
+        <h3 id="live-pad-title">Your notes</h3>
+        <span class="live-pad-hint" id="live-pad-hint">Autosaved · jot freely</span>
+      </div>
+      <textarea id="live-notepad" placeholder="Type your notes here during the recording — they'll be included when generating AI notes..." rows="10"
         style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;"
         oninput="onLiveNotepadInput()" aria-label="Live recording notepad"></textarea>
-    </div>
-    <div id="notes-section">
-      <div class="card">
-        <h3>Generate Notes (AI)</h3>
+      <div id="notes-output" aria-live="polite"></div>
+      <div id="live-enhance-legend" style="display:none;"></div>
+      <div id="notes-section">
+        <button class="btn-generate" id="btn-notes" onclick="generateNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Enhance notes</button>
+        <button class="live-link-btn" id="btn-add-instructions" aria-expanded="false" aria-controls="live-instructions-panel" onclick="toggleLiveInstructions()">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Add instructions
+          <svg class="icon icon-sm live-link-chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </button>
+      </div>
+      <div id="live-instructions-panel" class="live-instructions">
         <div class="prompt-chips" id="live-prompt-chips"></div>
-        <textarea id="prompt-input" placeholder="Select prompts above and/or type your own..." rows="2"></textarea>
-        <button class="btn-generate" id="btn-notes" onclick="generateNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes</button>
-        <div id="notes-output"></div>
+        <textarea id="prompt-input" placeholder="Optional — steer the enhancement (tone, focus, format)…" rows="2"
+          style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;margin-top:8px;"></textarea>
+      </div>
+      <div class="live-transcript-section">
+        <button class="live-tr-toggle" id="live-tr-toggle" aria-expanded="false" aria-controls="live-tr-body" onclick="toggleLiveTranscript()">
+          <svg class="icon icon-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+           Show live transcript
+          <svg class="icon icon-sm live-tr-chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </button>
+        <div id="live-tr-body" class="live-tr-body">
+          <div id="transcript-box"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1320,10 +1412,6 @@
         <h3>Speakers</h3>
         <div class="speaker-list" id="session-speakers-list"></div>
       </div>
-      <div class="card" id="session-user-notes-card" style="display:none;">
-        <h3>Recording Notes</h3>
-        <div id="session-user-notes-display" style="white-space:pre-wrap;font-size:14px;color:var(--text);"></div>
-      </div>
       <div class="card">
         <h3>Notes <button class="btn-secondary" id="btn-toggle-notes-edit" onclick="toggleNotesEdit()" style="font-size:11px;padding:4px 10px;">Edit</button></h3>
         <div class="notes-rendered" id="notes-rendered" onclick="toggleNotesEdit()"></div>
@@ -1336,17 +1424,16 @@
             <button class="btn-danger-outline" onclick="clearNotes()">Clear Notes</button>
           </div>
         </div>
+        <div class="session-notes-enhance-row">
+          <div class="prompt-chips" id="session-prompt-chips"></div>
+          <textarea id="session-prompt-input" placeholder="Select prompts above and/or type your own..." rows="2"
+            style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;margin-top:8px;"></textarea>
+          <button class="btn-generate" id="btn-session-notes" onclick="generateSessionNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes</button>
+        </div>
       </div>
       <div class="card audio-player-card" id="audio-player-card" style="display:none;">
         <h3>Recording</h3>
         <audio id="session-audio" controls preload="metadata"></audio>
-      </div>
-      <div class="card">
-        <h3>Generate Notes (AI)</h3>
-        <div class="prompt-chips" id="session-prompt-chips"></div>
-        <textarea id="session-prompt-input" placeholder="Select prompts above and/or type your own..." rows="2"
-          style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;"></textarea>
-        <button class="btn-generate" id="btn-session-notes" onclick="generateSessionNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes</button>
       </div>
       <div class="card">
         <h3>Transcript</h3>
@@ -1734,6 +1821,8 @@ let liveNotesGenerating = false;
 
 const NOTES_BTN_DEFAULT = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes';
 const NOTES_BTN_GENERATING = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:currentColor;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
+const LIVE_BTN_DEFAULT = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Enhance notes';
+const LIVE_BTN_LOADING = '<svg class="icon icon-sm live-spinner" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Enhancing…';
 
 function isLiveViewActive() {
   return !viewingHistory && document.getElementById('live-view').style.display !== 'none';
@@ -1759,11 +1848,11 @@ function updateLiveNotesButton() {
   if (liveNotesGenerating) {
     btn.classList.add('loading');
     btn.disabled = true;
-    btn.innerHTML = NOTES_BTN_GENERATING;
+    btn.innerHTML = LIVE_BTN_LOADING;
   } else {
     btn.classList.remove('loading');
     btn.disabled = false;
-    btn.innerHTML = NOTES_BTN_DEFAULT;
+    btn.innerHTML = LIVE_BTN_DEFAULT;
   }
 }
 
@@ -2443,17 +2532,8 @@ async function selectSession(id) {
     }
 
     document.getElementById('session-notes-input').value = s.notes_text || '';
+    _currentSessionUserNotes = (s.user_notes || '').trim();
     renderNotesView(s.notes_text || '');
-    const userNotes = (s.user_notes || '').trim();
-    const unCard = document.getElementById('session-user-notes-card');
-    if (unCard) {
-      if (userNotes) {
-        document.getElementById('session-user-notes-display').textContent = userNotes;
-        unCard.style.display = '';
-      } else {
-        unCard.style.display = 'none';
-      }
-    }
     showSessionView();
     // Update selection highlight in-place instead of full re-render
     document.querySelectorAll('.session-item').forEach(el => {
@@ -2745,6 +2825,26 @@ async function deleteSessionById(id) {
   refreshSessionList();
 }
 
+let _currentSessionUserNotes = '';
+
+function toggleLiveInstructions() {
+  const panel = document.getElementById('live-instructions-panel');
+  const btn = document.getElementById('btn-add-instructions');
+  if (!panel || !btn) return;
+  const open = panel.classList.toggle('open');
+  btn.setAttribute('aria-expanded', String(open));
+}
+
+function toggleLiveTranscript() {
+  const body = document.getElementById('live-tr-body');
+  const toggle = document.getElementById('live-tr-toggle');
+  if (!body || !toggle) return;
+  const open = body.classList.toggle('open');
+  toggle.setAttribute('aria-expanded', String(open));
+  const textNode = Array.from(toggle.childNodes).find(n => n.nodeType === 3 && n.textContent.trim());
+  if (textNode) textNode.textContent = open ? ' Hide live transcript ' : ' Show live transcript ';
+}
+
 function onLiveNotepadInput() {
   clearTimeout(_liveNotepadTimer);
   _liveNotepadTimer = setTimeout(saveLiveNotepad, 1000);
@@ -3000,12 +3100,18 @@ async function generateSessionNotes() {
 async function generateNotes() {
   const out = document.getElementById('notes-output');
   const promptVal = document.getElementById('prompt-input').value.trim();
+  const userNotesText = (document.getElementById('live-notepad').value || '').trim();
   const startedInLiveView = isLiveViewActive();
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   liveNotesGenerating = true;
   updateLiveNotesButton();
   if (startedInLiveView) {
     out.className = 'visible';
-    out.textContent = 'Thinking...';
+    if (!reduceMotion) {
+      out.innerHTML = '<div class="live-skel" style="width:88%"></div><div class="live-skel" style="width:70%"></div><div class="live-skel" style="width:82%"></div>';
+    } else {
+      out.textContent = 'Enhancing…';
+    }
   }
   try {
     const res = await apiCall('/api/notes', {
@@ -3013,15 +3119,29 @@ async function generateNotes() {
       body: JSON.stringify({ prompt: promptVal || null }),
     });
     if (isLiveViewActive()) {
-      if (res.ok) {
-        out.innerHTML = renderMarkdown(res.notes);
-        out.classList.add('notes-rendered');
+      if (res.ok && res.notes) {
+        const notesPad = document.getElementById('live-pad-title');
+        if (notesPad) notesPad.textContent = 'Enhanced notes';
+        const hint = document.getElementById('live-pad-hint');
+        if (hint) hint.textContent = 'Your words kept · AI-added marked';
+        out.innerHTML = buildProvenanceHtml(userNotesText, renderMarkdown(res.notes));
+        out.classList.add('visible');
+        // Show legend
+        const legend = document.getElementById('live-enhance-legend');
+        if (legend) {
+          legend.style.display = '';
+          legend.className = 'live-legend';
+          legend.innerHTML =
+            '<span class="live-legend-sw"><span class="live-legend-bar" style="background:var(--text)"></span> Your words</span>' +
+            '<span class="live-legend-sw"><span class="live-legend-bar" style="background:var(--ai-rail)"></span> AI additions</span>';
+        }
       } else {
+        out.className = 'visible';
         out.textContent = 'Error: ' + (res.error || 'Unknown');
       }
     }
   } catch (e) {
-    if (isLiveViewActive()) out.textContent = 'Error: ' + e.message;
+    if (isLiveViewActive()) { out.className = 'visible'; out.textContent = 'Error: ' + e.message; }
   } finally {
     liveNotesGenerating = false;
     updateLiveNotesButton();
@@ -3124,12 +3244,37 @@ function renderMarkdown(text) {
   return html;
 }
 
+// --- Provenance HTML builder (shared by live enhance + session render) ---
+function buildProvenanceHtml(userNotes, aiHtml) {
+  let html = '';
+  if (userNotes) {
+    html += '<div class="live-you-label">Your notes</div>';
+    html += '<div class="live-you-text">' + escHtml(userNotes) + '</div>';
+  }
+  if (aiHtml) {
+    html += '<div class="live-ai-block">';
+    html += '<div class="live-ai-block-label">AI additions <span class="live-chip-ai" aria-hidden="true">AI</span></div>';
+    html += '<div class="live-ai-text notes-rendered">' + aiHtml + '</div>';
+    html += '</div>';
+  }
+  return html;
+}
+
 // --- Notes edit/render toggle ---
 function renderNotesView(notesText) {
   const rendered = document.getElementById('notes-rendered');
   const editor = document.getElementById('notes-editor');
   const btn = document.getElementById('btn-toggle-notes-edit');
-  rendered.innerHTML = renderMarkdown(notesText || '');
+  const userNotes = _currentSessionUserNotes || '';
+  if (userNotes && notesText) {
+    // Both present: unified provenance view
+    rendered.innerHTML = buildProvenanceHtml(userNotes, renderMarkdown(notesText));
+  } else if (userNotes) {
+    // User jots only (no AI notes yet)
+    rendered.innerHTML = buildProvenanceHtml(userNotes, null);
+  } else {
+    rendered.innerHTML = renderMarkdown(notesText || '');
+  }
   rendered.classList.remove('hidden');
   editor.classList.remove('active');
   btn.textContent = 'Edit';

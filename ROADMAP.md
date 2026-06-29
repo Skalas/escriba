@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-28 · Current version: `0.10.0` (Live Notepad + Knowledge Adapters) · next up: `v1.0.0` (release hardening)_
+_Last updated: 2026-06-28 · Current version: `0.10.1` (Notepad flow — jot & enhance) · next up: `v1.0.0` (release hardening)_
 
 ---
 
@@ -166,6 +166,12 @@ Last feature sprint before 1.0. Two scoped features (HOLD mode).
 **Done when:** notes steer the generated summary and survive re-generation; sessions export to local Markdown via a pluggable adapter with the default staying fully local. ✅ (221 tests; review caught & fixed a live-path notes drop; path-traversal sanitization + graceful degradation confirmed by live smoke.)
 
 **Deferred to a follow-up (design debt):** the `local-markdown` adapter imports the formatter from `app/server.py` (infra→presentation layer inversion) — move it to a shared module; route provider dispatch through a factory rather than a bare string check; remove the dead inner `except` in `_build_custom_prompt`; dedup `_make_handler` into `tests/conftest.py`. **Fast-follow feature:** `webhook` + `custom-script` knowledge adapters (env-var secrets, argv-not-shell, stdlib HTTP).
+
+#### `v0.10.1` — Notepad flow (jot & enhance)  ·  _shipped 2026-06-28_
+
+UX patch on top of 0.10.0 (#57): notepad-primary live view, transcript demoted to a collapsible toggle, a single "Enhance notes" action with optional instructions, in-place accessible provenance (rail + "AI" chip + label, not color-alone), and a unified saved-session note via a shared `buildProvenanceHtml`. Review fixed a non-closable disclosure, an AI-chip contrast failure across themes, a reduced-motion spinner gap, and a dropped-user-notes case. Visual fidelity confirmed light + dark.
+
+**Deferred polish:** post-enhance, the editable notepad textarea and the rendered output both carry a "Your notes" heading (minor redundancy) — candidate for a quick follow-up (drop the in-output label, or transform the notepad in place like the mockup).
 
 ---
 
