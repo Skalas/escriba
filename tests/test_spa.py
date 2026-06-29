@@ -825,3 +825,161 @@ def test_v0102_t2_saved_session_view_keeps_your_notes_heading(page) -> None:
         "Saved-session renderNotesView must include the 'Your notes' heading — "
         "no textarea is visible there to label the user content"
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.10.3: Session-view notes UX consistency (T1) + slim record button (T2)
+# ---------------------------------------------------------------------------
+
+def test_v0103_t1_session_chips_hidden_by_default(page) -> None:
+    """Session instructions panel is hidden by default (chips behind disclosure)."""
+    hidden = page.evaluate("""() => {
+        const panel = document.getElementById('session-instructions-panel');
+        return !!panel && !panel.classList.contains('open');
+    }""")
+    assert hidden, "session-instructions-panel must be hidden (no .open) by default"
+
+
+def test_v0103_t1_session_enhance_button_present(page) -> None:
+    """#btn-session-notes must be present in the session view."""
+    present = page.evaluate("!!document.getElementById('btn-session-notes')")
+    assert present, "#btn-session-notes must exist"
+
+
+def test_v0103_t1_session_edit_affordance_present(page) -> None:
+    """Edit affordance (#btn-toggle-notes-edit) must be present in the session notes card."""
+    present = page.evaluate("!!document.getElementById('btn-toggle-notes-edit')")
+    assert present, "#btn-toggle-notes-edit must exist"
+
+
+def test_v0103_t1_session_legend_shown_with_provenance(page) -> None:
+    """Legend appears in session view when both user notes and AI notes are present."""
+    page.evaluate("""() => {
+        _currentSessionUserNotes = 'My jots';
+        renderNotesView('AI-generated notes here.');
+    }""")
+    legend_visible = page.evaluate("""() => {
+        const el = document.getElementById('session-enhance-legend');
+        return !!el && el.style.display !== 'none';
+    }""")
+    assert legend_visible, "#session-enhance-legend must be visible when provenance exists"
+    has_legend_class = page.evaluate(
+        "document.getElementById('session-enhance-legend').classList.contains('live-legend')"
+    )
+    assert has_legend_class, "#session-enhance-legend must have .live-legend class"
+
+
+def test_v0103_t1_session_legend_hidden_without_provenance(page) -> None:
+    """Legend is hidden when there are no AI notes."""
+    page.evaluate("""() => {
+        _currentSessionUserNotes = '';
+        renderNotesView('');
+    }""")
+    hidden = page.evaluate("""() => {
+        const el = document.getElementById('session-enhance-legend');
+        return !el || el.style.display === 'none';
+    }""")
+    assert hidden, "#session-enhance-legend must be hidden when no AI notes"
+
+
+def test_v0103_t1_session_add_instructions_toggles(page) -> None:
+    """Session 'Add instructions' disclosure toggles open/closed with correct aria-expanded."""
+    # Initially closed
+    closed = page.evaluate("!document.getElementById('session-instructions-panel')?.classList.contains('open')")
+    assert closed, "session-instructions-panel must start closed"
+
+    # First click — opens
+    page.evaluate("document.getElementById('btn-session-add-instructions')?.click()")
+    page.wait_for_timeout(100)
+    open_ = page.evaluate("document.getElementById('session-instructions-panel')?.classList.contains('open')")
+    assert open_, "session-instructions-panel should open on first click"
+    aria = page.evaluate("document.getElementById('btn-session-add-instructions')?.getAttribute('aria-expanded')")
+    assert aria == "true", "aria-expanded must be 'true' when panel is open"
+
+    # Second click — closes
+    page.evaluate("document.getElementById('btn-session-add-instructions')?.click()")
+    page.wait_for_timeout(100)
+    closed2 = page.evaluate("!document.getElementById('session-instructions-panel')?.classList.contains('open')")
+    assert closed2, "session-instructions-panel should close on second click"
+    aria2 = page.evaluate("document.getElementById('btn-session-add-instructions')?.getAttribute('aria-expanded')")
+    assert aria2 == "false", "aria-expanded must be 'false' when panel is closed"
+
+    # Chips exist inside the panel
+    has_chips = page.evaluate("!!document.getElementById('session-prompt-chips')")
+    assert has_chips, "session-prompt-chips must exist inside the instructions panel"
+
+
+def test_v0103_t1_session_notes_title_updates_with_provenance(page) -> None:
+    """Session notes card title changes to 'Enhanced notes' when provenance is present."""
+    # No provenance
+    page.evaluate("""() => { _currentSessionUserNotes = ''; renderNotesView(''); }""")
+    title_plain = page.evaluate("document.getElementById('session-notes-title')?.textContent")
+    assert title_plain == "Notes", f"Title must be 'Notes' without provenance, got {title_plain!r}"
+
+    # With provenance
+    page.evaluate("""() => {
+        _currentSessionUserNotes = 'My jots';
+        renderNotesView('AI summary here.');
+    }""")
+    title_enhanced = page.evaluate("document.getElementById('session-notes-title')?.textContent")
+    assert title_enhanced == "Enhanced notes", (
+        f"Title must be 'Enhanced notes' when provenance exists, got {title_enhanced!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# v0.10.3 T2: Slim labeled record button
+# ---------------------------------------------------------------------------
+
+def test_v0103_t2_record_button_has_label(page) -> None:
+    """#btn-record must have a visible label span with 'Start' text initially."""
+    label = page.evaluate("document.getElementById('record-label')?.textContent")
+    assert label is not None, "#record-label span must exist"
+    assert "Start" in label, f"Initial label must contain 'Start', got {label!r}"
+
+
+def test_v0103_t2_record_button_label_and_aria_reflect_state(page) -> None:
+    """Label text and aria-label update to 'Stop recording' when syncStatus reports active."""
+    page.route("**/api/status", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body='{"ok":true,"is_active":true,"session_id":"x","elapsed":"00:01:00","segments_count":2}'
+    ))
+    page.evaluate("void syncStatus()")
+    page.wait_for_timeout(400)
+
+    label = page.evaluate("document.getElementById('record-label')?.textContent")
+    aria = page.evaluate("document.getElementById('btn-record')?.getAttribute('aria-label')")
+    page.unroute("**/api/status")
+
+    assert label is not None and "Stop" in label, (
+        f"Label must contain 'Stop' when recording is active, got {label!r}"
+    )
+    assert aria is not None and "Stop" in aria, (
+        f"aria-label must contain 'Stop' when recording is active, got {aria!r}"
+    )
+
+
+def test_v0103_t2_record_button_label_reverts_to_start(page) -> None:
+    """Label reverts to 'Start recording' when syncStatus reports idle."""
+    # First set to recording
+    page.route("**/api/status", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body='{"ok":true,"is_active":true,"session_id":"x","elapsed":"00:00:05","segments_count":0}'
+    ))
+    page.evaluate("void syncStatus()")
+    page.wait_for_timeout(300)
+    page.unroute("**/api/status")
+
+    # Then set to idle
+    page.route("**/api/status", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body='{"ok":true,"is_active":false,"session_id":null}'
+    ))
+    page.evaluate("void syncStatus()")
+    page.wait_for_timeout(300)
+    page.unroute("**/api/status")
+
+    label = page.evaluate("document.getElementById('record-label')?.textContent")
+    assert label is not None and "Start" in label, (
+        f"Label must revert to 'Start' when idle, got {label!r}"
+    )
