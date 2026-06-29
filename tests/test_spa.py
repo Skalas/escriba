@@ -983,3 +983,340 @@ def test_v0103_t2_record_button_label_reverts_to_start(page) -> None:
     assert label is not None and "Start" in label, (
         f"Label must revert to 'Start' when idle, got {label!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.11.0: Home + Sidebar redesign
+# ---------------------------------------------------------------------------
+
+def test_v0110_home_hero_present(page) -> None:
+    """Home view hero is present when showing the home/empty view."""
+    page.evaluate("""() => {
+        allSessions = [];
+        allFolders = [];
+        showEmptyView();
+    }""")
+    page.wait_for_timeout(200)
+    visible = page.evaluate("!!document.querySelector('.home-hero')")
+    assert visible, ".home-hero must be present on the home view"
+
+
+def test_v0110_home_zero_state_shows_empty_message(page) -> None:
+    """With no sessions, the home shows a zero-state message instead of recent cards."""
+    page.evaluate("""() => {
+        allSessions = [];
+        allFolders = [];
+        showEmptyView();
+    }""")
+    page.wait_for_timeout(200)
+    zero = page.evaluate("!!document.querySelector('.home-zero-recents')")
+    assert zero, ".home-zero-recents must be visible when no sessions"
+    grid = page.evaluate("!!document.querySelector('#home-recents-grid')")
+    assert not grid, "#home-recents-grid must not exist when no sessions"
+
+
+def test_v0110_home_recent_cards_shown_with_sessions(page) -> None:
+    """With sessions, the home shows recent session cards."""
+    page.evaluate("""() => {
+        allSessions = [
+            {id:'s1', name:'Alpha Meeting', status:'completed', segment_count:3, folder_id:null,
+             started_at:'2026-06-29T10:00:00', duration_seconds:120, notes_text:'Some notes'},
+            {id:'s2', name:'Beta Call', status:'completed', segment_count:1, folder_id:null,
+             started_at:'2026-06-28T15:30:00', duration_seconds:60, notes_text:''},
+        ];
+        allFolders = [];
+        showEmptyView();
+    }""")
+    page.wait_for_timeout(200)
+    grid_present = page.evaluate("!!document.querySelector('#home-recents-grid')")
+    assert grid_present, "#home-recents-grid must be present with sessions"
+    card_count = page.evaluate("document.querySelectorAll('.session-recent-card').length")
+    assert card_count >= 1, "At least one recent card must be rendered"
+
+
+def test_v0110_home_recent_card_click_opens_session(page) -> None:
+    """Clicking a recent card calls selectSession with the correct id."""
+    page.evaluate("""() => {
+        allSessions = [
+            {id:'s1', name:'Alpha', status:'completed', segment_count:2, folder_id:null,
+             started_at:'2026-06-29T10:00:00', duration_seconds:90, notes_text:''},
+        ];
+        allFolders = [];
+        window.__cardClicks = [];
+        window.__origSelectSession5 = window.selectSession;
+        window.selectSession = async (id) => { window.__cardClicks.push(id); };
+        showEmptyView();
+    }""")
+    page.wait_for_timeout(200)
+    page.evaluate("document.querySelector('.session-recent-card')?.click()")
+    page.wait_for_timeout(200)
+    clicks = page.evaluate("window.__cardClicks")
+    page.evaluate("window.selectSession = window.__origSelectSession5")
+    assert 's1' in clicks, f"Clicking a recent card must call selectSession('s1'), got {clicks!r}"
+
+
+def test_v0110_sidebar_groups_by_date(page) -> None:
+    """Sidebar session list renders date group labels (Today, Yesterday, etc.)."""
+    page.evaluate("""() => {
+        const now = new Date();
+        const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12, 0).toISOString();
+        allSessions = [
+            {id:'s1', name:'Today session', status:'completed', segment_count:1, folder_id:null,
+             started_at:now.toISOString(), duration_seconds:30},
+            {id:'s2', name:'Yesterday session', status:'completed', segment_count:1, folder_id:null,
+             started_at:yesterday, duration_seconds:30},
+        ];
+        allFolders = [];
+        renderSessionList();
+    }""")
+    page.wait_for_timeout(150)
+    label_count = page.evaluate("document.querySelectorAll('.session-group-label').length")
+    assert label_count >= 1, "Date group labels must be rendered in the sidebar"
+    all_text = page.evaluate("""
+        Array.from(document.querySelectorAll('.session-group-label')).map(el => el.textContent).join(' ')
+    """)
+    assert 'Today' in all_text or 'Yesterday' in all_text, \
+        f"Expected Today/Yesterday group, got: {all_text!r}"
+
+
+def test_v0110_sidebar_no_checkbox_without_select_mode(page) -> None:
+    """Session rows have NO visible checkbox until Select mode is entered."""
+    page.evaluate("""() => {
+        allSessions = [
+            {id:'s1', name:'A', status:'completed', segment_count:0, folder_id:null,
+             started_at:null, duration_seconds:null},
+        ];
+        allFolders = [];
+        document.getElementById('sidebar').classList.remove('select-mode');
+        selectModeActive = false;
+        renderSessionList();
+    }""")
+    page.wait_for_timeout(150)
+    visible = page.evaluate("""() => {
+        const cb = document.querySelector('#session-list .session-checkbox');
+        return cb ? getComputedStyle(cb).display !== 'none' : false;
+    }""")
+    assert not visible, "Session checkboxes must be hidden (display:none) when not in select mode"
+
+
+def test_v0110_sidebar_select_toggle_reveals_checkboxes(page) -> None:
+    """Clicking the Select toggle reveals checkboxes."""
+    page.evaluate("""() => {
+        allSessions = [
+            {id:'s1', name:'A', status:'completed', segment_count:0, folder_id:null,
+             started_at:null, duration_seconds:null},
+        ];
+        allFolders = [];
+        document.getElementById('sidebar').classList.remove('select-mode');
+        selectModeActive = false;
+        renderSessionList();
+    }""")
+    page.wait_for_timeout(150)
+    page.evaluate("document.getElementById('select-toggle-btn').click()")
+    page.wait_for_timeout(150)
+    visible = page.evaluate("""() => {
+        const cb = document.querySelector('#session-list .session-checkbox');
+        return cb ? getComputedStyle(cb).display !== 'none' : false;
+    }""")
+    page.evaluate("if (selectModeActive) toggleSelectMode()")
+    assert visible, "Checkboxes must become visible when select mode is toggled on"
+
+
+def test_v0110_sidebar_collapsed_by_default(page) -> None:
+    """On first run (no prior localStorage), the sidebar is collapsed."""
+    collapsed = page.evaluate("""() => {
+        localStorage.removeItem('escriba-sidebar-collapsed');
+        restoreSidebarState();
+        return document.getElementById('sidebar').classList.contains('collapsed');
+    }""")
+    assert collapsed, "Sidebar must be collapsed by default (no prior localStorage)"
+
+
+def test_v0110_sidebar_expand_collapse_persists(page) -> None:
+    """Expanding and collapsing the sidebar persists to localStorage."""
+    page.evaluate("""() => {
+        document.getElementById('sidebar').classList.add('collapsed');
+        document.body.classList.add('sidebar-collapsed');
+        localStorage.setItem('escriba-sidebar-collapsed', '1');
+    }""")
+    page.evaluate("toggleSidebar()")
+    page.wait_for_timeout(100)
+    stored = page.evaluate("localStorage.getItem('escriba-sidebar-collapsed')")
+    assert stored == '0', f"localStorage must be '0' after expanding, got {stored!r}"
+    page.evaluate("toggleSidebar()")
+    page.wait_for_timeout(100)
+    stored2 = page.evaluate("localStorage.getItem('escriba-sidebar-collapsed')")
+    assert stored2 == '1', f"localStorage must be '1' after collapsing, got {stored2!r}"
+
+
+def test_v0110_one_record_control_on_home(page) -> None:
+    """On home view: hero record present, topbar record hidden."""
+    page.evaluate("""() => {
+        allSessions = [];
+        allFolders = [];
+        showEmptyView();
+    }""")
+    page.wait_for_timeout(200)
+    hero_present = page.evaluate("!!document.getElementById('btn-hero-record')")
+    assert hero_present, "#btn-hero-record must exist on home view"
+    topbar_display = page.evaluate("""() => {
+        const btn = document.getElementById('btn-record');
+        return btn ? getComputedStyle(btn).display : 'missing';
+    }""")
+    assert topbar_display == 'none', \
+        f"#btn-record (topbar) must be display:none on home, got {topbar_display!r}"
+
+
+def test_v0110_topbar_record_shown_on_session_view(page) -> None:
+    """On a session view, the topbar record button is visible."""
+    page.evaluate("""() => {
+        selectedSessionId = 's1';
+        viewingHistory = true;
+        showSessionView();
+    }""")
+    page.wait_for_timeout(200)
+    topbar_display = page.evaluate("""() => {
+        const btn = document.getElementById('btn-record');
+        return btn ? getComputedStyle(btn).display : 'missing';
+    }""")
+    assert topbar_display != 'none', \
+        f"#btn-record must be visible on session view, got {topbar_display!r}"
+
+
+def test_v0110_settings_accessible_from_topbar(page) -> None:
+    """The topbar contains a Settings button accessible when sidebar is collapsed."""
+    settings_in_topbar = page.evaluate("""() => {
+        const topbar = document.getElementById('topbar');
+        return topbar ? !!topbar.querySelector('[aria-label="Settings"]') : false;
+    }""")
+    assert settings_in_topbar, "Topbar must contain a Settings button (aria-label='Settings')"
+
+
+def test_v0110_bulk_delete_removes_home_recents_card(page) -> None:
+    """Regression T1: after bulk-deleting a session that appeared in home recents,
+    its card must no longer appear in the grid (no ghost cards)."""
+    page.evaluate("""() => {
+        allSessions = [
+            {id:'del1', name:'To Delete', status:'completed', segment_count:2, folder_id:null,
+             started_at:new Date().toISOString(), duration_seconds:60},
+            {id:'keep1', name:'Keep Me', status:'completed', segment_count:1, folder_id:null,
+             started_at:new Date().toISOString(), duration_seconds:30},
+        ];
+        allFolders = [];
+        showEmptyView();
+    }""")
+    page.wait_for_timeout(200)
+
+    # Confirm both cards are initially present in the home recents grid
+    initial_count = page.evaluate("""
+        document.querySelectorAll('#home-recents-section .session-recent-card').length
+    """)
+    assert initial_count == 2, f"Expected 2 recent cards initially, got {initial_count}"
+
+    # Simulate the state after DELETE api call: remove 'del1' from allSessions,
+    # then call refreshSessionList + renderHomeView (what deleteBulkSelected does)
+    page.evaluate("""() => {
+        allSessions = allSessions.filter(s => s.id !== 'del1');
+        renderSessionList();
+        renderHomeView();
+    }""")
+    page.wait_for_timeout(150)
+
+    # The deleted session card must no longer appear
+    remaining = page.evaluate("""() => {
+        const cards = document.querySelectorAll('#home-recents-section .session-recent-card');
+        return Array.from(cards).map(c => c.dataset.id || c.getAttribute('data-id') || c.textContent.trim());
+    }""")
+    del1_present = any('del1' in str(r) or 'To Delete' in str(r) for r in remaining)
+    assert not del1_present, \
+        f"Ghost card for deleted session must not appear in home recents. Cards: {remaining}"
+    assert len(remaining) == 1, \
+        f"Expected exactly 1 remaining card, got {len(remaining)}: {remaining}"
+
+
+# v0.11.0 Round 2: live-view single record control
+def test_v0110r2_live_view_topbar_record_hidden(page) -> None:
+    """On the live view (body.on-live), the topbar #btn-record is hidden."""
+    page.evaluate("""() => {
+        selectedSessionId = null;
+        viewingHistory = false;
+        showLiveView();
+    }""")
+    page.wait_for_timeout(150)
+    display = page.evaluate("""() => {
+        const btn = document.getElementById('btn-record');
+        return btn ? getComputedStyle(btn).display : 'missing';
+    }""")
+    assert display == 'none', \
+        f"#btn-record must be display:none on live view (body.on-live), got {display!r}"
+
+
+def test_v0110r2_status_badge_stop_control_while_recording(page) -> None:
+    """While recording, #status-badge has aria-label='Stop recording' and clicking it calls toggleRecording."""
+    page.evaluate("""() => {
+        showLiveView();
+        const badge = document.getElementById('status-badge');
+        badge.className = 'recording';
+        badge.setAttribute('aria-label', 'Stop recording');
+        document.getElementById('status-text').textContent = 'Recording';
+    }""")
+    page.wait_for_timeout(100)
+
+    aria_label = page.evaluate("document.getElementById('status-badge').getAttribute('aria-label')")
+    assert aria_label == 'Stop recording', \
+        f"#status-badge must have aria-label='Stop recording' while recording, got {aria_label!r}"
+
+    # Spy: replace toggleRecording with a counter, click, assert called once
+    page.evaluate("""() => {
+        window._toggleRecordingCalls = 0;
+        const orig = window.toggleRecording;
+        window.toggleRecording = function() { window._toggleRecordingCalls++; };
+    }""")
+    page.evaluate("document.getElementById('status-badge').click()")
+    page.wait_for_timeout(100)
+    calls = page.evaluate("window._toggleRecordingCalls")
+    assert calls == 1, \
+        f"Clicking #status-badge while recording must invoke toggleRecording once, got {calls} calls"
+
+
+def test_v0110r2_status_badge_idle_does_not_stop(page) -> None:
+    """While idle, clicking #status-badge does NOT invoke toggleRecording."""
+    page.evaluate("""() => {
+        showLiveView();
+        const badge = document.getElementById('status-badge');
+        badge.className = 'idle';
+        badge.setAttribute('aria-label', 'Recording status');
+        document.getElementById('status-text').textContent = 'Idle';
+        window._toggleRecordingCalls = 0;
+        window.toggleRecording = function() { window._toggleRecordingCalls++; };
+    }""")
+    page.evaluate("document.getElementById('status-badge').click()")
+    page.wait_for_timeout(100)
+    calls = page.evaluate("window._toggleRecordingCalls")
+    assert calls == 0, \
+        f"Clicking #status-badge while idle must NOT invoke toggleRecording, got {calls} calls"
+
+
+def test_v0110r2_exactly_one_record_control_per_view(page) -> None:
+    """Each view exposes exactly one record control: hero on home, status-badge on live, topbar btn on session."""
+    # Home: hero present, topbar btn hidden
+    page.evaluate("""() => { allSessions = []; allFolders = []; showEmptyView(); }""")
+    page.wait_for_timeout(150)
+    hero = page.evaluate("getComputedStyle(document.getElementById('btn-hero-record')).display")
+    topbar_home = page.evaluate("getComputedStyle(document.getElementById('btn-record')).display")
+    assert hero != 'none', "Home: hero record button must be visible"
+    assert topbar_home == 'none', "Home: topbar record button must be hidden"
+
+    # Live: status-badge present and interactive, topbar btn hidden
+    page.evaluate("""() => { viewingHistory = false; showLiveView(); }""")
+    page.wait_for_timeout(150)
+    topbar_live = page.evaluate("getComputedStyle(document.getElementById('btn-record')).display")
+    badge_tag = page.evaluate("document.getElementById('status-badge').tagName.toLowerCase()")
+    assert topbar_live == 'none', "Live: topbar record button must be hidden"
+    assert badge_tag == 'button', "Live: #status-badge must be a <button> element"
+
+    # Session: topbar btn visible
+    page.evaluate("""() => { selectedSessionId = 's1'; viewingHistory = true; showSessionView(); }""")
+    page.wait_for_timeout(150)
+    topbar_session = page.evaluate("getComputedStyle(document.getElementById('btn-record')).display")
+    assert topbar_session != 'none', "Session: topbar record button must be visible"

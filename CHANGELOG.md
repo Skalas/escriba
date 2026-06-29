@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-29
+
+A welcoming home, a calmer sidebar, and one clear record control.
+
+### Added
+- **Home start page** — replaces the dead "No session selected" state with a greeting, a **Start recording** hero, and a **"Jump back in"** grid of recent sessions (open on click). Friendly zero-state when there are no sessions yet.
+- **Persistent top bar** — settings is always reachable (even with the sidebar hidden), and a contextual **Record** control lives here on session views.
+
+### Changed
+- **Sidebar redesign** — sessions are **grouped by date** (Today / Yesterday / Previous 7 days / Earlier) with clean rows; per-row checkboxes are replaced by an opt-in **Select** mode (multi-select + bulk Move / Merge / Delete). The sidebar is **collapsed by default**, opening straight into the home; the collapsed/expanded choice persists.
+- **One record control per view** — the home hero, the session-view top-bar button, and the live view's **"● Recording" badge (click to stop)** — never two at once. Removed the duplicate record buttons.
+- **Settings** moved from the sidebar into the top bar so it's reachable when the sidebar is hidden.
+
+### Fixed
+- Bulk-deleting a session left clickable "ghost" cards on the home; the recents now refresh after deletion.
+- Bulk merge/move left the sidebar stuck in Select mode.
+- Accessibility: Select toggle exposes pressed state; the hero record button stays in sync with recording state; date group labels no longer pollute the heading outline; the main region keeps a heading when the sidebar is collapsed.
+
 ## [0.10.3] - 2026-06-29
 
 ### Changed
