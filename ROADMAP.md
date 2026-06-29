@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-29 · Current version: `0.11.0` (home + sidebar redesign) · next up: `v1.0.0` (release hardening)_
+_Last updated: 2026-06-29 · Current version: `0.11.1` (home + sidebar redesign + UI polish) · next up: `v1.0.0` (release hardening)_
 
 ---
 

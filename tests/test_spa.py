@@ -1234,9 +1234,9 @@ def test_v0110_bulk_delete_removes_home_recents_card(page) -> None:
         f"Expected exactly 1 remaining card, got {len(remaining)}: {remaining}"
 
 
-# v0.11.0 Round 2: live-view single record control
-def test_v0110r2_live_view_topbar_record_hidden(page) -> None:
-    """On the live view (body.on-live), the topbar #btn-record is hidden."""
+# Persistent top-bar record control: one consistently-placed button across content views
+def test_topbar_record_visible_on_live(page) -> None:
+    """On the live view, the persistent top-bar #btn-record is visible (not hidden)."""
     page.evaluate("""() => {
         selectedSessionId = null;
         viewingHistory = false;
@@ -1247,76 +1247,53 @@ def test_v0110r2_live_view_topbar_record_hidden(page) -> None:
         const btn = document.getElementById('btn-record');
         return btn ? getComputedStyle(btn).display : 'missing';
     }""")
-    assert display == 'none', \
-        f"#btn-record must be display:none on live view (body.on-live), got {display!r}"
+    assert display != 'none', \
+        f"#btn-record must be visible on live view (persistent top-bar control), got {display!r}"
 
 
-def test_v0110r2_status_badge_stop_control_while_recording(page) -> None:
-    """While recording, #status-badge has aria-label='Stop recording' and clicking it calls toggleRecording."""
+def test_topbar_record_is_stop_control_while_recording(page) -> None:
+    """While recording, the top-bar #btn-record is the stop control: it carries the recording
+    class and an aria-label of 'Stop recording'."""
     page.evaluate("""() => {
         showLiveView();
-        const badge = document.getElementById('status-badge');
-        badge.className = 'recording';
-        badge.setAttribute('aria-label', 'Stop recording');
-        document.getElementById('status-text').textContent = 'Recording';
+        const btn = document.getElementById('btn-record');
+        btn.classList.add('recording');
+        btn.setAttribute('aria-label', 'Stop recording');
     }""")
     page.wait_for_timeout(100)
-
-    aria_label = page.evaluate("document.getElementById('status-badge').getAttribute('aria-label')")
+    aria_label = page.evaluate("document.getElementById('btn-record').getAttribute('aria-label')")
     assert aria_label == 'Stop recording', \
-        f"#status-badge must have aria-label='Stop recording' while recording, got {aria_label!r}"
+        f"#btn-record must be the stop control while recording, got {aria_label!r}"
 
-    # Spy: replace toggleRecording with a counter, click, assert called once
-    page.evaluate("""() => {
-        window._toggleRecordingCalls = 0;
-        const orig = window.toggleRecording;
-        window.toggleRecording = function() { window._toggleRecordingCalls++; };
-    }""")
-    page.evaluate("document.getElementById('status-badge').click()")
+
+def test_live_view_has_no_status_badge(page) -> None:
+    """The redundant live-view status pill is gone; recording state is conveyed solely by the
+    top-bar record/stop button and the Live Recording header."""
+    page.evaluate("""() => { showLiveView(); }""")
     page.wait_for_timeout(100)
-    calls = page.evaluate("window._toggleRecordingCalls")
-    assert calls == 1, \
-        f"Clicking #status-badge while recording must invoke toggleRecording once, got {calls} calls"
+    exists = page.evaluate("!!document.getElementById('status-badge')")
+    assert not exists, "#status-badge must be removed (redundant with the top-bar record control)"
 
 
-def test_v0110r2_status_badge_idle_does_not_stop(page) -> None:
-    """While idle, clicking #status-badge does NOT invoke toggleRecording."""
-    page.evaluate("""() => {
-        showLiveView();
-        const badge = document.getElementById('status-badge');
-        badge.className = 'idle';
-        badge.setAttribute('aria-label', 'Recording status');
-        document.getElementById('status-text').textContent = 'Idle';
-        window._toggleRecordingCalls = 0;
-        window.toggleRecording = function() { window._toggleRecordingCalls++; };
-    }""")
-    page.evaluate("document.getElementById('status-badge').click()")
-    page.wait_for_timeout(100)
-    calls = page.evaluate("window._toggleRecordingCalls")
-    assert calls == 0, \
-        f"Clicking #status-badge while idle must NOT invoke toggleRecording, got {calls} calls"
-
-
-def test_v0110r2_exactly_one_record_control_per_view(page) -> None:
-    """Each view exposes exactly one record control: hero on home, status-badge on live, topbar btn on session."""
-    # Home: hero present, topbar btn hidden
+def test_record_control_placement_per_view(page) -> None:
+    """Record control placement: hero on home (onboarding); a single persistent top-bar button on
+    both the live and session views (no separate live status control)."""
+    # Home: hero present, top-bar btn hidden (onboarding welcome CTA)
     page.evaluate("""() => { allSessions = []; allFolders = []; showEmptyView(); }""")
     page.wait_for_timeout(150)
     hero = page.evaluate("getComputedStyle(document.getElementById('btn-hero-record')).display")
     topbar_home = page.evaluate("getComputedStyle(document.getElementById('btn-record')).display")
     assert hero != 'none', "Home: hero record button must be visible"
-    assert topbar_home == 'none', "Home: topbar record button must be hidden"
+    assert topbar_home == 'none', "Home: top-bar record button must be hidden"
 
-    # Live: status-badge present and interactive, topbar btn hidden
+    # Live: top-bar btn is the single record control
     page.evaluate("""() => { viewingHistory = false; showLiveView(); }""")
     page.wait_for_timeout(150)
     topbar_live = page.evaluate("getComputedStyle(document.getElementById('btn-record')).display")
-    badge_tag = page.evaluate("document.getElementById('status-badge').tagName.toLowerCase()")
-    assert topbar_live == 'none', "Live: topbar record button must be hidden"
-    assert badge_tag == 'button', "Live: #status-badge must be a <button> element"
+    assert topbar_live != 'none', "Live: top-bar record button must be visible"
 
-    # Session: topbar btn visible
+    # Session: top-bar btn visible (same placement as live)
     page.evaluate("""() => { selectedSessionId = 's1'; viewingHistory = true; showSessionView(); }""")
     page.wait_for_timeout(150)
     topbar_session = page.evaluate("getComputedStyle(document.getElementById('btn-record')).display")
-    assert topbar_session != 'none', "Session: topbar record button must be visible"
+    assert topbar_session != 'none', "Session: top-bar record button must be visible"
