@@ -1078,6 +1078,7 @@
 
   .btn-generate { background: var(--coral-fill); color: var(--on-coral); display: inline-flex; align-items: center; gap: 8px; }
   .btn-generate:hover:not(:disabled) { background: var(--coral-fill-hover); box-shadow: 0 2px 8px var(--coral-subtle); }
+  .btn-generate:disabled { opacity: 0.45; cursor: not-allowed; }
   .btn-generate.loading { pointer-events: none; opacity: 0.7; }
 
   #notes-output { margin-top: 12px; font-size: 14px; line-height: 1.65; display: none; }
@@ -1851,9 +1852,19 @@ function updateLiveNotesButton() {
     btn.innerHTML = LIVE_BTN_LOADING;
   } else {
     btn.classList.remove('loading');
-    btn.disabled = false;
     btn.innerHTML = LIVE_BTN_DEFAULT;
+    updateEnhanceEnabled();
   }
+}
+
+function updateEnhanceEnabled() {
+  const btn = document.getElementById('btn-notes');
+  if (!btn || liveNotesGenerating) return;
+  const hasNote = !!(document.getElementById('live-notepad').value || '').trim();
+  const segCount = parseInt(document.getElementById('seg-count').textContent || '0', 10) || 0;
+  const canEnhance = hasNote || segCount > 0;
+  btn.disabled = !canEnhance;
+  btn.title = canEnhance ? '' : 'Jot a note or start recording to enhance';
 }
 
 let _liveNotepadTimer = null;
@@ -2158,7 +2169,7 @@ async function syncStatus() {
       document.getElementById('seg-count').textContent = s.segments_count || 0;
       if (!lastWasRecording) showLiveView();
       startPolling();
-      if ((s.segments_count || 0) > 0) document.getElementById('notes-section').classList.add('visible');
+      updateEnhanceEnabled();
     } else {
       badge.className = 'idle'; text.textContent = 'Idle';
       recordBtn.classList.remove('recording');
@@ -2848,6 +2859,7 @@ function toggleLiveTranscript() {
 function onLiveNotepadInput() {
   clearTimeout(_liveNotepadTimer);
   _liveNotepadTimer = setTimeout(saveLiveNotepad, 1000);
+  updateEnhanceEnabled();
 }
 
 async function saveLiveNotepad() {
@@ -3124,7 +3136,7 @@ async function generateNotes() {
         if (notesPad) notesPad.textContent = 'Enhanced notes';
         const hint = document.getElementById('live-pad-hint');
         if (hint) hint.textContent = 'Your words kept · AI-added marked';
-        out.innerHTML = buildProvenanceHtml(userNotesText, renderMarkdown(res.notes));
+        out.innerHTML = buildProvenanceHtml(userNotesText, renderMarkdown(res.notes), false);
         out.classList.add('visible');
         // Show legend
         const legend = document.getElementById('live-enhance-legend');
@@ -3245,10 +3257,10 @@ function renderMarkdown(text) {
 }
 
 // --- Provenance HTML builder (shared by live enhance + session render) ---
-function buildProvenanceHtml(userNotes, aiHtml) {
+function buildProvenanceHtml(userNotes, aiHtml, showUserHeading = true) {
   let html = '';
   if (userNotes) {
-    html += '<div class="live-you-label">Your notes</div>';
+    if (showUserHeading) html += '<div class="live-you-label">Your notes</div>';
     html += '<div class="live-you-text">' + escHtml(userNotes) + '</div>';
   }
   if (aiHtml) {
@@ -3729,7 +3741,9 @@ function showLiveView() {
   document.getElementById('session-view').style.display = 'none';
   document.getElementById('empty-view').style.display = 'none';
   document.getElementById('settings-view').style.display = 'none';
+  document.getElementById('notes-section').classList.add('visible');
   updateLiveNotesButton();
+  updateEnhanceEnabled();
 }
 function showSessionView() {
   document.getElementById('live-view').style.display = 'none';
