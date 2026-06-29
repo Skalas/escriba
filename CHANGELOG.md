@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-06-29
+
+Polish on the jot-and-enhance flow (surfaced running the real app).
+
+### Fixed
+- **"Enhance notes" was hidden until a transcript existed** — the action bar is now always visible in the live view, and the button is disabled (with a hint) until there's a note or transcript to enhance, enabling the moment you jot something or a segment lands.
+- **Disabled Enhance button looked clickable** — it now has a clear disabled appearance (reduced opacity + not-allowed cursor).
+- **Duplicate "Your notes" heading** — removed the redundant heading shown above the editable notepad after enhancing (the saved-session view keeps its heading).
+
 ## [0.10.1] - 2026-06-28
 
 Reshaped the live note experience into a Granola-style **jot & enhance** flow (the capability shipped in 0.10.0; this fixes the flow).

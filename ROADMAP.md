@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-28 · Current version: `0.10.1` (Notepad flow — jot & enhance) · next up: `v1.0.0` (release hardening)_
+_Last updated: 2026-06-29 · Current version: `0.10.2` (Notepad flow polish) · next up: `v1.0.0` (release hardening)_
 
 ---
 
@@ -183,6 +183,7 @@ No new features — release-readiness only.
 - [ ] Clean install-from-scratch verification (one-liner installer → `/Applications`).
 - [ ] Docs/onboarding pass; version-string + `uv.lock` audit.
 - [ ] Triage the remaining P2 backlog (persistence indexes, schema versioning, typing) — pull in only what release quality demands.
+- [ ] Make `swift-audio-capture/test_integration.py::test_capture_short` skip gracefully when no live audio input device is available (it hangs headless / in CI today), so `uv run pytest` is reliable everywhere.
 
 **Done when:** a clean install runs a real meeting end-to-end without manual intervention; docs match behavior; version metadata is consistent.
 
