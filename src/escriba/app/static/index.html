@@ -532,33 +532,34 @@
     padding-left: 29px;
   }
   .btn-record {
-    width: 44px; height: 44px; min-width: 44px;
-    border-radius: 50%;
-    border: 2px solid var(--border);
+    width: 100%;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
     cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    padding: 0;
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px;
     background: var(--card);
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    font-weight: 500;
+    text-align: left;
     transition: all var(--transition-normal);
-    position: relative;
+    margin-top: 10px;
   }
   .btn-record:hover { border-color: var(--danger); background: rgba(255, 59, 48, 0.06); }
-  .btn-record.recording { background: var(--danger); border-color: var(--danger); box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.2); }
-  .btn-record.recording:hover { background: var(--danger-hover); border-color: var(--danger-hover); }
-  @keyframes recording-ring { 0%, 100% { box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.2); } 50% { box-shadow: 0 0 0 8px rgba(255, 59, 48, 0.08); } }
-  .btn-record.recording { animation: recording-ring 2s ease-in-out infinite; }
+  .btn-record.recording { border-color: var(--danger); color: var(--danger); background: rgba(239, 68, 68, 0.06); }
+  .btn-record.recording:hover { background: rgba(239, 68, 68, 0.12); }
+  .btn-record:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .record-icon {
     display: block;
-    width: 16px; height: 16px;
+    width: 8px; height: 8px;
     border-radius: 50%;
     background: var(--danger);
-    transition: border-radius var(--transition-normal), background var(--transition-normal), width var(--transition-normal), height var(--transition-normal);
+    flex-shrink: 0;
+    transition: border-radius var(--transition-normal);
   }
-  .btn-record.recording .record-icon {
-    border-radius: 3px;
-    width: 14px; height: 14px;
-    background: white;
-  }
+  .btn-record.recording .record-icon { border-radius: 2px; }
 
   /* Folder groups */
   .folder-group { margin-bottom: 2px; }
@@ -1305,11 +1306,10 @@
 <div class="sidebar" id="sidebar">
   <div class="sidebar-header">
     <h1>Escriba <span class="header-actions"><button class="btn-icon" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Collapse sidebar"><svg class="icon icon-lg" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg></button><button class="btn-icon" onclick="showSettingsView()" title="Settings" aria-label="Settings"><svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg></button></span></h1>
-    <div style="display:flex;justify-content:center;margin-top:10px;">
-      <button class="btn-record" id="btn-record" onclick="toggleRecording()" title="Start recording" aria-label="Start recording">
-        <span class="record-icon" id="record-icon"></span>
-      </button>
-    </div>
+    <button class="btn-record" id="btn-record" onclick="toggleRecording()" title="Start recording" aria-label="Start recording">
+      <span class="record-icon" id="record-icon"></span>
+      <span class="record-label" id="record-label">Start recording</span>
+    </button>
     <div class="toolbar-row">
       <input type="checkbox" id="select-all-checkbox" class="session-checkbox" onclick="toggleSelectAll(this.checked)" title="Select all">
       <input type="text" class="search-box" id="search-box" placeholder="Search transcripts..." oninput="onTranscriptSearchInput()" aria-label="Search transcripts">
@@ -1414,8 +1414,13 @@
         <div class="speaker-list" id="session-speakers-list"></div>
       </div>
       <div class="card">
-        <h3>Notes <button class="btn-secondary" id="btn-toggle-notes-edit" onclick="toggleNotesEdit()" style="font-size:11px;padding:4px 10px;">Edit</button></h3>
+        <div class="live-pad-head">
+          <h3 id="session-notes-title">Notes</h3>
+          <span class="live-pad-hint" id="session-notes-hint" style="display:none;">Your words kept · AI marked</span>
+          <button class="btn-secondary" id="btn-toggle-notes-edit" onclick="toggleNotesEdit()" style="font-size:11px;padding:4px 10px;margin-left:auto;">Edit</button>
+        </div>
         <div class="notes-rendered" id="notes-rendered" onclick="toggleNotesEdit()"></div>
+        <div id="session-enhance-legend" style="display:none;"></div>
         <div class="notes-editor" id="notes-editor">
           <textarea id="session-notes-input" placeholder="Your notes (manual + AI-generated)..." rows="8"
             style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;"></textarea>
@@ -1425,11 +1430,18 @@
             <button class="btn-danger-outline" onclick="clearNotes()">Clear Notes</button>
           </div>
         </div>
-        <div class="session-notes-enhance-row">
+        <div id="session-notes-section" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border-light);margin-top:10px;">
+          <button class="btn-generate" id="btn-session-notes" onclick="generateSessionNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Enhance notes</button>
+          <button class="live-link-btn" id="btn-session-add-instructions" aria-expanded="false" aria-controls="session-instructions-panel" onclick="toggleSessionInstructions()">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            Add instructions
+            <svg class="icon icon-sm live-link-chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+        </div>
+        <div id="session-instructions-panel" class="live-instructions">
           <div class="prompt-chips" id="session-prompt-chips"></div>
-          <textarea id="session-prompt-input" placeholder="Select prompts above and/or type your own..." rows="2"
+          <textarea id="session-prompt-input" placeholder="Optional — steer the enhancement (tone, focus, format)…" rows="2"
             style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;margin-top:8px;"></textarea>
-          <button class="btn-generate" id="btn-session-notes" onclick="generateSessionNotes()"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes</button>
         </div>
       </div>
       <div class="card audio-player-card" id="audio-player-card" style="display:none;">
@@ -1820,7 +1832,8 @@ let pendingHighlightQuery = '';
 let notesGeneratingFor = null;
 let liveNotesGenerating = false;
 
-const NOTES_BTN_DEFAULT = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Generate Notes';
+const NOTES_BTN_ENHANCE = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Enhance notes';
+const NOTES_BTN_REENHANCE = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Re-enhance';
 const NOTES_BTN_GENERATING = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:currentColor;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
 const LIVE_BTN_DEFAULT = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Enhance notes';
 const LIVE_BTN_LOADING = '<svg class="icon icon-sm live-spinner" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Enhancing…';
@@ -1839,7 +1852,8 @@ function updateSessionNotesButton(sessionId) {
   } else {
     btn.classList.remove('loading');
     btn.disabled = false;
-    btn.innerHTML = NOTES_BTN_DEFAULT;
+    const hasNotes = !!(document.getElementById('session-notes-input')?.value.trim());
+    btn.innerHTML = hasNotes ? NOTES_BTN_REENHANCE : NOTES_BTN_ENHANCE;
   }
 }
 
@@ -2165,6 +2179,9 @@ async function syncStatus() {
       badge.className = 'recording'; text.textContent = 'Recording';
       recordBtn.classList.add('recording');
       recordBtn.title = 'Stop recording';
+      recordBtn.setAttribute('aria-label', 'Stop recording');
+      const recLbl = document.getElementById('record-label');
+      if (recLbl) recLbl.textContent = 'Stop recording';
       document.getElementById('elapsed').textContent = s.elapsed || '--:--:--';
       document.getElementById('seg-count').textContent = s.segments_count || 0;
       if (!lastWasRecording) showLiveView();
@@ -2174,6 +2191,9 @@ async function syncStatus() {
       badge.className = 'idle'; text.textContent = 'Idle';
       recordBtn.classList.remove('recording');
       recordBtn.title = 'Start recording';
+      recordBtn.setAttribute('aria-label', 'Start recording');
+      const recLbl = document.getElementById('record-label');
+      if (recLbl) recLbl.textContent = 'Start recording';
       stopPolling();
     }
     // Keep "Back to Live" in sync if recording starts/stops while viewing a session
@@ -2846,6 +2866,14 @@ function toggleLiveInstructions() {
   btn.setAttribute('aria-expanded', String(open));
 }
 
+function toggleSessionInstructions() {
+  const panel = document.getElementById('session-instructions-panel');
+  const btn = document.getElementById('btn-session-add-instructions');
+  if (!panel || !btn) return;
+  const open = panel.classList.toggle('open');
+  btn.setAttribute('aria-expanded', String(open));
+}
+
 function toggleLiveTranscript() {
   const body = document.getElementById('live-tr-body');
   const toggle = document.getElementById('live-tr-toggle');
@@ -3277,7 +3305,11 @@ function renderNotesView(notesText) {
   const rendered = document.getElementById('notes-rendered');
   const editor = document.getElementById('notes-editor');
   const btn = document.getElementById('btn-toggle-notes-edit');
+  const legend = document.getElementById('session-enhance-legend');
+  const title = document.getElementById('session-notes-title');
+  const hint = document.getElementById('session-notes-hint');
   const userNotes = _currentSessionUserNotes || '';
+  const hasProvenance = !!(userNotes && notesText);
   if (userNotes && notesText) {
     // Both present: unified provenance view
     rendered.innerHTML = buildProvenanceHtml(userNotes, renderMarkdown(notesText));
@@ -3286,6 +3318,21 @@ function renderNotesView(notesText) {
     rendered.innerHTML = buildProvenanceHtml(userNotes, null);
   } else {
     rendered.innerHTML = renderMarkdown(notesText || '');
+  }
+  // Update card header
+  if (title) title.textContent = hasProvenance ? 'Enhanced notes' : 'Notes';
+  if (hint) hint.style.display = hasProvenance ? '' : 'none';
+  // Update legend
+  if (legend) {
+    if (hasProvenance) {
+      legend.style.display = '';
+      legend.className = 'live-legend';
+      legend.innerHTML =
+        '<span class="live-legend-sw"><span class="live-legend-bar" style="background:var(--text)"></span> Your words</span>' +
+        '<span class="live-legend-sw"><span class="live-legend-bar" style="background:var(--ai-rail)"></span> AI additions</span>';
+    } else {
+      legend.style.display = 'none';
+    }
   }
   rendered.classList.remove('hidden');
   editor.classList.remove('active');
