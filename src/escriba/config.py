@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 VALID_BACKENDS: frozenset[str] = frozenset(
-    {"mlx-whisper", "faster-whisper", "openai-whisper", "mps"}
+    {"mlx-whisper", "faster-whisper", "openai-whisper"}
 )
 VALID_AUDIO_SOURCES: frozenset[str] = frozenset({"system", "mic", "both"})
 VALID_KNOWLEDGE_PROVIDERS: frozenset[str] = frozenset({"local-markdown"})
@@ -448,6 +448,12 @@ class AppConfig:
             raise ConfigValidationError(
                 f"streaming.backend must be one of {sorted(VALID_BACKENDS)!r} "
                 f"(got {self.streaming.backend!r})"
+            )
+        if self.streaming.backend == "openai-whisper":
+            logger.warning(
+                "streaming.backend 'openai-whisper' is deprecated and will be removed in a "
+                "future release. It falls back to 'faster-whisper' at runtime. "
+                "Switch to 'mlx-whisper' (recommended on Apple Silicon) or 'faster-whisper'."
             )
         if self.audio.audio_source not in VALID_AUDIO_SOURCES:
             raise ConfigValidationError(
