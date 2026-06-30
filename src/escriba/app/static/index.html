@@ -1260,6 +1260,8 @@
   .notes-rendered a:hover { text-decoration: underline; }
   .notes-editor { display: none; }
   .notes-editor.active { display: block; }
+  .notes-editor-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 4px; }
+  .notes-editor textarea { max-height: 320px; overflow-y: auto; }
   .notes-rendered.hidden { display: none; }
 
   /* Move-to-folder dropdown */
@@ -1526,7 +1528,11 @@
         <div class="notes-rendered" id="notes-rendered" onclick="toggleNotesEdit()"></div>
         <div id="session-enhance-legend" style="display:none;"></div>
         <div class="notes-editor" id="notes-editor">
-          <textarea id="session-notes-input" placeholder="Your notes (manual + AI-generated)..." rows="8"
+          <p class="notes-editor-label">Your notes</p>
+          <textarea id="session-user-notes-input" placeholder="Context, reminders, background..." rows="4"
+            style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:12px;"></textarea>
+          <p class="notes-editor-label">AI / generated notes</p>
+          <textarea id="session-notes-input" placeholder="AI-generated summary..." rows="8"
             style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px;"></textarea>
           <div class="controls-row">
             <button class="btn-start" onclick="saveNotesAndRender()">Save Notes</button>
@@ -2251,6 +2257,17 @@ function restoreSidebarState() {
 }
 
 // --- Recording ---
+function resetLiveNotesUI() {
+  const notesOut = document.getElementById('notes-output');
+  if (notesOut) { notesOut.innerHTML = ''; notesOut.classList.remove('visible'); }
+  const title = document.getElementById('live-pad-title');
+  if (title) title.textContent = 'Your notes';
+  const hint = document.getElementById('live-pad-hint');
+  if (hint) hint.textContent = 'Autosaved · jot freely';
+  const legend = document.getElementById('live-enhance-legend');
+  if (legend) { legend.style.display = 'none'; legend.innerHTML = ''; }
+}
+
 async function toggleRecording() {
   const btn = document.getElementById('btn-record');
   if (btn.classList.contains('recording')) {
@@ -2273,6 +2290,7 @@ async function toggleRecording() {
     viewingHistory = false;
     const liveNotepadEl = document.getElementById('live-notepad');
     if (liveNotepadEl) liveNotepadEl.value = '';
+    resetLiveNotesUI();
     showLiveView();
   }
 }
@@ -2718,6 +2736,7 @@ async function selectSession(id) {
 
     document.getElementById('session-notes-input').value = s.notes_text || '';
     _currentSessionUserNotes = (s.user_notes || '').trim();
+    document.getElementById('session-user-notes-input').value = _currentSessionUserNotes;
     renderNotesView(s.notes_text || '');
     showSessionView();
     // Update selection highlight in-place instead of full re-render
@@ -3139,7 +3158,15 @@ async function appendNotesToSession(sessionId, newNotes) {
 async function saveNotes() {
   if (!selectedSessionId) return;
   const notes = document.getElementById('session-notes-input').value;
-  await saveNotesForSession(selectedSessionId, notes);
+  const userNotes = document.getElementById('session-user-notes-input').value;
+  await Promise.all([
+    saveNotesForSession(selectedSessionId, notes),
+    apiCall('/api/sessions/' + selectedSessionId + '/user-notes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_notes: userNotes }),
+    }),
+  ]);
+  _currentSessionUserNotes = userNotes;
 }
 
 async function fetchSessionExport(format) {
@@ -3306,6 +3333,9 @@ async function clearNotes() {
   if (!selectedSessionId) return;
   if (!await confirmDialog({ title: 'Clear notes?', message: 'All notes for this recording will be removed.', confirmText: 'Clear', danger: true })) return;
   document.getElementById('session-notes-input').value = '';
+  const userNotesEl = document.getElementById('session-user-notes-input');
+  if (userNotesEl) userNotesEl.value = '';
+  _currentSessionUserNotes = '';
   await saveNotes();
   renderNotesView('');
 }
@@ -3565,10 +3595,11 @@ function toggleNotesEdit() {
   if (editor.classList.contains('active')) {
     renderNotesView(document.getElementById('session-notes-input').value);
   } else {
+    document.getElementById('session-user-notes-input').value = _currentSessionUserNotes;
     rendered.classList.add('hidden');
     editor.classList.add('active');
     btn.textContent = 'Preview';
-    document.getElementById('session-notes-input').focus();
+    document.getElementById('session-user-notes-input').focus();
   }
 }
 
@@ -3578,6 +3609,8 @@ async function saveNotesAndRender() {
 }
 
 function cancelNotesEdit() {
+  const userNotesEl = document.getElementById('session-user-notes-input');
+  if (userNotesEl) userNotesEl.value = _currentSessionUserNotes;
   renderNotesView(document.getElementById('session-notes-input').value);
 }
 

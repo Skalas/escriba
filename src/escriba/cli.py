@@ -137,7 +137,7 @@ def cmd_live_stream(
     backend: str | None = typer.Option(
         None,
         "--backend",
-        help="Backend: faster-whisper|openai-whisper|mps|mlx-whisper.",
+        help="Backend: faster-whisper|openai-whisper|mlx-whisper.",
     ),
     metrics: bool = typer.Option(
         False,

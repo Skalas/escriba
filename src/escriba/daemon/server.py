@@ -64,7 +64,7 @@ class DaemonServer:
 
             self.running = True
 
-            # Registrar handlers de señales
+            # Register OS signal handlers for graceful shutdown
             signal.signal(signal.SIGINT, self._signal_handler)
             signal.signal(signal.SIGTERM, self._signal_handler)
 
@@ -75,11 +75,6 @@ class DaemonServer:
         except Exception as e:
             logger.error("Failed to start daemon: %s", e, exc_info=True)
             return False
-
-    def _signal_handler(self, signum, frame):
-        """Maneja señales para shutdown graceful."""
-        logger.info("Received signal %s, shutting down...", signum)
-        self.stop()
 
     def _accept_connections(self):
         """Acepta conexiones y procesa comandos."""
@@ -207,6 +202,11 @@ class DaemonServer:
         """Comando: stop (detener daemon)"""
         self.stop()
         return {"success": True, "message": "Daemon stopped"}
+
+    def _signal_handler(self, signum: int, frame: Any) -> None:
+        """Handle SIGINT/SIGTERM for graceful shutdown."""
+        logger.info("Received signal %s, stopping daemon...", signum)
+        self.stop()
 
     def stop(self):
         """Detiene el servidor daemon."""

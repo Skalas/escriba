@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-29 · Current version: `0.11.1` (home + sidebar redesign + UI polish) · next up: `v1.0.0` (release hardening)_
+_Last updated: 2026-06-30 · Current version: `0.12.0` (harden & shrink the core + notes-flow fixes) · next up: `v1.0.0` (release hardening)_
 
 ---
 
@@ -172,6 +172,26 @@ Last feature sprint before 1.0. Two scoped features (HOLD mode).
 UX patch on top of 0.10.0 (#57): notepad-primary live view, transcript demoted to a collapsible toggle, a single "Enhance notes" action with optional instructions, in-place accessible provenance (rail + "AI" chip + label, not color-alone), and a unified saved-session note via a shared `buildProvenanceHtml`. Review fixed a non-closable disclosure, an AI-chip contrast failure across themes, a reduced-motion spinner gap, and a dropped-user-notes case. Visual fidelity confirmed light + dark.
 
 **Deferred polish:** post-enhance, the editable notepad textarea and the rendered output both carry a "Your notes" heading (minor redundancy) — candidate for a quick follow-up (drop the in-output label, or transform the notepad in place like the mockup).
+
+---
+
+### `v0.12.0` — Harden & shrink the core (pre-1.0)  ·  _shipped 2026-06-30_
+
+A structural sprint before 1.0: shrink the surface and harden the request spine, with a batch of notes-flow fixes folded in from smoke. Mode HOLD (the `do_POST` spine governs the rigor).
+
+- [x] **Decompose `do_POST` (#67)** into per-route dispatch; isolate route handlers. **Harden route parsing (#68)** → malformed paths return `404`/`400`, same two-segment guard applied to `do_PUT`. **Tests (#69).**
+- [x] **Pay down layer-inversion + adapter debt (#70/#71/#72)** — export builders moved to `transcribe/formats.py`; `knowledge` no longer imports `app`; provider selection via a lazy factory; dead inner `except` removed; `_make_handler` deduped into `tests/conftest.py`.
+- [x] **Remove dead code (#73/#74)** — deprecated MPS backend (~369 LOC) deleted; `openai-whisper` warns + falls back. _(The daemon signal handler flagged as "dead" was **not** — it's an OS callback; review caught the false positive and it was restored.)_
+- [x] **Gate green (#75)** — ruff + mypy + pytest clean (276 tests).
+- [x] **Folded in from smoke:** live-enhanced notes persist across stop; new recording resets the notes panel; backend-fallback no-transcriber bug fixed (review catch); **edit your own notes on a saved session** (new `POST /api/sessions/:id/user-notes` + dual-field editor); edit-box overflow contained.
+
+**Done when:** the dispatcher is decomposed and malformed paths rejected; the layer inversion + adapter debt is paid down; dead code is gone; the full gate is green — all proven by tests. ✅ (Review caught a daemon-shutdown regression, a factory eager-construction crash, the layer inversion only being half-fixed, and a backend-fallback no-transcriber bug; smoke surfaced and folded in the notes-persistence, stale-panel, and edit-your-notes fixes. A claimed `null`-corruption blocker was adversarially rejected as a false positive.)
+
+**Deferred (with triggers — read these at next discover):**
+- **`/api/recording/start` failure handling** — the SPA's `if (!res.ok)` can throw if `apiCall` returns `null`/an HTTP error, bypassing the start flow. _Trigger:_ when `apiCall` is hardened to throw on 4xx/5xx, or a start failure is reported in use. → v1.0.0 hardening.
+- **`saveNotes()` has no per-call error attribution** (`Promise.all` of the notes + user-notes POSTs). _Trigger:_ same `apiCall` hardening.
+- **Saved-session generate path doesn't auto-persist** like the live path (`_generate_session_notes` returns without saving `notes_text`). _Trigger:_ users report regenerated notes lost on the saved-session view.
+- **`/api/version` exposes the absolute `project_dir`** path. _Trigger:_ v1.0.0 security pass, or any plan to expose the dashboard beyond localhost.
 
 ---
 

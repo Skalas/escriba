@@ -2,23 +2,24 @@
 
 from __future__ import annotations
 
-from io import BytesIO
 from pathlib import Path
 
 import pytest
 
 from escriba.app.database import Database
-from escriba.app.server import (
-    AppState,
-    _Handler,
-    build_session_export_markdown,
-    build_session_export_txt,
-    format_export_timestamp,
+from escriba.app.formats import (
     format_path_for_display,
     save_session_export_to_downloads,
     unique_export_path,
 )
+from escriba.transcribe.formats import (
+    build_session_export_markdown,
+    build_session_export_txt,
+    format_export_timestamp,
+)
+from escriba.app.server import AppState
 from escriba.config import AppConfig
+from tests.conftest import make_handler as _make_handler
 from tests.test_database import _add_segments, _seed_completed_session
 
 
@@ -49,14 +50,6 @@ enabled = false
 def app_state(minimal_config: AppConfig, tmp_path: Path) -> AppState:
     db = Database(tmp_path / "export-test.db")
     return AppState(config=minimal_config, db=db)
-
-
-def _make_handler(app_state: AppState) -> _Handler:
-    handler = _Handler.__new__(_Handler)
-    handler.app_state = app_state
-    handler.headers = {}
-    handler.wfile = BytesIO()
-    return handler
 
 
 SAMPLE_SESSION: dict = {

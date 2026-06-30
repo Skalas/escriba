@@ -5,15 +5,14 @@ import logging
 import threading
 import time
 import urllib.request
-from io import BytesIO
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from escriba.app.database import Database
 from escriba.app.observability import LatencyStore, get_correlation_id, set_correlation_id
-from escriba.app.server import AppState, _Handler, start_server
+from escriba.app.server import AppState, start_server
 from escriba.config import AppConfig
 
 
@@ -51,15 +50,6 @@ def app_state(minimal_config: AppConfig, tmp_path: Path) -> AppState:
     return AppState(config=minimal_config, db=db)
 
 
-def _make_handler(app_state: AppState) -> _Handler:
-    handler = _Handler.__new__(_Handler)
-    handler.app_state = app_state
-    handler.headers = {}
-    handler.rfile = BytesIO()
-    handler.wfile = BytesIO()
-    handler.connection = MagicMock()
-    handler.client_address = ("127.0.0.1", 12345)
-    return handler
 
 
 # ---------------------------------------------------------------------------

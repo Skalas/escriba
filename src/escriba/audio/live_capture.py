@@ -44,15 +44,6 @@ def _load_mlx_transcriber() -> Any | None:
         return None
 
 
-def _load_mps_transcriber() -> Any | None:
-    """Return the openai-whisper/MPS transcriber class, or None if unavailable."""
-    try:
-        from escriba.transcribe.streaming_mps import StreamingTranscriberMPS
-
-        return StreamingTranscriberMPS
-    except ImportError:
-        return None
-
 # Intentar importar ScreenCaptureKit (CLI Swift)
 try:
     from escriba.audio.screen_capture import (
@@ -490,30 +481,16 @@ def run_streaming_capture(
                 metrics=metrics,
                 hallucination_config=config.hallucination,
             )
-    elif backend == "openai-whisper" or backend == "mps":
-        mps_transcriber_cls = _load_mps_transcriber()
-        if mps_transcriber_cls is None:
-            logger.warning(
-                "openai-whisper backend requested but not available. "
-                "Falling back to faster-whisper. "
-                "Install: pip install openai-whisper torch"
-            )
-            backend = "faster-whisper"
-        else:
-            logger.info("Using openai-whisper backend")
-            logger.warning(
-                "openai-whisper has known stability issues with MPS (GPU). "
-                "It will use CPU by default. For better performance, consider using faster-whisper."
-            )
-            transcriber = mps_transcriber_cls(
-                model_size=model_size,
-                language=language,
-                output_file=output_file,
-                vad_enabled=vad_enabled,
-                realtime_output=realtime_output,
-            )
-    else:
-        # faster-whisper (default)
+    elif backend == "openai-whisper":
+        logger.warning(
+            "openai-whisper backend has been removed. "
+            "Falling back to faster-whisper. "
+            "Use 'mlx-whisper' (recommended on Apple Silicon) or 'faster-whisper' instead."
+        )
+        backend = "faster-whisper"
+
+    if transcriber is None:
+        # faster-whisper: explicit default and fallback for unavailable/removed backends
         logger.info("Using faster-whisper backend (CPU optimized)")
         transcriber = StreamingTranscriber(
             model_size=model_size,

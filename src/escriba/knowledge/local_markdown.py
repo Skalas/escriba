@@ -57,7 +57,7 @@ class LocalMarkdownAdapter(KnowledgeStore):
         summary_json: dict[str, Any] | None,
         segments: list[dict[str, Any]] | None = None,
     ) -> str:
-        from escriba.app.server import build_session_export_markdown
+        from escriba.transcribe.formats import build_session_export_markdown
 
         lines: list[str] = []
         md = build_session_export_markdown(session, segments or [])
