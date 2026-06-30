@@ -16,10 +16,10 @@ from escriba.app.server import (
     MAX_BODY_BYTES,
     ApiError,
     AppState,
-    _Handler,
     start_server,
 )
 from escriba.config import AppConfig
+from tests.conftest import make_handler as _make_handler
 
 
 @pytest.fixture
@@ -49,17 +49,6 @@ enabled = false
 def app_state(minimal_config: AppConfig, tmp_path: Path) -> AppState:
     db = Database(tmp_path / "server-test.db")
     return AppState(config=minimal_config, db=db)
-
-
-def _make_handler(app_state: AppState) -> _Handler:
-    handler = _Handler.__new__(_Handler)
-    handler.app_state = app_state
-    handler.headers = {}
-    handler.rfile = BytesIO()
-    handler.wfile = BytesIO()
-    handler.connection = MagicMock()
-    handler.client_address = ("127.0.0.1", 12345)
-    return handler
 
 
 def test_t1_concurrent_recording_start_yields_one_active_session(
@@ -426,3 +415,120 @@ def test_t5_no_content_length_body_at_exact_cap_allowed(app_state: AppState) -> 
 
     result = handler._read_body_bytes()
     assert len(result) == MAX_BODY_BYTES
+
+
+# ---------------------------------------------------------------------------
+# T3 — malformed / ambiguous POST path hardening
+# ---------------------------------------------------------------------------
+
+
+def test_t3_post_empty_session_id_returns_404(live_server) -> None:
+    """POST /api/sessions//split (empty session_id) must return 404, not 500."""
+    _, port = live_server
+    status, body = _http(port, "POST", "/api/sessions//split", b"{}")
+    assert status == 404
+    assert body["ok"] is False
+
+
+def test_t3_post_extra_path_segments_returns_404(live_server) -> None:
+    """POST /api/sessions/<id>/split/extra must return 404, not hit the split handler."""
+    _, port = live_server
+    status, body = _http(port, "POST", "/api/sessions/123/split/extra", b"{}")
+    assert status == 404
+    assert body["ok"] is False
+
+
+def test_t3_post_session_unknown_action_returns_404(live_server) -> None:
+    """POST /api/sessions/<id>/unknown-action must return 404."""
+    _, port = live_server
+    status, body = _http(port, "POST", "/api/sessions/123/unknown-action", b"{}")
+    assert status == 404
+    assert body["ok"] is False
+
+
+def test_t3_post_trailing_slash_stripped_correctly(live_server) -> None:
+    """Trailing slash on a known POST route must not break routing."""
+    _, port = live_server
+    # /api/recording/stop/ (trailing slash) should behave like /api/recording/stop
+    status, body = _http(port, "POST", "/api/recording/stop/")
+    # Not recording → 409; the important thing is it reaches the handler (not 404/500)
+    assert status in (409, 200)
+    assert body["ok"] is False or body.get("ok") is True
+
+
+def test_t3_get_empty_session_id_audio_returns_404(live_server) -> None:
+    """GET /api/sessions//audio (empty session_id) must return 404."""
+    _, port = live_server
+    status, body = _http(port, "GET", "/api/sessions//audio")
+    assert status == 404
+    assert body["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# T6 — user-notes endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_t6_post_user_notes_persists(live_server) -> None:
+    """POST /api/sessions/:id/user-notes must save user_notes and return 200."""
+    server, port = live_server
+    db: Database = server.RequestHandlerClass.app_state.db  # type: ignore[attr-defined]
+    session_id = db.create_session(name="User Notes Test")
+
+    payload = json.dumps({"user_notes": "my context"}).encode()
+    status, body = _http(
+        port, "POST", f"/api/sessions/{session_id}/user-notes", payload,
+        headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
+    )
+    assert status == 200
+    assert body["ok"] is True
+
+    stored = db.get_session(session_id)
+    assert stored is not None
+    assert stored["user_notes"] == "my context"
+
+
+def test_t6_post_user_notes_bad_body_returns_400(live_server) -> None:
+    """POST /api/sessions/:id/user-notes with user_notes not a string must return 400."""
+    server, port = live_server
+    db: Database = server.RequestHandlerClass.app_state.db  # type: ignore[attr-defined]
+    session_id = db.create_session(name="Bad Body Test")
+
+    payload = json.dumps({"user_notes": 123}).encode()
+    status, body = _http(
+        port, "POST", f"/api/sessions/{session_id}/user-notes", payload,
+        headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
+    )
+    assert status == 400
+    assert body["ok"] is False
+
+
+def test_t6_post_user_notes_null_coerced_to_empty_string(live_server) -> None:
+    """POST /api/sessions/:id/user-notes with null user_notes returns 200 and persists ''."""
+    server, port = live_server
+    db: Database = server.RequestHandlerClass.app_state.db  # type: ignore[attr-defined]
+    session_id = db.create_session(name="Null Coerce Test")
+
+    payload = json.dumps({"user_notes": None}).encode()
+    status, body = _http(
+        port, "POST", f"/api/sessions/{session_id}/user-notes", payload,
+        headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
+    )
+    assert status == 200
+    assert body["ok"] is True
+
+    stored = db.get_session(session_id)
+    assert stored is not None
+    assert stored["user_notes"] == "", f"Expected empty string, got {stored['user_notes']!r}"
+
+
+def test_t6_post_user_notes_malformed_path_returns_404(live_server) -> None:
+    """POST /api/sessions//user-notes (empty session_id) must return 404."""
+    _, port = live_server
+    payload = json.dumps({"user_notes": "x"}).encode()
+    status, body = _http(
+        port, "POST", "/api/sessions//user-notes", payload,
+        headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
+    )
+    assert status == 404
+    assert body["ok"] is False
