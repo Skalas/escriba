@@ -72,7 +72,7 @@ codebaseMemory:
   reindex: git             # git | always | manual — refresh the graph between rounds after the implementer patches
   indexCommand: ""         # blank = rely on the auto_index git watcher; else an explicit reindex command
 review:
-  autoFix: blockers
+  autoFix: all
 discover:
   signals:                 # which sources to sweep for candidate work
     aftercare: true        # last sprint's deliverables (roadmap, next-sprint pointers) — the loop-closing input

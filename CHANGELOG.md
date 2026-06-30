@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-30
+
+Harden & shrink the core (pre-1.0): a structural sprint that removed dead code, fixed a layer inversion, and decomposed the HTTP request dispatcher — plus a batch of notes-flow fixes surfaced in smoke and the ability to edit your own notes on a saved session.
+
+### Added
+- **Edit your own notes on a saved session.** The saved-session notes editor now has two fields — **Your notes** (your jottings) and **AI / generated notes** — so you can revise the words you wrote during a recording, not just the AI output. New `POST /api/sessions/:id/user-notes` endpoint.
+
+### Changed
+- **Decomposed the `do_POST` god-function** into a per-route dispatch table; each route handler is isolated so one route's error can't cascade. Behavior unchanged across all POST endpoints.
+- **Hardened HTTP route parsing.** Malformed/ambiguous paths (`/api/sessions//split`, trailing junk, empty ids) now return `404`/`400` instead of mis-routing or erroring; the same two-segment guard applies to `do_PUT`.
+- **Fixed a clean-architecture layer inversion.** Export formatters moved from `app/server.py` to `transcribe/formats.py`; the `knowledge` (infrastructure) adapter no longer imports from the `app` (presentation) layer. New `app/formats.py` holds only presentation/filesystem helpers.
+- **Knowledge-store provider factory.** Provider selection routes through a lazy factory (only the configured provider is constructed) instead of a bare string check.
+
+### Removed
+- **Deprecated MPS / openai-whisper streaming backend** (`streaming_mps.py`, ~369 LOC, 0 callers). `backend = "openai-whisper"` now warns and falls back to faster-whisper.
+
+### Fixed
+- **Live-enhanced notes were lost when a recording stopped.** Generated/enhanced notes are now persisted to the active session, so they survive the stop → session-detail reload.
+- **A new recording showed the previous session's enhanced-notes panel.** Starting a recording resets the notes panel (output, title, hint, legend) to a clean state.
+- **Backend fallback produced no transcriber.** A user with `backend = "openai-whisper"` (or with `mlx-whisper` unavailable) silently got no transcription at all; every fallback path now constructs a real faster-whisper transcriber.
+- **Daemon graceful shutdown.** Restored SIGINT/SIGTERM handling so a daemon under launchd/systemd drains on stop instead of being hard-killed (the handler had been mistaken for dead code).
+- **Notes edit box overflowed onto the UI below** — the editor textareas are now contained (max-height + scroll).
+- Speaker names are escaped for Markdown bold in exports; the custom-prompt fallback is hardened and logs on failure; `openai-whisper` surfaces a deprecation warning at config-validation time.
+
+### Internal
+- Test suite expanded to 276 (new `test_backend_fallback.py`; broader server / SPA / notepad / export coverage); the `_make_handler` test helper was deduped into `tests/conftest.py`.
+
 ## [0.11.1] - 2026-06-29
 
 UI polish following the v0.11.0 redesign — one record control, calmer spacing, and a folded transcript.
