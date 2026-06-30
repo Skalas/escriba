@@ -6,6 +6,110 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+
+# ---------------------------------------------------------------------------
+# Session-export builders (shared by app layer and knowledge adapters)
+# ---------------------------------------------------------------------------
+
+
+def _segment_speaker_label(segment: dict[str, Any]) -> str | None:
+    """Resolved speaker label for display/export (custom name or raw)."""
+    display = segment.get("speaker_display")
+    if display:
+        return str(display)
+    raw = segment.get("speaker")
+    return str(raw) if raw else None
+
+
+def _segments_to_transcript(segments: list[dict[str, Any]]) -> str:
+    """Build transcript text using display speaker names when available."""
+    parts: list[str] = []
+    for seg in segments:
+        text = seg.get("text") or ""
+        speaker = _segment_speaker_label(seg)
+        if speaker:
+            parts.append(f"[{speaker}] {text}")
+        else:
+            parts.append(text)
+    return " ".join(parts)
+
+
+def format_export_timestamp(seconds: float | int | None) -> str:
+    """Format segment start time as HH:MM:SS for export."""
+    total = int(seconds or 0)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def build_session_export_markdown(
+    session: dict[str, Any], segments: list[dict[str, Any]]
+) -> str:
+    """Build a Markdown export bundle for a session."""
+    lines: list[str] = [f"# {session.get('name', 'Session')}", ""]
+
+    metadata: list[str] = []
+    if session.get("started_at"):
+        metadata.append(f"**Date:** {session['started_at']}")
+    duration = session.get("duration_seconds")
+    if duration is not None:
+        metadata.append(f"**Duration:** {format_export_timestamp(duration)}")
+    if metadata:
+        lines.extend(metadata)
+        lines.append("")
+
+    notes_text = (session.get("notes_text") or "").strip()
+    if notes_text:
+        lines.extend(["## Notes", "", notes_text, ""])
+
+    lines.extend(["## Transcript", ""])
+    for seg in segments:
+        seg_id = seg.get("id")
+        anchor = ""
+        if seg_id is not None:
+            anchor = f'<a id="seg-{int(seg_id)}"></a>'
+        timestamp = format_export_timestamp(seg.get("start_time"))
+        text = seg.get("text") or ""
+        speaker = _segment_speaker_label(seg)
+        if speaker:
+            safe_speaker = speaker.replace("*", "\\*")
+            lines.append(f"{anchor}[{timestamp}] **{safe_speaker}**: {text}")
+        else:
+            lines.append(f"{anchor}[{timestamp}] {text}")
+
+    return "\n".join(lines)
+
+
+def build_session_export_txt(
+    session: dict[str, Any], segments: list[dict[str, Any]]
+) -> str:
+    """Build a plain-text export bundle for a session."""
+    lines: list[str] = [session.get("name", "Session"), ""]
+
+    if session.get("started_at"):
+        lines.append(f"Date: {session['started_at']}")
+    duration = session.get("duration_seconds")
+    if duration is not None:
+        lines.append(f"Duration: {format_export_timestamp(duration)}")
+    if session.get("started_at") or duration is not None:
+        lines.append("")
+
+    notes_text = (session.get("notes_text") or "").strip()
+    if notes_text:
+        lines.extend(["Notes", notes_text, ""])
+
+    lines.append("Transcript")
+    for seg in segments:
+        timestamp = format_export_timestamp(seg.get("start_time"))
+        text = seg.get("text") or ""
+        speaker = _segment_speaker_label(seg)
+        if speaker:
+            lines.append(f"{timestamp}  [{speaker}] {text}")
+        else:
+            lines.append(f"{timestamp}  {text}")
+
+    return "\n".join(lines)
+
 logger = logging.getLogger(__name__)
 
 
