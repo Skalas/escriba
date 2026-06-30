@@ -620,10 +620,9 @@ class _Handler(BaseHTTPRequestHandler):
             saved_path = save_session_export_to_downloads(content, filename)
         except OSError as exc:
             logger.error("Failed to save export for session %s: %s", session_id, exc, exc_info=True)
-            return {"ok": False, "error": f"Failed to save export: {exc}"}, 500
+            return {"ok": False, "error": "Failed to save export file (disk full or permission error?)"}, 500
         return {
             "ok": True,
-            "path": str(saved_path),
             "display_path": format_path_for_display(saved_path),
             "format": export_format,
         }, 200
@@ -817,7 +816,6 @@ class _Handler(BaseHTTPRequestHandler):
             "python_version": platform.python_version(),
             "platform": f"{platform.system()} {platform.release()}",
             "machine": platform.machine(),
-            "project_dir": str(Path(__file__).resolve().parents[3]),
             "backend": backend,
             "model": model,
             "repo_url": "https://github.com/Skalas/escriba",
@@ -1098,10 +1096,11 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             new_id, split_time, _ = db.split_session(session_id, segment_id)
         except ValueError as e:
+            logger.warning("Split validation failed for session %s: %s", session_id, e)
             for p in (part1_tmp, part2_tmp):
                 if p and p.exists():
                     p.unlink(missing_ok=True)
-            return {"ok": False, "error": str(e)}, 400
+            return {"ok": False, "error": "Cannot split at this position"}, 400
         except Exception as e:
             logger.error("Split DB step failed: %s", e, exc_info=True)
             for p in (part1_tmp, part2_tmp):
@@ -1266,6 +1265,11 @@ class _Handler(BaseHTTPRequestHandler):
                 user_notes=user_notes,
             )
             if notes:
+                # The SPA is the sole notes writer: it combines the generated
+                # notes with any existing notes (preserving separators) and
+                # persists via saveNotesForSession / appendNotesToSession. A
+                # server-side save here would race that path and duplicate or
+                # clobber notes, so generation only returns the text.
                 return {"ok": True, "notes": notes}, 200
             return {"ok": False, "error": "Failed to generate notes"}, 503
         except Exception as e:
@@ -1311,7 +1315,7 @@ class _Handler(BaseHTTPRequestHandler):
                 state.finish_model_download({"ok": True, "model": model_id})
             except Exception as e:
                 logger.error("Model download failed: %s", e, exc_info=True)
-                state.finish_model_download({"ok": False, "error": str(e)})
+                state.finish_model_download({"ok": False, "error": "Model download failed; check logs"})
 
         threading.Thread(target=_do_download, daemon=True).start()
         return {

@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-30
+
+Release hardening: no new features — the request spine fails gracefully, the dashboard never throws on a failed call, API responses stop leaking filesystem paths, and the test suite runs reliably headless. Version bumped to `1.0.0`.
+
+### Changed
+- **`apiCall` never throws.** The single fetch chokepoint in the dashboard now returns a structured `{ ok, error, status }` result on HTTP 4xx/5xx, network failure, or a non-JSON body, instead of rejecting and bubbling an uncaught exception. Success responses are normalized so existing `res.ok` call sites are unaffected. Start-recording failures now surface an error and never leave a half-started UI. `refreshModels` / `checkAiAvailability` route through `apiCall` too.
+- **Notes are persisted by a single writer per path.** The saved-session generate path no longer writes server-side (the dashboard combines and persists it, preserving existing notes); the live path stays server-persisted. This removes a duplication/clobber race where both sides wrote the same notes.
+- **Saving notes attributes failures.** When saving a saved-session's notes, a partial failure now names which write failed (AI notes vs. your notes) instead of one opaque error.
+
+### Security
+- **API responses no longer leak filesystem paths.** `/api/version` dropped the absolute `project_dir`; the export-to-Downloads endpoint dropped its absolute `path` field (keeps the `~/`-style `display_path`); model-load, mic-capture, split, model-download, and export error messages return static text to the UI while the detail is logged server-side only. (CWE-209 / path disclosure — the pre-1.0 security pass.)
+
+### Fixed
+- **Headless / CI test reliability.** The swift `audio-capture` integration tests skip gracefully when no audio input device (or no built executable) is present, so `uv run pytest` no longer hangs in a headless environment.
+
+### Internal
+- Test suite at 283 (new `apiCall` error-path + saveNotes-attribution SPA tests, `/api/version` and generate-notes server tests; a shared `routed_page` SPA fixture). Version strings unified to `1.0.0` across `pyproject.toml`, `src/escriba/__init__.py`, and `uv.lock`.
+
 ## [0.12.0] - 2026-06-30
 
 Harden & shrink the core (pre-1.0): a structural sprint that removed dead code, fixed a layer inversion, and decomposed the HTTP request dispatcher — plus a batch of notes-flow fixes surfaced in smoke and the ability to edit your own notes on a saved session.

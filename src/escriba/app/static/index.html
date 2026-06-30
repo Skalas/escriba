@@ -1886,7 +1886,6 @@
           <span class="about-key">Transcription</span><span class="about-val" id="about-backend">…</span>
           <span class="about-key">Python</span><span class="about-val" id="about-python">…</span>
           <span class="about-key">Platform</span><span class="about-val" id="about-platform">…</span>
-          <span class="about-key">Project</span><span class="about-val about-path" id="about-projectdir">…</span>
         </div>
         <a class="about-link" id="about-repo" href="https://github.com/Skalas/escriba" target="_blank" rel="noopener">
           <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -2236,8 +2235,29 @@ function resetTemplates() {
 }
 
 async function apiCall(path, opts) {
-  const r = await fetch(API + path, opts);
-  return r.json();
+  let r;
+  try {
+    r = await fetch(API + path, opts);
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || 'Network error', status: 0 };
+  }
+  let body = null;
+  try {
+    body = await r.json();
+  } catch (e) {
+    body = null;
+  }
+  if (!r.ok) {
+    const base = (body && typeof body === 'object') ? body : {};
+    const msg = base.error || base.detail || r.statusText || ('HTTP ' + r.status);
+    return { ...base, ok: false, error: msg, status: r.status };
+  }
+  if (body && typeof body === 'object') {
+    if (!('ok' in body)) body.ok = true;
+    if (!('status' in body)) body.status = r.status;
+    return body;
+  }
+  return { ok: true, status: r.status };
 }
 
 // --- Sidebar ---
@@ -3139,8 +3159,8 @@ async function saveLiveNotepad() {
 
 // --- Notes ---
 async function saveNotesForSession(sessionId, notesText) {
-  if (!sessionId) return;
-  await apiCall('/api/sessions/' + sessionId + '/notes', {
+  if (!sessionId) return { ok: false, error: 'No session' };
+  return apiCall('/api/sessions/' + sessionId + '/notes', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ notes_text: notesText }),
   });
@@ -3151,21 +3171,29 @@ async function appendNotesToSession(sessionId, newNotes) {
   if (!detail.ok) return false;
   const existing = (detail.session.notes_text || '').trim();
   const separator = existing ? '\n\n---\n\n' : '';
-  await saveNotesForSession(sessionId, existing + separator + newNotes);
-  return true;
+  const r = await saveNotesForSession(sessionId, existing + separator + newNotes);
+  return !r || r.ok !== false;
 }
 
 async function saveNotes() {
   if (!selectedSessionId) return;
   const notes = document.getElementById('session-notes-input').value;
   const userNotes = document.getElementById('session-user-notes-input').value;
-  await Promise.all([
-    saveNotesForSession(selectedSessionId, notes),
-    apiCall('/api/sessions/' + selectedSessionId + '/user-notes', {
+  const calls = [
+    { label: 'AI notes', promise: saveNotesForSession(selectedSessionId, notes) },
+    { label: 'Your notes', promise: apiCall('/api/sessions/' + selectedSessionId + '/user-notes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_notes: userNotes }),
-    }),
-  ]);
+    }) },
+  ];
+  const results = await Promise.allSettled(calls.map(c => c.promise));
+  const failed = [];
+  results.forEach((r, i) => {
+    const label = calls[i].label;
+    if (r.status === 'rejected') failed.push(label + ': ' + ((r.reason && r.reason.message) || 'request failed'));
+    else if (r.value && r.value.ok === false) failed.push(label + ': ' + (r.value.error || 'save failed'));
+  });
+  if (failed.length) { showError('Could not save — ' + failed.join('; ')); return; }
   _currentSessionUserNotes = userNotes;
 }
 
@@ -3637,7 +3665,6 @@ async function loadAbout() {
     set('about-backend', [v.backend, v.model].filter(Boolean).join(' · ') || '—');
     set('about-python', v.python_version);
     set('about-platform', [v.platform, v.machine].filter(Boolean).join(' · '));
-    set('about-projectdir', v.project_dir);
     if (v.repo_url) document.getElementById('about-repo').href = v.repo_url;
 
     const pill = document.getElementById('about-buildstate');
@@ -3737,7 +3764,7 @@ async function refreshModels(silent) {
   btn.disabled = true;
   btn.innerHTML = '<svg class="icon" viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>';
   try {
-    const res = await fetch('/api/models').then(r => r.json());
+    const res = await apiCall('/api/models');
     if (!res.ok) { showSettingsBanner('Failed to fetch models: ' + (res.error || 'unknown'), 'error'); return; }
     const models = res.models;
     const recommended = res.recommended;
@@ -4187,7 +4214,7 @@ document.addEventListener('keydown', function(e) {
 // --- Init ---
 async function checkAiAvailability() {
   try {
-    const res = await fetch('/api/models').then(r => r.json());
+    const res = await apiCall('/api/models');
     const banner = document.getElementById('ai-banner');
     const text = document.getElementById('ai-banner-text');
     if (res.ok && !res.ai_available) {
@@ -4218,7 +4245,7 @@ async function loadPromptTemplates() {
   const status = await apiCall('/api/status');
   if (parseDeepLink()) {
     await handleDeepLink();
-  } else if (status.is_active) {
+  } else if (status.ok && status.is_active) {
     lastWasRecording = true;
     showLiveView(); startPolling();
   } else showEmptyView();

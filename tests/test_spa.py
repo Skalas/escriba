@@ -118,6 +118,30 @@ def dark_page(chromium_browser, spa_server: str):
     ctx.close()
 
 
+@pytest.fixture
+def routed_page(chromium_browser, spa_server: str):
+    """Factory: call with a route handler to get a ready, API-routed page.
+
+    Centralizes the new_context → route → goto → wait setup/teardown so tests
+    that need a custom API stub don't each reproduce it.
+    """
+    contexts = []
+
+    def _make(route_handler, *, timeout: int = 200):
+        ctx = chromium_browser.new_context()
+        contexts.append(ctx)
+        pg = ctx.new_page()
+        pg.route("**/api/**", route_handler)
+        pg.goto(spa_server)
+        pg.wait_for_load_state("domcontentloaded")
+        pg.wait_for_timeout(timeout)
+        return pg
+
+    yield _make
+    for ctx in contexts:
+        ctx.close()
+
+
 # ---------------------------------------------------------------------------
 # T1-a: XSS / escaping — escHtml() and innerHTML sinks
 # ---------------------------------------------------------------------------
@@ -1423,3 +1447,66 @@ def test_session_notes_editor_dual_field(chromium_browser, spa_server: str) -> N
     )
 
     ctx.close()
+
+
+# ---------------------------------------------------------------------------
+# v1.0.0 T1 — apiCall never throws; HTTP/network errors become structured results
+# ---------------------------------------------------------------------------
+
+def test_t1_apicall_http_error_returns_structured_result(routed_page) -> None:
+    """A 500 with a JSON error body yields {ok:false, error, status:500} — no throw."""
+    pg = routed_page(lambda r: r.fulfill(
+        status=500, content_type="application/json", body='{"ok":false,"error":"boom"}'))
+    result = pg.evaluate("() => apiCall('/api/recording/start', { method: 'POST' })")
+    assert result["ok"] is False
+    assert result["error"] == "boom"
+    assert result["status"] == 500
+
+
+def test_t1_apicall_non_json_error_does_not_throw(routed_page) -> None:
+    """A 502 with a non-JSON body still yields a structured falsy result, not a throw."""
+    pg = routed_page(lambda r: r.fulfill(
+        status=502, content_type="text/html", body="<html>Bad Gateway</html>"))
+    result = pg.evaluate("() => apiCall('/api/recording/start', { method: 'POST' })")
+    assert result["ok"] is False
+    assert result["status"] == 502
+    assert result["error"]  # non-empty fallback message
+
+
+def test_t1_apicall_success_without_ok_field_is_truthy(routed_page) -> None:
+    """A 200 body lacking an `ok` field is normalized to ok:true (back-compat)."""
+    pg = routed_page(lambda r: r.fulfill(
+        status=200, content_type="application/json", body='{"session_id":"abc"}'))
+    result = pg.evaluate("() => apiCall('/api/recording/stop', { method: 'POST' })")
+    assert result["ok"] is True
+    assert result["session_id"] == "abc"
+
+
+# ---------------------------------------------------------------------------
+# v1.0.0 T3 — saveNotes() attributes which POST failed
+# ---------------------------------------------------------------------------
+
+def test_t3_save_notes_attributes_failing_post(routed_page) -> None:
+    """When only the user-notes POST fails, the error names 'Your notes'."""
+    from urllib.parse import urlparse
+
+    def _route(route) -> None:
+        path = urlparse(route.request.url).path
+        if path.endswith("/user-notes"):
+            route.fulfill(status=500, content_type="application/json",
+                          body='{"ok":false,"error":"db locked"}')
+        else:
+            route.fulfill(status=200, content_type="application/json", body='{"ok":true}')
+
+    pg = routed_page(_route)
+    pg.evaluate("""() => {
+        selectedSessionId = 'sess-t3';
+        document.getElementById('session-notes-input').value = 'ai';
+        document.getElementById('session-user-notes-input').value = 'mine';
+    }""")
+    pg.evaluate("() => saveNotes()")
+    pg.wait_for_timeout(200)
+
+    banner = pg.evaluate("document.getElementById('error-banner').textContent")
+    assert "Your notes" in banner, f"error did not attribute the failing POST: {banner!r}"
+    assert "AI notes" not in banner, f"unrelated POST wrongly blamed: {banner!r}"

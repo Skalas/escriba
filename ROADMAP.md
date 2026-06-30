@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-30 · Current version: `0.12.0` (harden & shrink the core + notes-flow fixes) · next up: `v1.0.0` (release hardening)_
+_Last updated: 2026-06-30 · Current version: `1.0.0` (release hardening — graceful failure spine, path-disclosure pass, CI-safe tests) · next up: real-meeting soak + clean-install verification (1.0.x)_
 
 ---
 
@@ -32,6 +32,8 @@ The app is feature-rich. Since `v0.2.0` we shipped (unreleased):
 - A stack of dashboard UX and launcher/spawn fixes
 
 **The gap (closed in `v0.4.0`):** core app modules had near-zero test coverage, shared state was largely unsynchronized, the HTTP server handled one request at a time, and LLM calls had no timeout/retry. Addressed under **[Epic #12: Backend hardening](https://github.com/Skalas/escriba/issues/12)** — the core loop is now concurrency-safe, the server is threaded with input validation, LLM calls time out/retry, and `server.py`/`database.py`/`session.py` have meaningful coverage (84 tests).
+
+As of **`1.0.0`** (2026-06-30) the request spine fails gracefully end-to-end (the dashboard never throws on a failed call), API responses no longer leak filesystem paths, and the test suite (283) runs reliably headless. The only remaining 1.0 gate is human-run: a real-meeting soak and a clean install-from-scratch.
 
 ---
 
@@ -195,17 +197,24 @@ A structural sprint before 1.0: shrink the surface and harden the request spine,
 
 ---
 
-### `v1.0.0` — Release hardening  ·  _next up_
+### `v1.0.0` — Release hardening  ·  _shipped 2026-06-30 (#77–#85)_
 
-No new features — release-readiness only.
+No new features — release-readiness only. This sprint shipped the code-side hardening and cut the `1.0.0` version; the two manual-verification items remain as a `1.0.x` gate.
 
-- [ ] Real-meeting soak across the record → transcribe → summarize loop.
-- [ ] Clean install-from-scratch verification (one-liner installer → `/Applications`).
-- [ ] Docs/onboarding pass; version-string + `uv.lock` audit.
+- [x] **Graceful failure spine (T1/T2/T3).** The dashboard's single `apiCall` chokepoint never throws — HTTP 4xx/5xx, network errors, and non-JSON bodies become a structured `{ok,error,status}` result; success is normalized so existing `res.ok` sites are unaffected. Start-recording failures can't leave a half-started UI; saving notes attributes which write failed.
+- [x] **Path-disclosure pass (T4).** `/api/version` dropped the absolute `project_dir`; the export endpoint dropped its absolute `path`; model-load / mic / split / model-download / export errors return static text to the UI (detail logged server-side only). (CWE-209.)
+- [x] **Notes single-writer (T5).** Saved-session generate no longer double-persists (the SPA is the sole writer there, preserving existing notes); a duplication/clobber race is gone.
+- [x] **CI-safe tests (T6).** The swift `audio-capture` integration tests skip gracefully with no input device / no built executable — `uv run pytest` no longer hangs headless.
+- [x] **Version + lock audit (T7/T9).** `1.0.0` unified across `pyproject.toml`, `__init__.py`, `uv.lock`; install docs verified against `install.sh` / Makefile / `setup_app.py` (T8).
+- [ ] Real-meeting soak across the record → transcribe → summarize loop. _(manual; 1.0.x gate)_
+- [ ] Clean install-from-scratch verification (one-liner installer → `/Applications`). _(manual; 1.0.x gate)_
 - [ ] Triage the remaining P2 backlog (persistence indexes, schema versioning, typing) — pull in only what release quality demands.
-- [ ] Make `swift-audio-capture/test_integration.py::test_capture_short` skip gracefully when no live audio input device is available (it hangs headless / in CI today), so `uv run pytest` is reliable everywhere.
 
-**Done when:** a clean install runs a real meeting end-to-end without manual intervention; docs match behavior; version metadata is consistent.
+**Done when:** a clean install runs a real meeting end-to-end without manual intervention; docs match behavior; version metadata is consistent. ✅ for the code/metadata half (283 tests; review caught & rejected a false-positive "live-path duplication" blocker after confirming the live path is single-writer, and folded in five extra path-disclosure fixes); the soak + clean-install proofs remain a human-run 1.0.x gate.
+
+**Deferred (with triggers — read these at next discover):**
+- **Concurrent background note-generation race** — `appendNotesToSession` does a read-then-write (read existing `notes_text`, write the concatenation); two rapid background "Enhance notes" calls on the same session can lose one append. Mitigated today by the per-session in-flight button guard. _Trigger:_ users report lost/overwritten notes from rapid re-generation, or any move to generate notes for multiple sessions concurrently. → needs a server-side atomic `append-notes` endpoint.
+- **Config-validation errors echo the submitted value** — `PUT /api/config` returns `ConfigValidationError` text verbatim (e.g. the rejected value). Acceptable for a localhost validation API and useful UX; the path-embedding parse-error subcase already falls through to logged-only. _Trigger:_ any plan to expose the dashboard beyond localhost.
 
 ---
 

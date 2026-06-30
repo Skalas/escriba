@@ -210,10 +210,12 @@ def test_save_session_export_writes_file(app_state: AppState, tmp_path: Path) ->
 
     assert status == 200
     assert payload["ok"] is True
-    saved = Path(payload["path"])
-    assert saved.parent == downloads
-    assert saved.name == "Team Sync.md"
+    # The response no longer leaks the absolute path; verify the file on disk
+    # directly and that display_path is the user-facing form.
+    saved = downloads / "Team Sync.md"
+    assert saved.exists()
     assert saved.read_text(encoding="utf-8").startswith("# Team Sync")
+    assert "path" not in payload
     assert payload["display_path"] == format_path_for_display(saved)
 
 
@@ -241,8 +243,9 @@ def test_save_session_export_deduplicates_filename(
         payload, status = handler._save_session_export(session_id, "md")
 
     assert status == 200
-    assert payload["path"].endswith("Team Sync (2).md")
-    assert Path(payload["path"]).read_text(encoding="utf-8").startswith("# Team Sync")
+    assert payload["display_path"].endswith("Team Sync (2).md")
+    saved = downloads / "Team Sync (2).md"
+    assert saved.read_text(encoding="utf-8").startswith("# Team Sync")
 
 
 def test_save_session_export_missing_returns_404(app_state: AppState) -> None:

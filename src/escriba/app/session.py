@@ -117,7 +117,7 @@ class TranscriptionSession:
         try:
             self.transcriber = _build_transcriber(self.config, realtime_output=True)
         except Exception as e:
-            self.error = f"Failed to load model: {e}"
+            self.error = "Failed to load transcription model"
             logger.error("Failed to load model: %s", e, exc_info=True)
             return
 
@@ -153,8 +153,8 @@ class TranscriptionSession:
             try:
                 self._start_mic_capture(mix_mode=audio_source == "both")
             except Exception as e:
-                self.error = f"Failed to start microphone capture: {e}"
-                logger.error(self.error, exc_info=True)
+                self.error = "Failed to start microphone capture. Check permissions."
+                logger.error("Failed to start microphone capture: %s", e, exc_info=True)
                 return
 
         # Start processing thread
