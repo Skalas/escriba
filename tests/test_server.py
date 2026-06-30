@@ -532,3 +532,67 @@ def test_t6_post_user_notes_malformed_path_returns_404(live_server) -> None:
     )
     assert status == 404
     assert body["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# v1.0.0 T4 — /api/version no longer leaks the absolute project_dir path
+# ---------------------------------------------------------------------------
+
+def test_t4_version_omits_absolute_project_dir(live_server) -> None:
+    """GET /api/version returns build info but not the absolute project_dir path."""
+    _, port = live_server
+    status, body = _http(port, "GET", "/api/version")
+    assert status == 200
+    assert body["ok"] is True
+    assert "version" in body
+    assert "project_dir" not in body
+
+
+# ---------------------------------------------------------------------------
+# v1.0.0 T5 — saved-session generate-notes returns notes; the SPA is the sole
+# persister (a server-side save would race the SPA and duplicate/clobber notes).
+# ---------------------------------------------------------------------------
+
+def test_t5_generate_notes_returns_without_server_side_persist(app_state: AppState) -> None:
+    """Generation returns the notes but must NOT itself write notes_text.
+
+    The SPA combines the generated text with any existing notes and persists it
+    (saveNotesForSession / appendNotesToSession). A server-side save here would
+    race that path: in the background branch appendNotesToSession reads the value
+    back and appends it again, duplicating the notes and clobbering prior ones.
+    """
+    db = app_state.db
+    session_id = db.create_session(name="meeting")
+    db.add_segments(session_id, [{"start": 0.0, "end": 1.0, "text": "hello world"}])
+
+    handler = _make_handler(app_state)
+    with patch(
+        "escriba.app.session._generate_custom_notes",
+        return_value="## Summary\n- a point",
+    ):
+        result, status = handler._generate_session_notes(session_id, {})
+
+    assert status == 200
+    assert result["ok"] is True
+    assert result["notes"] == "## Summary\n- a point"
+    # Server did not persist — notes_text stays empty until the SPA saves.
+    reloaded = db.get_session(session_id)
+    assert reloaded is not None
+    assert not reloaded.get("notes_text")
+
+
+def test_t5_generate_notes_failure_does_not_persist(app_state: AppState) -> None:
+    """A failed generation leaves notes_text untouched."""
+    db = app_state.db
+    session_id = db.create_session(name="meeting")
+    db.add_segments(session_id, [{"start": 0.0, "end": 1.0, "text": "hello world"}])
+
+    handler = _make_handler(app_state)
+    with patch("escriba.app.session._generate_custom_notes", return_value=""):
+        result, status = handler._generate_session_notes(session_id, {})
+
+    assert status == 503
+    assert result["ok"] is False
+    reloaded = db.get_session(session_id)
+    assert reloaded is not None
+    assert not reloaded.get("notes_text")
