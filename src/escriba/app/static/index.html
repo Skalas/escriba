@@ -299,16 +299,21 @@
   /* ======= v0.11.0: Home + Sidebar redesign ======= */
   .topbar {
     display: flex; align-items: center; gap: 10px;
-    padding: 10px 20px 10px 56px;
+    padding: 12px 20px 16px 56px;
+    margin-bottom: 16px;
     border-bottom: 1px solid transparent;
     transition: border-bottom-color var(--transition-normal);
-    min-height: 52px; flex-shrink: 0;
+    min-height: 56px; flex-shrink: 0;
   }
   body:not(.sidebar-collapsed) .topbar { padding-left: 20px; }
   .topbar-sp { flex: 1; }
-  .btn-record-topbar { width: auto; margin-top: 0; padding: 7px 14px; font-size: 13px; }
+  .topbar .btn-record-topbar {
+    width: auto; margin-top: 0;
+    padding: 8px 16px; font-size: 13px; font-weight: 600;
+    border-radius: 10px;
+    background: var(--code-bg); border-color: var(--border);
+  }
   body:not(.on-session):not(.on-live) #btn-record { display: none !important; }
-  body.on-live #btn-record { display: none !important; }
   body.on-session .topbar,
   body.on-live .topbar { border-bottom-color: var(--border); }
 
@@ -856,29 +861,6 @@
     border-radius: 6px; padding: 2px 8px; background: var(--bg); color: var(--text);
     font-family: inherit; outline: none; flex: 1; min-width: 200px;
   }
-  #status-badge {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;
-    white-space: nowrap; transition: all var(--transition-normal);
-    border: none; cursor: default; font: inherit; background: none;
-  }
-  #status-badge.idle { background: var(--code-bg); color: var(--text-secondary); }
-  #status-badge.recording { background: rgba(255, 59, 48, 0.1); color: var(--danger); cursor: pointer; }
-  #status-badge.recording:is(:hover, :focus-visible) { background: rgba(239, 68, 68, 0.20); }
-  #status-badge.recording:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
-  #status-badge.recording:is(:hover, :focus-visible) #status-text,
-  #status-badge.recording:is(:hover, :focus-visible) #status-dot { display: none; }
-  .status-stop-hint { display: none; }
-  #status-badge.recording:is(:hover, :focus-visible) .status-stop-hint { display: inline; }
-  #status-dot {
-    width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary);
-    transition: background var(--transition-normal);
-  }
-  #status-badge.recording #status-dot {
-    background: var(--danger); animation: pulse 1.5s ease-in-out infinite;
-  }
-  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
-
   .info-bar {
     display: flex; gap: 20px; font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;
     flex-wrap: wrap;
@@ -991,6 +973,15 @@
     display: flex; align-items: center; gap: 8px;
   }
 
+  .transcript-details > summary {
+    list-style: none; cursor: pointer; user-select: none;
+  }
+  .transcript-details > summary::-webkit-details-marker { display: none; }
+  .transcript-details > summary h3 { margin-bottom: 0; }
+  .transcript-details[open] > summary h3 { margin-bottom: 14px; }
+  .transcript-details .tr-chev { margin-left: auto; transition: transform var(--transition-fast); }
+  .transcript-details[open] .tr-chev { transform: rotate(180deg); }
+
   .content-area { flex: 1; overflow-y: auto; }
 
   #transcript-box {
@@ -1000,6 +991,9 @@
   #transcript-box:empty::before {
     content: 'Select a session or start recording...';
     color: var(--text-secondary); font-style: italic;
+  }
+  body.on-live #transcript-box:empty::before {
+    content: 'Listening… your words will appear here as they’re transcribed.';
   }
   .segment {
     padding: 6px 4px 6px 32px;
@@ -1451,11 +1445,6 @@
   <div id="live-view" style="display:none;">
     <header>
       <h2>Live Recording</h2>
-      <button id="status-badge" class="idle" type="button" onclick="handleStatusBadgeClick()" aria-label="Recording status">
-        <span id="status-dot"></span>
-        <span id="status-text">Idle</span>
-        <span class="status-stop-hint" aria-hidden="true">&#9632; Stop</span>
-      </button>
     </header>
     <div class="info-bar">
       <span>Elapsed: <strong id="elapsed">--:--:--</strong></span>
@@ -1563,10 +1552,12 @@
         <h3>Recording</h3>
         <audio id="session-audio" controls preload="metadata"></audio>
       </div>
-      <div class="card">
-        <h3>Transcript</h3>
+      <details class="card transcript-details" id="session-transcript-card">
+        <summary>
+          <h3>Transcript<svg class="icon icon-sm tr-chev" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></h3>
+        </summary>
         <div id="session-transcript"></div>
-      </div>
+      </details>
     </div>
   </div>
 
@@ -2290,10 +2281,6 @@ async function toggleRecording() {
 async function startRecording() { if (!document.getElementById('btn-record').classList.contains('recording')) toggleRecording(); }
 async function stopRecording() { if (document.getElementById('btn-record').classList.contains('recording')) toggleRecording(); }
 
-function handleStatusBadgeClick() {
-  if (document.getElementById('status-badge').classList.contains('recording')) toggleRecording();
-}
-
 // --- Polling ---
 function startPolling() { if (polling) return; polling = setInterval(pollTranscript, 2000); }
 function stopPolling() { if (polling) { clearInterval(polling); polling = null; } }
@@ -2302,14 +2289,10 @@ function startBgSync() { if (bgSync) return; bgSync = setInterval(syncStatus, 30
 async function syncStatus() {
   try {
     const s = await apiCall('/api/status');
-    const badge = document.getElementById('status-badge');
-    const text = document.getElementById('status-text');
     const isRecording = !!s.is_active;
     const recordBtn = document.getElementById('btn-record');
     const heroBtn = document.getElementById('btn-hero-record');
     if (isRecording) {
-      badge.className = 'recording'; text.textContent = 'Recording';
-      badge.setAttribute('aria-label', 'Stop recording');
       recordBtn.classList.add('recording');
       recordBtn.title = 'Stop recording';
       recordBtn.setAttribute('aria-label', 'Stop recording');
@@ -2322,8 +2305,6 @@ async function syncStatus() {
       startPolling();
       updateEnhanceEnabled();
     } else {
-      badge.className = 'idle'; text.textContent = 'Idle';
-      badge.setAttribute('aria-label', 'Recording status');
       recordBtn.classList.remove('recording');
       recordBtn.title = 'Start recording';
       recordBtn.setAttribute('aria-label', 'Start recording');
@@ -2441,6 +2422,8 @@ function highlightSearchSegment(segmentId) {
   document.querySelectorAll('#session-transcript .segment.search-highlight').forEach(el => el.classList.remove('search-highlight'));
   const el = document.querySelector('#session-transcript .segment[data-segment-id="' + segmentId + '"]');
   if (!el) return;
+  const trCard = document.getElementById('session-transcript-card');
+  if (trCard) trCard.open = true;
   el.classList.add('search-highlight');
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   pendingHighlightSegmentId = null;
@@ -2516,6 +2499,7 @@ async function refreshSessionList() {
     if (!document.querySelector('#session-list .session-name-edit, #session-list .session-edit-actions')) {
       renderSessionList();
     }
+    renderHomeView();
   } catch (e) {}
 }
 
@@ -2808,7 +2792,6 @@ async function deleteBulkSelected() {
   }
   checkedSessions.clear();
   await refreshSessionList();
-  renderHomeView();
 }
 
 function relativeDate(dt) {
@@ -4204,9 +4187,6 @@ async function loadPromptTemplates() {
     await handleDeepLink();
   } else if (status.is_active) {
     lastWasRecording = true;
-    const badge = document.getElementById('status-badge');
-    badge.className = 'recording';
-    document.getElementById('status-text').textContent = 'Recording';
     showLiveView(); startPolling();
   } else showEmptyView();
   startBgSync();

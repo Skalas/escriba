@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-06-29
+
+UI polish following the v0.11.0 redesign — one record control, calmer spacing, and a folded transcript.
+
+### Changed
+- **One persistent record control.** The Start/Stop button now lives in the same spot — the top bar, right-aligned next to settings — on **both** the session and live views, instead of moving between a top-bar button and an in-header pill. This supersedes the v0.11.0 "one control per view" model.
+- **Session transcript is collapsed by default.** The transcript on a finished session is now a foldable section (chevron) rather than always-expanded, keeping the focus on the notes. Deep-linking to a segment auto-expands it.
+
+### Fixed
+- **Top-bar record button rendered full-width and cramped** — a CSS source-order bug let `width:100%` win over the top-bar override, so the button stretched across the bar with its border crowding the divider line. It's now a compact pill matching the Re-transcribe / Export buttons.
+- **Redundant recording indicators.** Removed the live-view "Idle / ● Recording" status pill, which duplicated the top-bar control (showing "Idle" next to a "Start recording" button, or a second red element next to "Stop recording"). Recording state now reads from the single top-bar button plus the Live Recording header.
+- **Deleting a single session left "ghost" cards** on the home "Jump back in" grid; the recents now refresh on every session-list update, not only after bulk delete.
+- **Contradictory empty state** — the live transcript no longer shows "Select a session or start recording…" while a recording is active; it shows a listening hint instead.
+- **Cramped top bar.** Added breathing room above and below the top-bar divider so the heading and action buttons no longer sit on the line.
+
 ## [0.11.0] - 2026-06-29
 
 A welcoming home, a calmer sidebar, and one clear record control.
