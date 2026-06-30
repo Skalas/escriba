@@ -1297,3 +1297,129 @@ def test_record_control_placement_per_view(page) -> None:
     page.wait_for_timeout(150)
     topbar_session = page.evaluate("getComputedStyle(document.getElementById('btn-record')).display")
     assert topbar_session != 'none', "Session: top-bar record button must be visible"
+
+
+# ---------------------------------------------------------------------------
+# T1-e: Live-notes UI reset on new recording start
+# ---------------------------------------------------------------------------
+
+def test_start_recording_resets_stale_live_notes_ui(page) -> None:
+    """Starting a new recording must clear enhanced-notes state left by a prior session.
+
+    Repro: enhance notes during recording A -> stop A -> start recording B.
+    Without resetLiveNotesUI(), recording B shows A's enhanced output, title
+    "Enhanced notes", hint, and legend.  This test fails against the pre-fix code.
+    """
+    # 1. Simulate the stale state a prior enhancement would have produced.
+    page.evaluate("""() => {
+        const out = document.getElementById('notes-output');
+        out.innerHTML = '<p>Stale notes from prior recording</p>';
+        out.classList.add('visible');
+        document.getElementById('live-pad-title').textContent = 'Enhanced notes';
+        document.getElementById('live-pad-hint').textContent = 'Your words kept - AI-added marked';
+        const legend = document.getElementById('live-enhance-legend');
+        legend.style.display = '';
+        legend.innerHTML = '<span>legend content</span>';
+    }""")
+
+    # Pre-condition: stale state is in place.
+    assert page.evaluate("document.getElementById('notes-output').classList.contains('visible')")
+    assert page.evaluate("document.getElementById('live-pad-title').textContent") == "Enhanced notes"
+
+    # 2. Trigger the START branch of toggleRecording() (btn is not .recording).
+    #    _stub_api returns {"ok":true} for /api/recording/start automatically.
+    page.evaluate("void toggleRecording()")
+    page.wait_for_timeout(400)
+
+    # 3. Assert every piece of the live-notes UI was reset.
+    assert not page.evaluate(
+        "document.getElementById('notes-output').classList.contains('visible')"
+    ), "#notes-output still has 'visible' class after new recording started"
+    assert page.evaluate("document.getElementById('notes-output').innerHTML") == "", (
+        "#notes-output innerHTML not cleared"
+    )
+    assert page.evaluate("document.getElementById('live-pad-title').textContent") == "Your notes", (
+        "#live-pad-title not reset to 'Your notes'"
+    )
+    assert page.evaluate("document.getElementById('live-pad-hint').textContent") == "Autosaved \xb7 jot freely", (
+        "#live-pad-hint not reset"
+    )
+    assert page.evaluate("document.getElementById('live-enhance-legend').style.display") == "none", (
+        "#live-enhance-legend not hidden"
+    )
+    assert page.evaluate("document.getElementById('live-enhance-legend').innerHTML") == "", (
+        "#live-enhance-legend innerHTML not cleared"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T6: Dual-field notes editor — user_notes + AI notes
+# ---------------------------------------------------------------------------
+
+def test_session_notes_editor_dual_field(chromium_browser, spa_server: str) -> None:
+    """Edit mode populates both fields; Save POSTs to the user-notes endpoint.
+
+    Asserts:
+    - #session-user-notes-input is populated from _currentSessionUserNotes on edit-open.
+    - #session-notes-input is populated from notes_text.
+    - saveNotesAndRender() POSTs to /api/sessions/:id/user-notes with the updated text.
+    - _currentSessionUserNotes is updated so renderNotesView reflects the edit.
+    """
+    captured: list[str] = []
+
+    def _intercept(route):
+        from urllib.parse import urlparse
+        path = urlparse(route.request.url).path
+        if path.endswith("/user-notes"):
+            captured.append(route.request.post_data or "")
+        route.fulfill(status=200, content_type="application/json", body='{"ok":true}')
+
+    ctx = chromium_browser.new_context()
+    pg = ctx.new_page()
+    # Generic API stub; the intercept above overrides /user-notes paths (LIFO)
+    pg.route("**/api/**", lambda r: r.fulfill(
+        status=200, content_type="application/json", body='{"ok":true}'
+    ))
+    pg.route("**/api/sessions/**", _intercept)
+    pg.goto(spa_server)
+    pg.wait_for_load_state("domcontentloaded")
+    pg.wait_for_timeout(300)
+
+    # Simulate a loaded session with both notes types.
+    pg.evaluate("""() => {
+        selectedSessionId = 'sess-t6';
+        _currentSessionUserNotes = 'my context notes';
+        document.getElementById('session-notes-input').value = 'AI generated summary';
+        document.getElementById('session-user-notes-input').value = 'my context notes';
+    }""")
+
+    # Open the editor — toggleNotesEdit() reads _currentSessionUserNotes into the field.
+    pg.evaluate("toggleNotesEdit()")
+    pg.wait_for_timeout(100)
+
+    ai_val = pg.evaluate("document.getElementById('session-notes-input').value")
+    user_val = pg.evaluate("document.getElementById('session-user-notes-input').value")
+    assert ai_val == "AI generated summary", f"AI notes field wrong: {ai_val!r}"
+    assert user_val == "my context notes", f"User notes field wrong: {user_val!r}"
+
+    # Simulate the user editing the user-notes field.
+    pg.evaluate("""() => {
+        document.getElementById('session-user-notes-input').value = 'updated context';
+    }""")
+
+    # Save — triggers saveNotes() which POSTs to both endpoints.
+    pg.evaluate("void saveNotesAndRender()")
+    pg.wait_for_timeout(500)
+
+    assert any("updated context" in body for body in captured), (
+        f"POST /api/sessions/sess-t6/user-notes not called with updated text; "
+        f"captured bodies: {captured}"
+    )
+
+    # _currentSessionUserNotes should reflect the saved value so renderNotesView is coherent.
+    updated_global = pg.evaluate("_currentSessionUserNotes")
+    assert updated_global == "updated context", (
+        f"_currentSessionUserNotes not updated after save: {updated_global!r}"
+    )
+
+    ctx.close()

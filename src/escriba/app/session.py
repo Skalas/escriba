@@ -558,40 +558,40 @@ class TranscriptionSession:
             user_notes = self.db.get_user_notes(self.db_session_id)
 
         if prompt or user_notes:
-            return _generate_custom_notes(
+            notes = _generate_custom_notes(
                 transcript,
                 prompt or "",
                 effective_model,
                 system_prompt=self.config.prompts.effective_system_prompt,
                 user_notes=user_notes,
             )
+        else:
+            from escriba.summarize import generate_summary
 
-        from escriba.summarize import generate_summary
+            result = generate_summary(transcript, model=effective_model)
+            notes = _summary_to_markdown(result) if result else None
 
-        result = generate_summary(transcript, model=effective_model)
-        if result:
-            return _summary_to_markdown(result)
-        return None
+        if notes and self.db and self.db_session_id:
+            self.db.save_notes(self.db_session_id, notes)
+        return notes
 
     def _export_to_knowledge_store(self) -> None:
         if not self.db or not self.db_session_id:
             return
         try:
-            from escriba.knowledge.local_markdown import LocalMarkdownAdapter
+            from escriba.knowledge.factory import get_knowledge_store
 
             session = self.db.get_session(self.db_session_id)
             segments = self.db.get_segments(self.db_session_id)
             if not session:
                 return
-            ks_config = self.config.knowledge_store
-            if ks_config.provider == "local-markdown":
-                adapter = LocalMarkdownAdapter(output_dir=ks_config.local_markdown.output_dir)
-                adapter.export(
-                    session=session,
-                    summary_json=None,
-                    audio_path=self._audio_file,
-                    segments=segments,
-                )
+            adapter = get_knowledge_store(self.config.knowledge_store)
+            adapter.export(
+                session=session,
+                summary_json=None,
+                audio_path=self._audio_file,
+                segments=segments,
+            )
         except Exception as exc:
             logger.error("Knowledge store export failed: %s", exc, exc_info=True)
 
@@ -763,10 +763,9 @@ def _build_custom_prompt(
             rendered = DEFAULT_SYSTEM_PROMPT.format(
                 transcript=transcript, prompt=prompt, user_notes=user_notes or ""
             )
-        except (KeyError, IndexError, ValueError):
-            rendered = DEFAULT_SYSTEM_PROMPT.format(
-                transcript=transcript, prompt=prompt, user_notes=""
-            )
+        except Exception:
+            logger.warning("DEFAULT_SYSTEM_PROMPT format also failed; using bare fallback", exc_info=True)
+            rendered = f"{transcript}\n\n{prompt}"
 
     if not has_user_notes_placeholder and user_notes:
         preamble = f"<user_notes>\n{user_notes}\n</user_notes>\n\n"

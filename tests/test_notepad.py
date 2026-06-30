@@ -113,6 +113,69 @@ def test_generate_notes_no_prompt_honors_user_notes(tmp_path: Path) -> None:
     )
 
 
+# T53.7 — generate_notes persists the result to the DB on the active-session path
+def test_generate_notes_persists_result_to_db(tmp_path: Path) -> None:
+    """generate_notes() must call db.save_notes when it returns a non-empty result."""
+    from unittest.mock import MagicMock, patch
+
+    import escriba.app.session as session_module
+    from escriba.app.database import Database
+    from escriba.config import AppConfig
+
+    db = Database(tmp_path / "test.db")
+    session_id = db.create_session(name="Active Session")
+
+    cfg = AppConfig()
+    sess = session_module.TranscriptionSession(cfg, database=db)
+    sess.db_session_id = session_id
+    sess.transcriber = MagicMock()
+    sess.transcriber.get_full_transcript.return_value = "Real transcript text"
+
+    with patch.object(
+        session_module, "_generate_custom_notes", return_value="Enhanced notes"
+    ):
+        result = sess.generate_notes(prompt="Summarize this")
+
+    db_session = db.get_session(session_id)
+    db.close()
+
+    assert result == "Enhanced notes"
+    assert db_session is not None
+    assert db_session["notes_text"] == "Enhanced notes", (
+        "generate_notes did not persist the result — "
+        "notes will be lost when the session stops"
+    )
+
+
+def test_generate_notes_does_not_persist_when_no_transcript(tmp_path: Path) -> None:
+    """generate_notes() must NOT call db.save_notes when there is no transcript."""
+    from unittest.mock import MagicMock
+
+    import escriba.app.session as session_module
+    from escriba.app.database import Database
+    from escriba.config import AppConfig
+
+    db = Database(tmp_path / "test.db")
+    session_id = db.create_session(name="Empty Session")
+
+    cfg = AppConfig()
+    sess = session_module.TranscriptionSession(cfg, database=db)
+    sess.db_session_id = session_id
+    sess.transcriber = MagicMock()
+    sess.transcriber.get_full_transcript.return_value = ""
+
+    result = sess.generate_notes(prompt="Summarize this")
+
+    db_session = db.get_session(session_id)
+    db.close()
+
+    assert result is None
+    assert db_session is not None
+    assert db_session["notes_text"] is None, (
+        "save_notes was called despite no transcript — unexpected DB write"
+    )
+
+
 # T53.5 — DOM test: live-notepad textarea and session-user-notes-card are in index.html
 def test_dom_elements_present_in_index_html() -> None:
     """index.html contains the live-notepad textarea and the unified notes card elements."""
