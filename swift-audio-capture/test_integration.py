@@ -10,8 +10,34 @@ import sys
 import time
 from pathlib import Path
 
+
+def _has_audio_input_device() -> bool:
+    try:
+        import sounddevice as sd
+
+        return any(d.get("max_input_channels", 0) > 0 for d in sd.query_devices())
+    except Exception:
+        return False
+
+
+def _skip_under_pytest_if(condition: bool, reason: str) -> None:
+    """Skip gracefully when collected by pytest in a headless/CI environment.
+
+    The manual ``__main__`` runner is unaffected — ``pytest.skip`` only raises
+    when pytest is the active driver.
+    """
+    if condition and "pytest" in sys.modules:
+        import pytest
+
+        pytest.skip(reason)
+
+
 def test_list_command():
     """Test the --list command."""
+    _skip_under_pytest_if(
+        not _has_audio_input_device(),
+        "no audio input device available (headless/CI)",
+    )
     print("Testing --list command...")
     try:
         result = subprocess.run(
@@ -38,16 +64,24 @@ def test_list_command():
 
 def test_capture_short():
     """Test capturing a short amount of audio."""
+    _skip_under_pytest_if(
+        not _has_audio_input_device(),
+        "no audio input device available (headless/CI)",
+    )
     print("\nTesting audio capture (5 seconds)...")
     print("Make sure you have audio playing on your system!")
-    
+
     try:
         # Try to use the built executable first
         executable = Path(__file__).parent / ".build" / "release" / "audio-capture"
         if not executable.exists():
             executable = Path(__file__).parent / ".build" / "debug" / "audio-capture"
-        
+
         if not executable.exists():
+            if "pytest" in sys.modules:
+                import pytest
+
+                pytest.skip("audio-capture executable not built")
             print("Executable not found. Please build first:")
             print("  cd swift-audio-capture && swift build -c release")
             return False
