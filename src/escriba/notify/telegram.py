@@ -47,8 +47,17 @@ def send_telegram_message(
     except ImportError:
         logger.error("requests not installed. Install with: pip install requests")
         return False
-    except Exception as e:
-        logger.error("Error sending Telegram message: %s", e, exc_info=True)
+    except requests.HTTPError as e:
+        # Never log the exception/URL: it embeds the bot token
+        # (https://api.telegram.org/bot<TOKEN>/sendMessage).
+        status = e.response.status_code if e.response is not None else "?"
+        logger.error("Telegram API error: HTTP %s", status)
+        return False
+    except requests.RequestException:
+        logger.error("Telegram request failed (network error)")
+        return False
+    except Exception:
+        logger.error("Unexpected error sending Telegram message")
         return False
 
 

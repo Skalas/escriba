@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -432,10 +433,44 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             self._end_request("GET", cid, t0)
 
+    def _mutation_guard(self) -> None:
+        """Reject cross-origin / DNS-rebinding requests on state-changing routes.
+
+        Escriba is a no-auth localhost service, so any page the user has open
+        could otherwise drive its API (textbook CSRF). Defense in depth:
+
+        1. Require ``Content-Type: application/json`` — a CORS "simple" request
+           (form/text) is refused, forcing a preflight the attacker page cannot
+           satisfy (we send no permissive CORS headers). → 415
+        2. Reject a foreign ``Origin`` (absent Origin = same-origin fetch). → 403
+        3. Reject an unexpected ``Host`` — closes DNS rebinding. → 421
+        """
+        ctype = self.headers.get("Content-Type", "")
+        if ctype.split(";", 1)[0].strip().lower() != "application/json":
+            raise ApiError("Content-Type must be application/json", 415)
+
+        addr = getattr(self.server, "server_address", None)
+        port = addr[1] if isinstance(addr, tuple) else PORT
+        allowed_hosts = {
+            f"127.0.0.1:{port}",
+            f"localhost:{port}",
+            f"[::1]:{port}",
+        }
+        allowed_origins = {f"http://{h}" for h in allowed_hosts}
+
+        origin = self.headers.get("Origin")
+        if origin is not None and origin not in allowed_origins:
+            raise ApiError("Cross-origin request rejected", 403)
+
+        host = self.headers.get("Host")
+        if host is not None and host not in allowed_hosts:
+            raise ApiError("Invalid Host header", 421)
+
     def do_POST(self) -> None:
         cid, t0 = self._begin_request("POST")
         path = urlparse(self.path).path.rstrip("/") or "/"
         try:
+            self._mutation_guard()
             self._respond(self._route_post(path))
         except ApiError as exc:
             self._respond_error(exc)
@@ -499,6 +534,7 @@ class _Handler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/") or "/"
 
         try:
+            self._mutation_guard()
             if path == "/api/config":
                 self._respond(self._put_config(self._parse_json_body()))
             elif path.startswith("/api/sessions/") and path.endswith("/rename"):
@@ -536,6 +572,7 @@ class _Handler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/") or "/"
 
         try:
+            self._mutation_guard()
             if path.startswith("/api/folders/"):
                 folder_id = path.split("/api/folders/")[1]
                 if folder_id:
@@ -1427,11 +1464,36 @@ class _Handler(BaseHTTPRequestHandler):
         return {"ok": True, "config": config_to_dict(new_config)}, 200
 
     @staticmethod
+    def _format_env_line(key: str, value: Any) -> str:
+        """Serialize one KEY=value line safely.
+
+        Rejects a key that is not a valid identifier and a value containing
+        control characters — otherwise a value like ``x\\nEVIL=1`` would inject a
+        second, attacker-chosen variable that ``load_dotenv`` parses on the next
+        reload (#94). The value is double-quoted with ``\\`` and ``"`` escaped so
+        python-dotenv round-trips it back to the original string.
+        """
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise ApiError(f"Invalid configuration key: {key}", 400)
+        value = str(value)
+        if any(ch in value for ch in ("\n", "\r", "\0")):
+            raise ApiError(f"Invalid character in value for {key}", 400)
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'{key}="{escaped}"'
+
+    @staticmethod
     def _update_env_file(updates: dict):
         env_path = Path(".env")
         lines = []
         if env_path.exists():
             lines = env_path.read_text().splitlines()
+
+        # Validate/serialize every update up front so a bad value aborts before
+        # any partial write to disk.
+        formatted = {
+            key: _Handler._format_env_line(key, value)
+            for key, value in updates.items()
+        }
 
         updated_keys = set()
         new_lines = []
@@ -1439,15 +1501,15 @@ class _Handler(BaseHTTPRequestHandler):
             stripped = line.strip()
             if stripped and not stripped.startswith("#") and "=" in stripped:
                 key = stripped.split("=", 1)[0].strip()
-                if key in updates:
-                    new_lines.append(f"{key}={updates[key]}")
+                if key in formatted:
+                    new_lines.append(formatted[key])
                     updated_keys.add(key)
                     continue
             new_lines.append(line)
 
-        for key, value in updates.items():
+        for key, line in formatted.items():
             if key not in updated_keys:
-                new_lines.append(f"{key}={value}")
+                new_lines.append(line)
 
         env_path.write_text("\n".join(new_lines) + "\n")
 

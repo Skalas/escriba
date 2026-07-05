@@ -2086,7 +2086,7 @@ function renderChips(containerId, context) {
   container.innerHTML = promptTemplates.map(t => {
     const isActive = activePrompts[context].has(t.id);
     return `<span class="prompt-chip${isActive ? ' active' : ''}"
-      onclick="togglePrompt('${escAttr(t.id)}', '${context}', '${containerId}')">${escHtml(t.label)}</span>`;
+      onclick="togglePrompt('${escJsAttr(t.id)}', '${escJsAttr(context)}', '${escJsAttr(containerId)}')">${escHtml(t.label)}</span>`;
   }).join('');
 }
 
@@ -2235,6 +2235,15 @@ function resetTemplates() {
 }
 
 async function apiCall(path, opts) {
+  opts = opts || {};
+  const method = (opts.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    // State-changing requests must be application/json. The server rejects
+    // other content types (CSRF defense: application/json forces a CORS
+    // preflight that a cross-origin page cannot satisfy). Explicit headers
+    // still win.
+    opts.headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  }
   let r;
   try {
     r = await fetch(API + path, opts);
@@ -2439,7 +2448,7 @@ function renderSearchResults(query) {
     html += '<div class="search-result-group-name">' + escHtml(group.name) + '</div>';
     for (const item of group.items) {
       const ts = formatTime(item.start_time || 0);
-      html += `<div class="search-result-item" onclick="openSearchResult('${escAttr(sessionId)}', ${item.id}, '${escAttr(query)}')">`
+      html += `<div class="search-result-item" onclick="openSearchResult('${escJsAttr(sessionId)}', ${item.id}, '${escJsAttr(query)}')">`
         + `<div class="search-result-time">${escHtml(ts)}</div>`
         + `<div class="search-result-snippet">${highlightSearchText(item.snippet || '', query)}</div>`
         + '</div>';
@@ -2489,7 +2498,7 @@ function renderSessionSpeakers(speakers) {
   list.innerHTML = speakers.map(s => {
     const hasCustom = s.display_name && s.display_name !== s.speaker;
     return `<div class="speaker-row" data-speaker="${escAttr(s.speaker)}">
-      <span class="speaker-display" onclick="startSpeakerRename('${escAttr(s.speaker)}')" title="Click to rename">${escHtml(s.display_name || s.speaker)}</span>
+      <span class="speaker-display" onclick="startSpeakerRename('${escJsAttr(s.speaker)}')" title="Click to rename">${escHtml(s.display_name || s.speaker)}</span>
       ${hasCustom ? `<span class="speaker-raw">${escHtml(s.speaker)}</span>` : ''}
     </div>`;
   }).join('');
@@ -2501,7 +2510,7 @@ function startSpeakerRename(speakerKey) {
   if (!row || row.querySelector('.speaker-name-edit')) return;
   const displayEl = row.querySelector('.speaker-display');
   const current = displayEl.textContent || speakerKey;
-  row.innerHTML = `<input type="text" class="speaker-name-edit" value="${escAttr(current)}" data-speaker="${escAttr(speakerKey)}" onclick="event.stopPropagation()" onkeydown="handleSpeakerRenameKey(event, '${escAttr(speakerKey)}')">`;
+  row.innerHTML = `<input type="text" class="speaker-name-edit" value="${escAttr(current)}" data-speaker="${escAttr(speakerKey)}" onclick="event.stopPropagation()" onkeydown="handleSpeakerRenameKey(event, '${escJsAttr(speakerKey)}')">`;
   const input = row.querySelector('.speaker-name-edit');
   input.focus();
   input.select();
@@ -2580,12 +2589,12 @@ function renderSessionList() {
     const chevronClass = isCollapsed ? ' collapsed' : '';
     const sessionsClass = isCollapsed ? ' collapsed' : '';
     html += `<div class="folder-group">
-      <div class="folder-header" onclick="toggleFolder('${escAttr(f.id)}')">
+      <div class="folder-header" onclick="toggleFolder('${escJsAttr(f.id)}')">
         <span class="folder-chevron${chevronClass}"><svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg></span>
         <span>${escHtml(f.name)} (${sessions.length})</span>
         <span class="folder-actions">
-          <button onclick="event.stopPropagation();startFolderRename('${escAttr(f.id)}', this.parentElement.parentElement)" title="Rename" aria-label="Rename folder"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg></button>
-          <button onclick="event.stopPropagation();deleteFolder('${escAttr(f.id)}')" title="Delete folder" aria-label="Delete folder"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+          <button onclick="event.stopPropagation();startFolderRename('${escJsAttr(f.id)}', this.parentElement.parentElement)" title="Rename" aria-label="Rename folder"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg></button>
+          <button onclick="event.stopPropagation();deleteFolder('${escJsAttr(f.id)}')" title="Delete folder" aria-label="Delete folder"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
         </span>
       </div>
       <div class="folder-sessions${sessionsClass}">
@@ -2654,17 +2663,17 @@ function renderSessionItem(s) {
   let indicator = '';
   if (status === 'active') indicator = '<span class="session-indicator active" aria-label="Recording" title="Recording"></span>';
   else if (status === 'error') indicator = '<span class="session-indicator error" aria-label="Error" title="Error"></span>';
-  return `<div class="session-item${sel}" data-id="${escAttr(s.id)}" tabindex="0" role="button" aria-label="${escAttr(s.name)}" onclick="handleSessionClick('${escAttr(s.id)}', event)" onkeydown="_sessionItemKeyDown('${escAttr(s.id)}', event)">
+  return `<div class="session-item${sel}" data-id="${escAttr(s.id)}" tabindex="0" role="button" aria-label="${escAttr(s.name)}" onclick="handleSessionClick('${escJsAttr(s.id)}', event)" onkeydown="_sessionItemKeyDown('${escJsAttr(s.id)}', event)">
     <input type="checkbox" class="session-checkbox" data-session-id="${escAttr(s.id)}" ${checked}
-      onclick="event.stopPropagation();toggleCheck('${escAttr(s.id)}', this.checked, event)">
+      onclick="event.stopPropagation();toggleCheck('${escJsAttr(s.id)}', this.checked, event)">
     ${indicator}
     <div class="session-info">
       <div class="session-name" data-session-id="${escAttr(s.id)}" title="${escAttr(s.name)}">${escHtml(s.name)}</div>
       <div class="session-meta">${date} ${time} &middot; ${dur} &middot; ${s.segment_count || 0} segs</div>
     </div>
     <div class="session-actions">
-      <button class="session-action-btn session-rename-btn" onclick="event.stopPropagation();startRenameById('${escAttr(s.id)}')" title="Rename" aria-label="Rename session"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg></button>
-      <button class="session-action-btn session-delete-btn" onclick="event.stopPropagation();deleteSessionById('${escAttr(s.id)}')" title="Delete" aria-label="Delete session"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
+      <button class="session-action-btn session-rename-btn" onclick="event.stopPropagation();startRenameById('${escJsAttr(s.id)}')" title="Rename" aria-label="Rename session"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg></button>
+      <button class="session-action-btn session-delete-btn" onclick="event.stopPropagation();deleteSessionById('${escJsAttr(s.id)}')" title="Delete" aria-label="Delete session"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
     </div>
   </div>`;
 }
@@ -2732,7 +2741,7 @@ async function selectSession(id) {
         const splitBtn = (canSplit && idx > 0)
           ? `<button class="segment-split-btn" aria-label="Split before this segment"
               title="Split before this segment"
-              onclick="event.stopPropagation();splitSessionHere('${escAttr(id)}', ${seg.id}, '${escAttr(ts)}')">
+              onclick="event.stopPropagation();splitSessionHere('${escJsAttr(id)}', ${seg.id}, '${escJsAttr(ts)}')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
                 <line x1="20" y1="4" x2="8.12" y2="15.88"/>
@@ -2742,7 +2751,7 @@ async function selectSession(id) {
             </button>` : '';
         const linkBtn = `<button class="segment-link-btn" aria-label="Copy segment link"
               title="Copy link to this segment"
-              onclick="event.stopPropagation();copySegmentLink('${escAttr(id)}', ${seg.id})">
+              onclick="event.stopPropagation();copySegmentLink('${escJsAttr(id)}', ${seg.id})">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
                 <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
@@ -2868,7 +2877,7 @@ function renderHomeView() {
     const notesRaw = (s.notes_text || '').trim();
     const snippet = notesRaw ? notesRaw.replace(/^#+\s*/gm, '').replace(/\*+/g, '').slice(0, 120) : '';
     const metaParts = [relDate, dur].filter(Boolean);
-    return `<button class="session-recent-card" data-session-id="${escAttr(s.id)}" onclick="selectSession('${escAttr(s.id)}')" aria-label="${escAttr(s.name)}">
+    return `<button class="session-recent-card" data-session-id="${escAttr(s.id)}" onclick="selectSession('${escJsAttr(s.id)}')" aria-label="${escAttr(s.name)}">
       <div class="session-recent-title">${escHtml(s.name)}</div>
       <div class="session-recent-meta">
         ${metaParts.map(escHtml).join(' · ')}
@@ -2888,7 +2897,7 @@ function toggleMoveDropdown() {
   let html = '<div class="move-dropdown-item new-folder" onclick="createFolderAndMove()">+ New Folder</div>';
   html += `<div class="move-dropdown-item" onclick="moveToFolder(null)">Unfiled</div>`;
   for (const f of allFolders) {
-    html += `<div class="move-dropdown-item" onclick="moveToFolder('${escAttr(f.id)}')">${escHtml(f.name)}</div>`;
+    html += `<div class="move-dropdown-item" onclick="moveToFolder('${escJsAttr(f.id)}')">${escHtml(f.name)}</div>`;
   }
   dd.innerHTML = html;
   dd.classList.add('visible');
@@ -4118,6 +4127,25 @@ function escHtml(s) {
 function escAttr(s) {
   if (!s) return '';
   return escHtml(String(s)).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Escape a value interpolated into an INLINE event handler, e.g.
+// onclick="fn('${escJsAttr(x)}')". escAttr is unsound here: the HTML parser
+// entity-decodes the attribute value BEFORE the JS is compiled, so &#39; turns
+// back into ' and can break out of the JS string. This applies JS-string
+// escaping (\\, \', newlines) that survives HTML decoding, plus HTML entity
+// encoding of the characters that would end the onclick="..." attribute (").
+function escJsAttr(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function showError(msg) {
