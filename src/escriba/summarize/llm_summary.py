@@ -196,14 +196,47 @@ class _LocalInferenceProcess:
                 self._executor = concurrent.futures.ProcessPoolExecutor(max_workers=1)
             return self._executor
 
-    def _reset_executor(self) -> None:
+    def _reset_executor(self, *, kill_workers: bool = False) -> None:
         with self._lock:
             if self._executor is not None:
+                if kill_workers:
+                    self._terminate_workers(self._executor)
                 try:
                     self._executor.shutdown(wait=False, cancel_futures=True)
                 except Exception:
                     pass
                 self._executor = None
+
+    @staticmethod
+    def _terminate_workers(
+        executor: concurrent.futures.ProcessPoolExecutor,
+    ) -> None:
+        """Forcibly kill the pool's worker processes.
+
+        ``shutdown(cancel_futures=True)`` only cancels *pending* futures — a
+        worker already executing keeps running to completion, holding the MLX
+        model and GPU memory indefinitely. On timeout we must kill it (#100).
+        The worker set lives in the private ``_processes`` dict
+        ({pid: multiprocessing.Process}).
+        """
+        procs = getattr(executor, "_processes", None)
+        if not procs:
+            return
+        workers = list(procs.values())
+        for proc in workers:
+            try:
+                if proc.is_alive():
+                    proc.terminate()
+            except Exception:
+                logger.warning("Failed to terminate inference worker", exc_info=True)
+        for proc in workers:
+            try:
+                proc.join(timeout=5)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=2)
+            except Exception:
+                logger.warning("Failed to kill inference worker", exc_info=True)
 
     def run(
         self,
@@ -224,8 +257,9 @@ class _LocalInferenceProcess:
             try:
                 return future.result(timeout=_LOCAL_INFERENCE_TIMEOUT)
             except concurrent.futures.TimeoutError:
-                # The subprocess is still running; reset the pool to reclaim it.
-                self._reset_executor()
+                # The worker is still running with the model loaded; kill it so
+                # it cannot linger holding GPU memory (#100).
+                self._reset_executor(kill_workers=True)
                 raise TimeoutError(
                     f"Local inference timed out after {_LOCAL_INFERENCE_TIMEOUT}s"
                 )

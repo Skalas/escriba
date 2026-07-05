@@ -19,6 +19,14 @@ AUDIO_BUFFER_CAP_FACTOR = 2
 AUDIO_BUFFER_OVERFLOW_LOG_INTERVAL_S = 5.0
 
 
+class _SessionStartAborted(Exception):
+    """Raised internally to funnel every start() failure through cleanup.
+
+    The human-facing reason is set on ``session.error`` before raising; this
+    only steers control flow to ``_abort_start()``.
+    """
+
+
 class TranscriptionSession:
     """Manages a single transcription session: capture + transcribe + notes."""
 
@@ -105,65 +113,100 @@ class TranscriptionSession:
         # Open WAV file for audio recording
         self._open_audio_file()
 
-        # Create transcriber based on backend
-        backend = self.config.streaming.backend
-        model_size = self.config.streaming.model_size
-        language = self.config.streaming.language
-        logger.info(
-            "Session config: backend=%s, model=%s, language=%s",
-            backend, model_size, language,
-        )
-
+        # Everything below opens resources (transcriber, subprocess, mic stream)
+        # that must be released if any later step fails. Funnel every failure
+        # through _abort_start() so we never leak a Swift child / open WAV handle
+        # or leave the DB row 'active' (the caller discards a session whose
+        # is_active is False without calling stop()).
         try:
-            self.transcriber = _build_transcriber(self.config, realtime_output=True)
-        except Exception as e:
-            self.error = "Failed to load transcription model"
-            logger.error("Failed to load model: %s", e, exc_info=True)
-            return
+            backend = self.config.streaming.backend
+            model_size = self.config.streaming.model_size
+            language = self.config.streaming.language
+            logger.info(
+                "Session config: backend=%s, model=%s, language=%s",
+                backend, model_size, language,
+            )
 
-        # Start audio capture based on audio_source mode
-        audio_source = self.config.audio.audio_source
-        logger.info("Audio source: %s", audio_source)
-
-        # Start system audio (for "system" and "both" modes)
-        if audio_source in ("system", "both"):
             try:
-                from escriba.audio.screen_capture import (
-                    ScreenCaptureAudioCapture,
-                )
+                self.transcriber = _build_transcriber(self.config, realtime_output=True)
+            except Exception as e:
+                self.error = "Failed to load transcription model"
+                logger.error("Failed to load model: %s", e, exc_info=True)
+                raise _SessionStartAborted from e
 
-                self.screen_capture = ScreenCaptureAudioCapture(
-                    sample_rate=self.config.audio.sample_rate,
-                    channels=self.config.audio.channels,
-                    audio_callback=self._on_system_audio if audio_source == "both" else self._on_audio_data,
-                )
+            audio_source = self.config.audio.audio_source
+            logger.info("Audio source: %s", audio_source)
+
+            # Start system audio (for "system" and "both" modes)
+            if audio_source in ("system", "both"):
+                try:
+                    from escriba.audio.screen_capture import (
+                        ScreenCaptureAudioCapture,
+                    )
+
+                    self.screen_capture = ScreenCaptureAudioCapture(
+                        sample_rate=self.config.audio.sample_rate,
+                        channels=self.config.audio.channels,
+                        audio_callback=self._on_system_audio if audio_source == "both" else self._on_audio_data,
+                    )
+                except ImportError as e:
+                    self.error = (
+                        "Swift audio-capture CLI not available. "
+                        "Build with: cd swift-audio-capture && swift build -c release"
+                    )
+                    logger.error(self.error)
+                    raise _SessionStartAborted from e
                 if not self.screen_capture.start():
                     self.error = "Failed to start audio capture. Check permissions."
-                    return
-            except ImportError:
-                self.error = (
-                    "Swift audio-capture CLI not available. "
-                    "Build with: cd swift-audio-capture && swift build -c release"
-                )
-                logger.error(self.error)
-                return
+                    raise _SessionStartAborted
 
-        # Start mic capture (for "mic" and "both" modes)
-        if audio_source in ("mic", "both"):
+            # Start mic capture (for "mic" and "both" modes)
+            if audio_source in ("mic", "both"):
+                try:
+                    self._start_mic_capture(mix_mode=audio_source == "both")
+                except Exception as e:
+                    self.error = "Failed to start microphone capture. Check permissions."
+                    logger.error("Failed to start microphone capture: %s", e, exc_info=True)
+                    raise _SessionStartAborted from e
+
+            # Start processing thread
+            self._process_thread = threading.Thread(
+                target=self._process_loop, daemon=True
+            )
+            self._process_thread.start()
+            self.is_active = True
+            logger.info("Session started: %s", self.session_id)
+
+        except _SessionStartAborted:
+            self._abort_start()
+        except Exception as e:
+            self.error = self.error or "Failed to start recording"
+            logger.error("Unexpected session start failure: %s", e, exc_info=True)
+            self._abort_start()
+
+    def _abort_start(self):
+        """Release everything start() opened and mark the DB row errored.
+
+        Safe to call after a partial start: each step is guarded so it runs
+        whether or not the corresponding resource was actually acquired.
+        """
+        if self._mic_stream is not None:
             try:
-                self._start_mic_capture(mix_mode=audio_source == "both")
-            except Exception as e:
-                self.error = "Failed to start microphone capture. Check permissions."
-                logger.error("Failed to start microphone capture: %s", e, exc_info=True)
-                return
-
-        # Start processing thread
-        self._process_thread = threading.Thread(
-            target=self._process_loop, daemon=True
-        )
-        self._process_thread.start()
-        self.is_active = True
-        logger.info("Session started: %s", self.session_id)
+                self._close_mic_stream_safely()
+            except Exception:
+                logger.warning("Failed to close mic stream during abort", exc_info=True)
+        if self.screen_capture:
+            try:
+                self.screen_capture.stop()
+            except Exception:
+                logger.warning("Failed to stop screen capture during abort", exc_info=True)
+            self.screen_capture = None
+        self._close_audio_file()
+        if self.db and self.db_session_id:
+            try:
+                self.db.stop_session(self.db_session_id, status="error")
+            except Exception:
+                logger.warning("Failed to mark session errored during abort", exc_info=True)
 
     def stop(self):
         if not self.is_active:
@@ -425,9 +468,19 @@ class TranscriptionSession:
         wav_data = _build_wav(pcm_data, sample_rate, channels)
 
         if self.transcriber:
+            from escriba.transcribe.streaming_mlx import ChunkProcessingError
+
             try:
                 self.transcriber.process_wav_chunk(wav_data)
                 self._write_new_segments_to_db()
+            except ChunkProcessingError as e:
+                # Audio was captured (already teed to the WAV above) but could
+                # not be transcribed. The transcriber advances its own clock on
+                # failure, so later segments stay in sync; surface the gap
+                # distinctly rather than treating it as silence.
+                logger.warning(
+                    "Chunk not transcribed (audio retained in recording): %s", e
+                )
             except Exception as e:
                 logger.error("Error transcribing chunk: %s", e, exc_info=True)
 

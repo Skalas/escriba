@@ -246,3 +246,7 @@ transcripts/
 
 # Claude Code local scratch (claude -p subprocess)
 .claude/
+# metate transient session-id capture buffer
+.metate/.session-start.json
+# metate reviewer agents are installed tooling (source: metate repo)
+.cursor/agents/metate-*.md

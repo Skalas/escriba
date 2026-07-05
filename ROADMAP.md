@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-06-30 · Current version: `1.0.0` (release hardening — graceful failure spine, path-disclosure pass, CI-safe tests) · next up: real-meeting soak + clean-install verification (1.0.x)_
+_Last updated: 2026-07-04 · Current version: `1.0.1` (release-blocker hardening — audio-capture correctness, recording-lifecycle leaks/races, web-security pass; closes #88–#104) · next up: real-meeting soak + clean-install verification (still 1.0.x manual gates), then the broken/incomplete-features sprint (#97/#99/#64)_
 
 ---
 
@@ -215,6 +215,22 @@ No new features — release-readiness only. This sprint shipped the code-side ha
 **Deferred (with triggers — read these at next discover):**
 - **Concurrent background note-generation race** — `appendNotesToSession` does a read-then-write (read existing `notes_text`, write the concatenation); two rapid background "Enhance notes" calls on the same session can lose one append. Mitigated today by the per-session in-flight button guard. _Trigger:_ users report lost/overwritten notes from rapid re-generation, or any move to generate notes for multiple sessions concurrently. → needs a server-side atomic `append-notes` endpoint.
 - **Config-validation errors echo the submitted value** — `PUT /api/config` returns `ConfigValidationError` text verbatim (e.g. the rejected value). Acceptable for a localhost validation API and useful UX; the path-embedding parse-error subcase already falls through to logged-only. _Trigger:_ any plan to expose the dashboard beyond localhost.
+
+---
+
+### `v1.0.1` — Release-blocker hardening  ·  _shipped 2026-07-04 (#88–#104)_
+
+A post-1.0.0 full-repo review filed 6 P0 + 6 P1 correctness/reliability/security bugs the release-readiness sprint hadn't covered. HOLD mode — fix the release-blocker surface, don't widen it. Three strands:
+
+- [x] **Audio-capture correctness.** 32-bit PCM scaled by the correct bit-depth divisor (#88); the transcript clock advances on a failed chunk so later timestamps don't drift (#90); the Swift `PCMConverter` guards NaN/Inf before `Int16()` (#92); `both`-mode chunks each stream by its own rate and resamples system→mic before mixing (#104).
+- [x] **Recording lifecycle.** `TranscriptionSession.start()` failure releases the subprocess/WAV and errors the DB row (#89); `monitor_swift_cli` stops capture before dropping it on give-up (#91); `ScreenCaptureAudioCapture` start/restart is single-spawn and `stop()`/`restart()` always reap the child (#102); a timed-out local inference kills the GPU worker (#100); the daemon proves socket liveness and the CLI stops throwing tracebacks after a crash (#98).
+- [x] **Web-security pass.** CSRF guard (Content-Type + Origin + Host) on all mutating routes (#93); `escJsAttr` closes the inline-handler stored-XSS (#95); `.env` newline injection rejected (#94); Telegram token redacted from logs (#96); whisper argv-injection hardening for watched filenames (#101).
+
+**Done when:** the core loop produces correct, in-sync output; start/stop/failure leaks nothing; no state-changing endpoint accepts a cross-origin request — all proven by tests. ✅ for the code half (307 tests; review applied a whisper double-substitution fix + DRY/naming cleanups and re-verified with 0 blockers; a live-server smoke confirmed the CSRF guard returns 415/403/421 end-to-end). The soak + clean-install proofs remain the same human-run 1.0.x gate.
+
+**Deferred (with triggers — read these at next discover):**
+- **No Swift unit-test target.** T3 (#92 NaN guard) is covered by a source-regression guard + `swift build`, not a real XCTest. _Trigger:_ any further Swift change to `PCMConverter`/`CoreAudioTap`, or a second Swift bug — stand up an XCTest target (needs the converter moved to a testable library target).
+- **`_abort_start` uses an exception-funnel for cleanup.** Adds one indentation level to `start()`. Acceptable for now (reviewer: no change needed). _Trigger:_ if `start()` grows another capture mode, extract `_start_transcriber()`/`_start_system_capture()`/`_start_mic_capture_guarded()` so the body flattens.
 
 ---
 

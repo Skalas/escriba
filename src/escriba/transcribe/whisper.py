@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -27,10 +28,19 @@ def _build_command(input_path: Path, output_dir: Path) -> list[str]:
         "whisper --model small --language es --output_format txt "
         '--output_dir "{output_dir}" "{input}"',
     )
-    rendered = template.replace("{input}", str(input_path)).replace(
-        "{output_dir}", str(output_dir)
-    )
-    return shlex.split(rendered)
+    # Tokenize the (trusted) flag template ONCE, then substitute paths into the
+    # already-split tokens. Never round-trip an untrusted filename back through
+    # shlex.split — that is what lets a crafted name splice extra argv tokens.
+    # Substitute both placeholders in a SINGLE left-to-right pass so a path that
+    # itself contains the literal text "{output_dir}"/"{input}" is not re-scanned
+    # and double-substituted.
+    replacements = {"{input}": str(input_path), "{output_dir}": str(output_dir)}
+    pattern = re.compile("|".join(re.escape(k) for k in replacements))
+
+    def _sub(token: str) -> str:
+        return pattern.sub(lambda m: replacements[m.group()], token)
+
+    return [_sub(token) for token in shlex.split(template)]
 
 
 def transcribe_file(
@@ -49,6 +59,10 @@ def transcribe_file(
     Returns:
         Ruta del archivo de transcripción creado, o None si falla
     """
+    if not input_path.is_file():
+        LOGGER.warning("Skipping non-regular input path: %s", input_path)
+        return None
+
     output_dir.mkdir(parents=True, exist_ok=True)
     command = _build_command(input_path, output_dir)
     LOGGER.info("Whisper command: %s", " ".join(command))

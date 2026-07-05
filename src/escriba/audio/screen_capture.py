@@ -107,53 +107,54 @@ class ScreenCaptureAudioCapture:
 
     def start(self) -> bool:
         """Inicia la captura de audio del sistema."""
+        if not self.swift_cli_path:
+            logger.error("Swift CLI not found")
+            return False
+
+        # Hold the lock across the entire check → spawn → flag → thread-start
+        # sequence so a concurrent start()/restart() cannot both pass the guard
+        # and double-spawn the Swift child (the second Popen would leak the
+        # first, unterminated). _read_audio_stream blocks on _is_capturing()
+        # until we release the lock, so there is no deadlock.
         with self._lock:
             if self.is_capturing:
                 logger.warning("Capture already started")
                 return False
 
-        if not self.swift_cli_path:
-            logger.error("Swift CLI not found")
-            return False
+            self.stop_event.clear()
 
-        self.stop_event.clear()
+            try:
+                # --use-screen-capture = ScreenCaptureKit, captura sistema fiable
+                cmd = [
+                    str(self.swift_cli_path),
+                    "--sample-rate",
+                    str(self.sample_rate),
+                    "--channels",
+                    str(self.channels),
+                ]
+                if self.use_screen_capture:
+                    cmd.append("--use-screen-capture")
+                self.process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=0,  # Sin buffering
+                )
 
-        try:
-            # Iniciar proceso Swift (--use-screen-capture = ScreenCaptureKit, captura sistema fiable)
-            cmd = [
-                str(self.swift_cli_path),
-                "--sample-rate",
-                str(self.sample_rate),
-                "--channels",
-                str(self.channels),
-            ]
-            if self.use_screen_capture:
-                cmd.append("--use-screen-capture")
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0,  # Sin buffering
-            )
-
-            # Marcar como capturando ANTES de iniciar el thread para evitar que
-            # _read_audio_stream salga del bucle por _is_capturing() == False
-            with self._lock:
                 self.is_capturing = True
 
-            # Iniciar thread para leer PCM desde stdout
-            self.read_thread = threading.Thread(
-                target=self._read_audio_stream, daemon=True
-            )
-            self.read_thread.start()
+                self.read_thread = threading.Thread(
+                    target=self._read_audio_stream, daemon=True
+                )
+                self.read_thread.start()
 
-            logger.info("✓ Started system audio capture with Swift CLI")
+                logger.info("✓ Started system audio capture with Swift CLI")
+                return True
 
-            return True
-
-        except Exception as e:
-            logger.error("Error starting screen capture: %s", e, exc_info=True)
-            return False
+            except Exception as e:
+                logger.error("Error starting screen capture: %s", e, exc_info=True)
+                self.is_capturing = False
+                return False
 
     def _read_audio_stream(self):
         """Lee datos PCM desde stdout del proceso Swift."""
@@ -231,25 +232,25 @@ class ScreenCaptureAudioCapture:
         """
         logger.info("Attempting to restart Swift CLI...")
 
-        # Detener captura actual si está activa
-        if self._is_capturing():
-            self.stop()
-            # Esperar un poco antes de reiniciar
-            self.stop_event.wait(1.0)
+        # Always run cleanup before restarting, regardless of the is_capturing
+        # flag: the Swift process can die on its own, leaving is_capturing=False
+        # while the child is still alive / the read thread has not unwound.
+        # stop() is idempotent, so an already-stopped capture is a no-op.
+        self.stop()
+        self.stop_event.wait(1.0)
 
-        # Reiniciar
         return self.start()
 
     def stop(self):
-        """Detiene la captura de audio."""
+        """Detiene la captura de audio (idempotente)."""
         with self._lock:
-            if not self.is_capturing:
-                return
             self.is_capturing = False
 
         self.stop_event.set()
 
-        # Detener proceso Swift
+        # Detener proceso Swift — siempre, aunque is_capturing ya fuera False:
+        # un proceso que murió por su cuenta deja el flag en False pero el hijo
+        # puede seguir vivo (o el pipe sin cerrar).
         if self.process:
             try:
                 self.process.terminate()
@@ -261,10 +262,12 @@ class ScreenCaptureAudioCapture:
                     self.process.wait()
             except Exception as e:
                 logger.debug("Error stopping Swift CLI: %s", e)
+            self.process = None
 
         # Esperar thread de lectura
         if self.read_thread and self.read_thread != threading.current_thread():
             self.read_thread.join(timeout=2.0)
+        self.read_thread = None
 
         logger.info("Stopped system audio capture")
 

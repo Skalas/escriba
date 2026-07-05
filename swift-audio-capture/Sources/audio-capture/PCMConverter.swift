@@ -3,6 +3,18 @@ import Accelerate
 
 /// Utilities for converting audio formats to PCM int16
 struct PCMConverter {
+    /// Clamp an already-scaled sample to the Int16 range.
+    ///
+    /// Guards against NaN/Inf: `min`/`max` do not reliably filter NaN, so
+    /// `Int16(NaN)` would trap and crash the helper. Non-finite input maps to
+    /// silence (0) instead. Core Audio / ScreenCaptureKit buffers can contain
+    /// NaN during device reconfiguration or underrun.
+    @inline(__always)
+    static func clampToInt16(_ scaled: Float) -> Int16 {
+        guard scaled.isFinite else { return 0 }
+        return Int16(max(-32768.0, min(32767.0, scaled)))
+    }
+
     /// Convert float32 audio data to int16 PCM
     /// - Parameters:
     ///   - floatData: Audio data as float32 array (values typically -1.0 to 1.0)
@@ -17,7 +29,7 @@ struct PCMConverter {
             // Mono: direct conversion
             for i in 0..<sampleCount {
                 let value = floatData[i]
-                int16Data[i] = Int16(max(-32768, min(32767, value * 32767.0)))
+                int16Data[i] = clampToInt16(value * 32767.0)
             }
         } else {
             // Multi-channel: mix to mono
@@ -27,7 +39,7 @@ struct PCMConverter {
                     sum += floatData[i * channelCount + ch]
                 }
                 let avg = sum / Float(channelCount)
-                int16Data[i] = Int16(max(-32768, min(32767, avg * 32767.0)))
+                int16Data[i] = clampToInt16(avg * 32767.0)
             }
         }
         
@@ -50,7 +62,7 @@ struct PCMConverter {
             // Convert to int16 and clamp
             var int16Data = [Int16](repeating: 0, count: sampleCount)
             for i in 0..<sampleCount {
-                int16Data[i] = Int16(max(-32768, min(32767, scaledFloat[i])))
+                int16Data[i] = clampToInt16(scaledFloat[i])
             }
             return Data(bytes: int16Data, count: int16Data.count * MemoryLayout<Int16>.size)
         }
@@ -75,7 +87,7 @@ struct PCMConverter {
         // Clamp and convert to int16
         var int16Data = [Int16](repeating: 0, count: sampleCount)
         for i in 0..<sampleCount {
-            int16Data[i] = Int16(max(-32768, min(32767, scaledFloat[i])))
+            int16Data[i] = clampToInt16(scaledFloat[i])
         }
         
         return Data(bytes: int16Data, count: int16Data.count * MemoryLayout<Int16>.size)

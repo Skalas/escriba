@@ -17,6 +17,31 @@ from escriba.utils.env import get_bool_env, get_float_env, get_str_env
 logger = logging.getLogger(__name__)
 
 
+def _pcm_to_float_mono(
+    frames: bytes, sample_width: int, n_channels: int
+) -> Optional[np.ndarray]:
+    """Decode raw PCM bytes to a mono float32 array normalized to [-1, 1].
+
+    Scales by the divisor matching the sample width (16- vs 32-bit) and mixes
+    stereo to mono AFTER normalization — mixing first would truncate 32-bit
+    samples to int16 and lose precision. Returns None for an unsupported width.
+    """
+    if sample_width == 2:
+        audio_array = np.frombuffer(frames, dtype=np.int16)
+        scale = 32768.0
+    elif sample_width == 4:
+        audio_array = np.frombuffer(frames, dtype=np.int32)
+        scale = 2147483648.0
+    else:
+        logger.warning("Unsupported sample width: %s", sample_width)
+        return None
+
+    audio_float = audio_array.astype(np.float32) / scale
+    if n_channels == 2:
+        audio_float = audio_float.reshape(-1, 2).mean(axis=1)
+    return audio_float
+
+
 class StreamingTranscriber:
     """
     Transcripción en tiempo real usando faster-whisper.
@@ -276,20 +301,11 @@ class StreamingTranscriber:
                     if len(frames) == 0:
                         return None
 
-                    if sample_width == 2:
-                        audio_array = np.frombuffer(frames, dtype=np.int16)
-                    elif sample_width == 4:
-                        audio_array = np.frombuffer(frames, dtype=np.int32)
-                    else:
-                        logger.warning("Unsupported sample width: %s", sample_width)
+                    audio_float = _pcm_to_float_mono(
+                        frames, sample_width, n_channels
+                    )
+                    if audio_float is None:
                         return None
-
-                    if n_channels == 2:
-                        audio_array = (
-                            audio_array.reshape(-1, 2).mean(axis=1).astype(np.int16)
-                        )
-
-                    audio_float = audio_array.astype(np.float32) / 32768.0
 
                     # Record audio duration for metrics before _transcribe_audio increments accumulated_audio_time
                     if len(audio_float) > 0 and self.metrics:
@@ -342,18 +358,9 @@ class StreamingTranscriber:
             pcm_data = wav_data[44 : 44 + data_size]
             bytes_per_sample = bits_per_sample // 8
 
-            if bytes_per_sample == 2:
-                audio_array = np.frombuffer(pcm_data, dtype=np.int16)
-            elif bytes_per_sample == 4:
-                audio_array = np.frombuffer(pcm_data, dtype=np.int32)
-            else:
-                logger.warning("Unsupported bytes per sample: %s", bytes_per_sample)
+            audio_float = _pcm_to_float_mono(pcm_data, bytes_per_sample, n_channels)
+            if audio_float is None:
                 return None
-
-            if n_channels == 2:
-                audio_array = audio_array.reshape(-1, 2).mean(axis=1).astype(np.int16)
-
-            audio_float = audio_array.astype(np.float32) / 32768.0
 
             return self._transcribe_audio(audio_float, sample_rate, raw_audio_for_speaker=wav_data)
 
