@@ -1,6 +1,6 @@
 [project]
 name = "escriba"
-version = "1.0.0"
+version = "1.0.1"
 description = "Local system + mic audio transcription"
 requires-python = ">=3.10"
 dependencies = [

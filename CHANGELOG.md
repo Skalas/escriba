@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-04
+
+Release-blocker hardening: a post-1.0.0 full-repo review surfaced a stack of P0/P1 correctness, reliability, and security bugs the release-readiness sprint did not cover. No new features — the core record → transcribe loop now produces correct, in-sync output; recording no longer leaks processes/handles or races itself; and the localhost attack surface is closed. Closes #88–#104.
+
+### Security
+- **CSRF protection on all state-changing endpoints (#93).** `POST`/`PUT`/`DELETE` now require `Content-Type: application/json` (415 otherwise — forces a CORS preflight a cross-origin page can't satisfy), reject a foreign `Origin` (403), and validate the `Host` header against a localhost allow-list (421 — closes DNS rebinding). The dashboard sends the JSON content type on every mutating call.
+- **Stored XSS closed in the dashboard (#95).** `escAttr` was a no-op inside inline `onclick` handlers (the HTML parser entity-decodes before the JS runs). A new `escJsAttr` applies JS-string escaping that survives HTML decoding; every inline handler that interpolated data now uses it. Blocks the config-poisoning → script-execution chain via quick-prompt template ids.
+- **`.env` newline injection rejected (#94).** `PUT /api/config` values containing control characters are rejected (400) and written quoted/escaped, so a value can no longer inject a second attacker-chosen environment variable.
+- **Telegram bot token no longer leaks to logs (#96).** Send failures log only an HTTP status, never the exception/URL (which embeds the token).
+- **Argument-injection hardening for the watch folder (#101).** The whisper command template is tokenized once; untrusted filenames are passed as discrete argv elements and never round-tripped through `shlex.split`, so a crafted filename can't splice extra flags.
+
+### Fixed
+- **32-bit PCM no longer transcribes to garbage (#88).** The faster-whisper path scaled 32-bit samples by the 16-bit divisor, pushing them ~65000× outside `[-1, 1]`. Samples are now normalized by the divisor matching their bit depth, then mixed to mono.
+- **Transcript clock no longer drifts on a failed chunk (#90).** A chunk whose inference fails now still advances the audio clock (in a `finally`), so later segment timestamps stay aligned; the drop is surfaced distinctly rather than swallowed, and the audio is retained in the recording.
+- **Swift capture helper survives NaN/Inf samples (#92).** `PCMConverter` guards for finiteness before the `Int16()` conversion (which would otherwise trap and crash the helper mid-session).
+- **`both`-mode audio drift fixed (#104).** Mic and system streams are chunked by their own sample rate (equal durations, not equal byte counts) and the system stream is resampled to the mic rate before mixing.
+- **Recording start failures no longer leak (#89).** A failed `TranscriptionSession.start()` releases the subprocess and WAV handle and marks the DB row errored instead of leaving it `active` with an orphaned Swift child.
+- **No orphaned capture process on give-up (#91).** `monitor_swift_cli` stops the capture before dropping its reference on every exhausted-retry path.
+- **Capture start/restart races fixed (#102).** `ScreenCaptureAudioCapture.start()` holds its lock across the whole check→spawn→flag sequence (no double-spawn), and `stop()`/`restart()` always reap the previous process even when the `is_capturing` flag has already flipped.
+- **Timed-out local inference no longer leaks a GPU worker (#100).** An inference timeout now terminates the worker process (holding the MLX model) rather than only cancelling pending futures.
+- **Daemon liveness is real (#98).** `is_daemon_running()` probes the socket instead of trusting a stale file, reaps a dead socket, and the CLI prints a friendly message instead of a traceback after a crash.
+
+### Internal
+- Test suite at 307 (new `tests/test_v1_0_1_hardening.py` covering T1–T14, plus a live-server CSRF smoke). Version bumped to `1.0.1` across `pyproject.toml`, `src/escriba/__init__.py`, and `uv.lock`. Deduplicated the bit-depth PCM decode into `_pcm_to_float_mono`.
+
 ## [1.0.0] - 2026-06-30
 
 Release hardening: no new features — the request spine fails gracefully, the dashboard never throws on a failed call, API responses stop leaking filesystem paths, and the test suite runs reliably headless. Version bumped to `1.0.0`.
