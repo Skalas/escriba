@@ -321,7 +321,13 @@ def live_server(minimal_config: AppConfig, tmp_path: Path):
 
 def _http(port: int, method: str, path: str, body: bytes = b"", headers: dict | None = None) -> tuple[int, dict]:
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-    conn.request(method, path, body=body or None, headers=headers or {})
+    # State-changing routes require application/json (CSRF guard). Default it
+    # here so routing tests behave like a real same-origin client; the Host
+    # header http.client sets (127.0.0.1:<port>) is already allow-listed.
+    req_headers = dict(headers or {})
+    if method in ("POST", "PUT", "DELETE"):
+        req_headers.setdefault("Content-Type", "application/json")
+    conn.request(method, path, body=body or None, headers=req_headers)
     resp = conn.getresponse()
     status = resp.status
     data = json.loads(resp.read())
