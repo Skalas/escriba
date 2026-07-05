@@ -269,13 +269,25 @@ def daemon_start(
     run_daemon(model_size=model_size)
 
 
+def _daemon_call(action):
+    """Run a DaemonClient call, turning a lost connection into a clean message.
+
+    Guards the TOCTOU window where the daemon dies between the liveness check
+    and the command, so the CLI never surfaces a raw ConnectionError traceback.
+    """
+    try:
+        return action(DaemonClient())
+    except ConnectionError:
+        print("Daemon is not running.")
+        raise typer.Exit(code=1)
+
+
 @daemon_app.command("stop")
 def daemon_stop() -> None:
     if not is_daemon_running():
         print("Daemon is not running.")
         raise typer.Exit(code=0)
-    client = DaemonClient()
-    response = client.stop_daemon()
+    response = _daemon_call(lambda c: c.stop_daemon())
     if response.get("success"):
         print("Daemon stopped.")
     else:
@@ -287,8 +299,7 @@ def daemon_status() -> None:
     if not is_daemon_running():
         print("Daemon is not running.")
         raise typer.Exit(code=0)
-    client = DaemonClient()
-    response = client.status()
+    response = _daemon_call(lambda c: c.status())
     if response.get("success"):
         status = response.get("status", {})
         print("Daemon Status:")
@@ -308,9 +319,10 @@ def daemon_start_recording(
     if not is_daemon_running():
         print("Daemon is not running. Start it with: escriba daemon start")
         raise typer.Exit(code=1)
-    client = DaemonClient()
-    response = client.start_recording(
-        output_dir=str(output_dir), combined=str(combined) if combined else None
+    response = _daemon_call(
+        lambda c: c.start_recording(
+            output_dir=str(output_dir), combined=str(combined) if combined else None
+        )
     )
     if response.get("success"):
         print(f"Recording started. Output: {output_dir}")
@@ -323,8 +335,7 @@ def daemon_stop_recording() -> None:
     if not is_daemon_running():
         print("Daemon is not running.")
         raise typer.Exit(code=0)
-    client = DaemonClient()
-    response = client.stop_recording()
+    response = _daemon_call(lambda c: c.stop_recording())
     if response.get("success"):
         print("Recording stopped.")
     else:

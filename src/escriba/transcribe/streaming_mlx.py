@@ -186,6 +186,10 @@ class StreamingTranscriberMLX:
             start_timestamp = self.metrics.record_chunk_start()
             self.metrics.record_audio_level(wav_data)
 
+        # Duración real del chunk. Se avanza el reloj por ella en el `finally`
+        # incluso si la inferencia falla, para que los chunks posteriores
+        # conserven timestamps alineados (#90). 0.0 hasta decodificar el header.
+        chunk_duration = 0.0
         try:
             import wave
 
@@ -269,11 +273,6 @@ class StreamingTranscriberMLX:
                     elif text:
                         logger.debug("Filtered repetitive text: %s...", text[:50])
 
-            if chunk_duration > 0:
-                self.accumulated_audio_time += chunk_duration
-                if self.metrics:
-                    self.metrics.record_audio_duration(chunk_duration)
-
             result_text = " ".join(texts) if texts else None
 
             if self.metrics and start_timestamp:
@@ -284,6 +283,11 @@ class StreamingTranscriberMLX:
             return result_text
 
         except ChunkProcessingError:
+            logger.warning(
+                "Chunk transcription failed after retries; %.2fs of audio is "
+                "missing from the transcript (clock advanced to preserve sync)",
+                chunk_duration,
+            )
             if self.metrics:
                 self.metrics.record_error()
                 if start_timestamp:
@@ -300,6 +304,14 @@ class StreamingTranscriberMLX:
                         start_timestamp, had_transcription=False
                     )
             raise ChunkProcessingError("Unexpected error processing WAV chunk") from e
+        finally:
+            # Avanzar el reloj por la duración real del chunk aunque la
+            # transcripción haya fallado: el audio ya consumió tiempo real, así
+            # los timestamps de chunks posteriores no driften por lo perdido.
+            if chunk_duration > 0:
+                self.accumulated_audio_time += chunk_duration
+                if self.metrics:
+                    self.metrics.record_audio_duration(chunk_duration)
 
     def _is_repetitive(self, text: str) -> bool:
         """

@@ -102,5 +102,23 @@ class DaemonClient:
 
 
 def is_daemon_running() -> bool:
-    """Verifica si el daemon está corriendo."""
-    return DAEMON_SOCKET_PATH.exists()
+    """Return True only if a daemon is actually listening on the socket.
+
+    A crashed daemon leaves a stale socket file; checking mere existence would
+    report it as running, blocking ``daemon start`` and making other commands
+    throw. Prove liveness with a lightweight connect, and reap the stale socket
+    when nothing answers (#98).
+    """
+    if not DAEMON_SOCKET_PATH.exists():
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(0.5)
+            probe.connect(str(DAEMON_SOCKET_PATH))
+        return True
+    except (ConnectionRefusedError, FileNotFoundError, socket.timeout, OSError):
+        try:
+            DAEMON_SOCKET_PATH.unlink()
+        except OSError:
+            pass
+        return False

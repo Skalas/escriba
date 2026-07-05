@@ -60,6 +60,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# The Swift audio-capture CLI always emits 16-bit PCM (2 bytes/sample).
+SYSTEM_STREAM_BYTES_PER_SAMPLE = 2
+
 
 def run_live_capture(
     output_dir: Path,
@@ -347,6 +350,41 @@ def _format_device(device: str) -> str:
     if device.isdigit():
         return f":{device}"
     return device
+
+
+def _stop_capture_quietly(screen_capture) -> None:
+    """Stop a screen-capture object, swallowing errors.
+
+    Used on give-up paths before dropping the reference: nulling without
+    stopping first leaks the live Swift child (the outer ``finally`` can no
+    longer reach it once the reference is ``None``).
+    """
+    if not screen_capture:
+        return
+    try:
+        screen_capture.stop()
+    except Exception:
+        logger.warning("Failed to stop screen capture during give-up", exc_info=True)
+
+
+def _resample_int16(samples: np.ndarray, target_len: int) -> np.ndarray:
+    """Linear-resample an int16 mono array to ``target_len`` samples.
+
+    Used to reconcile the system stream (captured at the configured
+    ``sample_rate``) with the mic stream (delivered by ffmpeg at the WAV's
+    actual rate) so that equal *durations* — not equal byte counts — are mixed.
+    """
+    if target_len <= 0:
+        return np.array([], dtype=np.int16)
+    if len(samples) == target_len:
+        return samples
+    if len(samples) == 0:
+        return np.zeros(target_len, dtype=np.int16)
+    src_positions = np.linspace(0.0, len(samples) - 1, num=target_len)
+    resampled = np.interp(
+        src_positions, np.arange(len(samples)), samples.astype(np.float32)
+    )
+    return resampled.astype(np.int16)
 
 
 def mix_audio(
@@ -658,6 +696,7 @@ def run_streaming_capture(
                                 f"Max retries ({max_retries}) reached for Swift CLI. "
                                 "Continuing with microphone-only capture."
                             )
+                            _stop_capture_quietly(screen_capture)
                             screen_capture = None
                             break
                 elif screen_capture and not screen_capture.is_capturing:
@@ -676,6 +715,7 @@ def run_streaming_capture(
                             )
                     else:
                         logger.error("Max retries reached for Swift CLI")
+                        _stop_capture_quietly(screen_capture)
                         screen_capture = None
                         break
 
@@ -775,16 +815,27 @@ def run_streaming_capture(
             f"WAV format: {n_channels} channels, {file_sample_rate} Hz, {bits_per_sample} bits"
         )
 
-        # Verificar que el sample rate coincida con el configurado
-        if file_sample_rate != sample_rate:
-            logger.warning(
-                f"Sample rate mismatch: WAV={file_sample_rate}Hz, config={sample_rate}Hz"
-            )
-
-        # Calcular tamaño de chunk de audio (en bytes de datos PCM)
+        # Calcular tamaño de chunk de audio (en bytes de datos PCM) para el
+        # micrófono, derivado del rate real del WAV de ffmpeg.
         chunk_audio_bytes = int(
             file_sample_rate * n_channels * bytes_per_sample * chunk_duration
         )
+
+        # El stream de sistema lo entrega el Swift CLI al `sample_rate`
+        # configurado (int16, `channels` canales), que puede diferir del rate
+        # real del micrófono. Calcular su chunk por su PROPIO rate para mezclar
+        # duraciones iguales, no bytes iguales (evita drift progresivo).
+        system_chunk_bytes = int(
+            sample_rate * channels * SYSTEM_STREAM_BYTES_PER_SAMPLE * chunk_duration
+        )
+        if file_sample_rate != sample_rate:
+            logger.warning(
+                "Sample rate mismatch: mic WAV=%dHz, system/config=%dHz. "
+                "Sizing chunks per-stream by duration and resampling system "
+                "audio to the mic rate before mixing.",
+                file_sample_rate,
+                sample_rate,
+            )
 
         # Persist full session audio for optional diarization (post-run).
         session_wav_path = output_dir / f"session_{int(time.time())}.wav"
@@ -863,37 +914,39 @@ def run_streaming_capture(
                     # Necesitamos sincronizar los dos streams
                     # Por simplicidad, combinamos cuando ambos tienen datos suficientes
 
-                    # Calcular tamaño necesario para un chunk combinado
-                    chunk_size = chunk_audio_bytes
-
-                    # Log solo ocasionalmente para no saturar los logs
-                    # (comentado para reducir logs, descomentar si necesitas debuggear)
-                    # logger.debug(
-                    #     f"Buffers - System: {len(system_audio_buffer)}/{chunk_size} bytes, "
-                    #     f"Mic: {len(mic_audio_buffer)}/{chunk_size} bytes"
-                    # )
+                    # Tamaños de chunk POR STREAM: cada uno representa la misma
+                    # duración (chunk_duration) aunque los rates difieran.
+                    mic_chunk_size = chunk_audio_bytes
+                    system_chunk_size = system_chunk_bytes
 
                     if (
-                        len(system_audio_buffer) >= chunk_size
-                        and len(mic_audio_buffer) >= chunk_size
+                        len(system_audio_buffer) >= system_chunk_size
+                        and len(mic_audio_buffer) >= mic_chunk_size
                     ):
                         if not logged_system_audio_ok[0]:
                             logger.info(
                                 "System audio (Core Audio Taps) + mic: mixing and recording"
                             )
                             logged_system_audio_ok[0] = True
-                        # Extraer chunks del mismo tamaño
-                        system_chunk = bytes(system_audio_buffer[:chunk_size])
-                        mic_chunk = bytes(mic_audio_buffer[:chunk_size])
+                        # Extraer un chunk de igual DURACIÓN de cada stream
+                        system_chunk = bytes(system_audio_buffer[:system_chunk_size])
+                        mic_chunk = bytes(mic_audio_buffer[:mic_chunk_size])
 
-                        # Remover del buffer
-                        system_audio_buffer = system_audio_buffer[chunk_size:]
-                        mic_audio_buffer = mic_audio_buffer[chunk_size:]
+                        # Remover del buffer (cada uno por su propio tamaño)
+                        system_audio_buffer = system_audio_buffer[system_chunk_size:]
+                        mic_audio_buffer = mic_audio_buffer[mic_chunk_size:]
 
-                        # Combinar audio (mixear)
                         # Convertir a numpy arrays para mezclar
                         system_array = np.frombuffer(system_chunk, dtype=np.int16)
                         mic_array = np.frombuffer(mic_chunk, dtype=np.int16)
+
+                        # Reconciliar rates: llevar el sistema al conteo de
+                        # muestras del micrófono (su rate) para mezclar duraciones
+                        # alineadas en lugar de bytes desalineados.
+                        if len(system_array) != len(mic_array):
+                            system_array = _resample_int16(
+                                system_array, len(mic_array)
+                            )
 
                         # Diagnóstico: si el sistema es todo ceros, el WAV suena solo a mic
                         if system_amplitude_log_count[0] < 5:
@@ -949,7 +1002,7 @@ def run_streaming_capture(
                         # Si no tenemos datos suficientes, esperar un poco
                         # Pero también procesar solo micrófono si el sistema no tiene datos
                         if (
-                            len(mic_audio_buffer) >= chunk_size
+                            len(mic_audio_buffer) >= mic_chunk_size
                             and len(system_audio_buffer) == 0
                         ):
                             # Solo micrófono disponible: Core Audio Taps no está enviando audio del sistema
@@ -962,8 +1015,8 @@ def run_streaming_capture(
                             logger.debug(
                                 "⚠️  No system audio available, processing microphone only"
                             )
-                            mic_chunk = bytes(mic_audio_buffer[:chunk_size])
-                            mic_audio_buffer = mic_audio_buffer[chunk_size:]
+                            mic_chunk = bytes(mic_audio_buffer[:mic_chunk_size])
+                            mic_audio_buffer = mic_audio_buffer[mic_chunk_size:]
 
                             # Crear WAV chunk solo con micrófono
                             wav_chunk = _create_wav_chunk(
@@ -991,15 +1044,27 @@ def run_streaming_capture(
                                     exc_info=True,
                                 )
                         elif (
-                            len(system_audio_buffer) >= chunk_size
+                            len(system_audio_buffer) >= system_chunk_size
                             and len(mic_audio_buffer) == 0
                         ):
                             # Solo sistema disponible, procesar solo eso
                             logger.debug(
                                 "🔊 Processing system audio only (no microphone)"
                             )
-                            system_chunk = bytes(system_audio_buffer[:chunk_size])
-                            system_audio_buffer = system_audio_buffer[chunk_size:]
+                            system_chunk = bytes(system_audio_buffer[:system_chunk_size])
+                            system_audio_buffer = system_audio_buffer[system_chunk_size:]
+
+                            # El WAV chunk se declara al file_sample_rate; si el
+                            # sistema fue capturado a otro rate, resamplear para
+                            # que la duración/velocidad sea correcta.
+                            if file_sample_rate != sample_rate:
+                                system_array = np.frombuffer(system_chunk, dtype=np.int16)
+                                target_len = int(
+                                    len(system_array) * file_sample_rate / sample_rate
+                                )
+                                system_chunk = _resample_int16(
+                                    system_array, target_len
+                                ).tobytes()
 
                             # Crear WAV chunk solo con sistema
                             wav_chunk = _create_wav_chunk(
