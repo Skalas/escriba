@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import functools
 import json
 import logging
 import os
@@ -50,8 +51,122 @@ LOCAL_MODEL_PRESETS: list[tuple[int, str]] = [
 ]
 
 
+# The app stores the HuggingFace token as HUGGINGFACE_TOKEN (used by the
+# speaker-diarization path, which passes it explicitly). huggingface_hub — which
+# backs mlx_lm.load's model downloads — only auto-reads HF_TOKEN /
+# HUGGINGFACE_HUB_TOKEN, so without this mirror the token is silently ignored and
+# downloads fall back to throttled anonymous access.
+_HF_HUB_TOKEN_ENV_VARS = ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN")
+
+
+def ensure_hf_hub_token_env() -> None:
+    """Mirror HUGGINGFACE_TOKEN into the env vars huggingface_hub reads."""
+    token = os.environ.get("HUGGINGFACE_TOKEN", "").strip()
+    if not token:
+        return
+    for var in _HF_HUB_TOKEN_ENV_VARS:
+        if not os.environ.get(var, "").strip():
+            os.environ[var] = token
+
+
+def _model_cache_dir(model_id: str):
+    """Local HF cache directory for a repo id (whether or not it exists yet)."""
+    from pathlib import Path
+
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    folder = "models--" + model_id.replace("/", "--")
+    return Path(HF_HUB_CACHE) / folder
+
+
+def model_cache_size_bytes(model_id: str) -> int:
+    """Bytes downloaded for a model: completed files plus the in-flight partial.
+
+    Counts files resolved through the latest snapshot (which excludes orphaned
+    or stale blobs left by interrupted downloads) plus any ``.incomplete`` blob
+    still streaming, so the value tracks real progress and stays within the
+    repo's total size.
+    """
+    base = _model_cache_dir(model_id)
+    total = 0
+
+    snapshots = base / "snapshots"
+    if snapshots.is_dir():
+        revisions = [d for d in snapshots.iterdir() if d.is_dir()]
+        if revisions:
+            latest = max(revisions, key=lambda d: d.stat().st_mtime)
+            for root, _dirs, files in os.walk(latest):
+                for name in files:
+                    try:
+                        total += os.stat(os.path.join(root, name)).st_size
+                    except OSError:
+                        continue
+
+    blobs = base / "blobs"
+    if blobs.is_dir():
+        for entry in blobs.iterdir():
+            if entry.name.endswith(".incomplete"):
+                try:
+                    total += entry.stat().st_size
+                except OSError:
+                    continue
+    return total
+
+
+def is_model_cached(model_id: str) -> bool:
+    """True if the model is fully downloaded (a snapshot exists, no partial blobs)."""
+    base = _model_cache_dir(model_id)
+    snapshots = base / "snapshots"
+    if not snapshots.is_dir() or not any(d.is_dir() for d in snapshots.iterdir()):
+        return False
+    blobs = base / "blobs"
+    if blobs.is_dir():
+        for entry in blobs.iterdir():
+            if entry.name.endswith(".incomplete"):
+                return False
+    return True
+
+
+def hf_repo_total_bytes(model_id: str) -> int:
+    """Total download size of a repo from the Hub, or 0 if it can't be resolved."""
+    try:
+        from huggingface_hub import HfApi
+
+        ensure_hf_hub_token_env()
+        info = HfApi().model_info(model_id, files_metadata=True)
+        total = 0
+        for sibling in info.siblings or []:
+            size = getattr(sibling, "size", None)
+            if size:
+                total += size
+        return total
+    except Exception:  # noqa: BLE001 - size is best-effort for a progress bar
+        logger.debug("Could not resolve repo size for %s", model_id, exc_info=True)
+        return 0
+
+
+def download_model_snapshot(model_id: str) -> str:
+    """Fetch all model files to the local cache, authenticated and resumable.
+
+    Uses snapshot_download (not mlx_lm.load) so we do not load ~GBs of weights
+    into RAM just to cache files, and enables hf_transfer for fast, robust
+    transfers. Runs without any inference timeout — call from a background
+    thread.
+    """
+    os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+    ensure_hf_hub_token_env()
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(repo_id=model_id)
+
+
+@functools.lru_cache(maxsize=1)
 def get_system_ram_gb() -> int:
-    """Return total system RAM in GB (macOS only)."""
+    """Return total system RAM in GB (macOS only).
+
+    Memoized — RAM is constant for the process, so this avoids forking a
+    ``sysctl`` subprocess on every recommend_model() call (e.g. per notes request).
+    """
     try:
         out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True)
         return int(out.strip()) // (1024 ** 3)
@@ -99,6 +214,7 @@ class _LocalModelCache:
             try:
                 from mlx_lm import load
 
+                ensure_hf_hub_token_env()
                 logger.info("Loading local model: %s", model_id)
                 loaded = load(model_id)
                 model, tokenizer = loaded[0], loaded[1]
@@ -1036,11 +1152,17 @@ def _list_available_models_uncached() -> dict[str, Any]:
             "(install mlx-lm) or an API key (GEMINI_API_KEY / ANTHROPIC_API_KEY)."
         )
 
+    local_status = {
+        repo: {"cached": is_model_cached(repo), "size_bytes": model_cache_size_bytes(repo)}
+        for repo in local_models
+    }
+
     return {
         "models": models,
         "recommended": recommended,
         "ai_available": ai_available,
         "ai_unavailable_reason": reason,
+        "local_status": local_status,
     }
 
 
