@@ -51,6 +51,12 @@ def _main_callback(
     ),
 ) -> None:
     load_dotenv()
+    # Mirror HUGGINGFACE_TOKEN into the vars huggingface_hub reads, once, at the
+    # process entry point — covers every command and any spawn child (which
+    # inherits os.environ), so no model-loading path can download anonymously.
+    from escriba.summarize.llm_summary import ensure_hf_hub_token_env
+
+    ensure_hf_hub_token_env()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

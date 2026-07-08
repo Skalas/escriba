@@ -168,13 +168,18 @@ class AppState:
             self._stop_in_progress = False
 
     def get_download_status(self) -> tuple[str | None, dict[str, Any] | None, int]:
-        """Return current download state, finished result, and expected size."""
+        """Return current download state, finished result, and expected size.
+
+        The result is NOT consumed on read — it persists until the next download
+        starts, so concurrent pollers (e.g. two tabs, or resume-on-open racing the
+        active poller) all observe the completion instead of one eating it.
+        """
         with self._download_lock:
-            downloading = self._downloading_model
-            result = self._download_result
-            total = self._download_total_bytes
-            self._download_result = None
-            return downloading, result, total
+            return (
+                self._downloading_model,
+                self._download_result,
+                self._download_total_bytes,
+            )
 
     def try_begin_model_download(
         self, model_id: str, total_bytes: int = 0
@@ -192,6 +197,12 @@ class AppState:
             self._download_cancelled = False
             self._download_proc = None
         return {"ok": True}, 200
+
+    def set_download_total_bytes(self, total_bytes: int) -> None:
+        """Record expected size after the claim (kept off the 409 fast-path)."""
+        with self._download_lock:
+            if self._downloading_model:
+                self._download_total_bytes = total_bytes
 
     def set_download_process(self, proc: Any) -> None:
         """Record the running download subprocess so it can be cancelled."""
@@ -238,12 +249,20 @@ def _run_model_download(model_id: str) -> None:
     A clean return is exit code 0; an exception exits non-zero; a cancel is a
     SIGTERM from the parent — the monitor thread interprets the exit code.
     """
+    import traceback
+
     from dotenv import load_dotenv
 
     from escriba.summarize.llm_summary import download_model_snapshot
 
     load_dotenv()
-    download_model_snapshot(model_id)
+    try:
+        download_model_snapshot(model_id)
+    except Exception:
+        # The parent only sees the exit code; print the real cause (401 gated
+        # repo / bad token, disk full, network) to stderr → app.log for triage.
+        traceback.print_exc()
+        sys.exit(1)
 
 
 def _concat_wav(
@@ -1390,23 +1409,33 @@ class _Handler(BaseHTTPRequestHandler):
             logger.error("Error listing models: %s", e, exc_info=True)
             return {"ok": False, "error": "Could not list models; check logs"}, 503
 
-    def _begin_model_download(self, model_id: str) -> tuple[dict, int]:
+    def _begin_model_download(
+        self, model_id: str, *, commit: bool = False
+    ) -> tuple[dict, int]:
         """Start a cancellable background snapshot download for a local model id.
 
         The download runs in a subprocess (so Cancel can actually terminate it —
-        threads can't be killed) and a monitor thread records the outcome.
+        threads can't be killed) and a monitor thread records the outcome. When
+        ``commit`` is set, the model is saved as ``streaming.summary_model`` only
+        *after* it fully downloads, so a cancelled/failed download never leaves the
+        config pointing at an uncached model.
         """
         import multiprocessing as mp
 
         from escriba.summarize.llm_summary import (
             hf_repo_total_bytes,
             invalidate_models_cache,
+            is_model_cached,
         )
 
-        total_bytes = hf_repo_total_bytes(model_id)
-        claim, status = self.app_state.try_begin_model_download(model_id, total_bytes)
+        # Claim the slot before any network work, so an already-running download
+        # short-circuits to 409 without a wasted HfApi round-trip.
+        claim, status = self.app_state.try_begin_model_download(model_id)
         if status != 200:
-            return claim, status  # 409 — a download is already running
+            return claim, status
+
+        total_bytes = hf_repo_total_bytes(model_id)  # for the progress bar only
+        self.app_state.set_download_total_bytes(total_bytes)
 
         state = self.app_state
         proc = mp.get_context("spawn").Process(
@@ -1418,14 +1447,20 @@ class _Handler(BaseHTTPRequestHandler):
 
         def _monitor() -> None:
             proc.join()
-            if state.was_download_cancelled():
+            # A process that exited cleanly with a complete cache succeeded — even
+            # if Cancel was clicked in the race window after it finished, so check
+            # success before cancellation. A 0 exit with an incomplete cache means
+            # the fetch reported done but files are missing → treat as failure.
+            if proc.exitcode == 0 and is_model_cached(model_id):
+                logger.info("Model download complete: %s", model_id)
+                if commit:
+                    self._persist_summary_model(model_id)
+                state.finish_model_download({"ok": True, "model": model_id})
+            elif state.was_download_cancelled():
                 logger.info("Model download cancelled: %s", model_id)
                 state.finish_model_download(
                     {"ok": False, "cancelled": True, "error": "Download cancelled"}
                 )
-            elif proc.exitcode == 0:
-                logger.info("Model download complete: %s", model_id)
-                state.finish_model_download({"ok": True, "model": model_id})
             else:
                 logger.error("Model download failed (exit %s): %s", proc.exitcode, model_id)
                 state.finish_model_download(
@@ -1444,9 +1479,10 @@ class _Handler(BaseHTTPRequestHandler):
     def _download_model(self, body: dict) -> tuple[dict, int]:
         """Download a local LLM model in the background and make it the active model.
 
-        Downloading commits the choice: the fetched model is saved as
-        ``streaming.summary_model`` so "what I downloaded" and "what notes uses"
-        can never drift apart.
+        Downloading commits the choice — but only on success (see
+        ``_begin_model_download(commit=True)``) — so "what I downloaded" and "what
+        notes uses" can never drift apart, and a cancel/failure leaves the prior
+        model untouched.
         """
         from escriba.summarize.llm_summary import recommend_model
 
@@ -1459,24 +1495,35 @@ class _Handler(BaseHTTPRequestHandler):
                 "error": "No local model available for this hardware",
             }, 503
 
-        self._persist_summary_model(model_id)
-        return self._begin_model_download(model_id)
+        return self._begin_model_download(model_id, commit=True)
 
     def _persist_summary_model(self, model_id: str) -> None:
         """Save the chosen notes model to escriba.toml and reload live config."""
-        from escriba.config import AppConfig, resolve_config_path, update_config_toml
+        from escriba.config import resolve_config_path, update_config_toml
 
         try:
-            update_config_toml({"streaming": {"summary_model": model_id}}, resolve_config_path())
-            with self.app_state._lock:
-                reload_fn = self.app_state.reload_config
-            if reload_fn:
-                reload_fn()
-            else:
-                with self.app_state._lock:
-                    self.app_state.config = AppConfig.load()
+            update_config_toml(
+                {"streaming": {"summary_model": model_id}}, resolve_config_path()
+            )
+            self._reload_live_config()
         except Exception:
             logger.warning("Could not persist summary_model=%s", model_id, exc_info=True)
+
+    def _reload_live_config(self):
+        """Reload escriba.toml + .env into the running config (shared write path)."""
+        from escriba.config import AppConfig
+
+        with self.app_state._lock:
+            reload_fn = self.app_state.reload_config
+        if reload_fn:
+            return reload_fn()
+        from dotenv import load_dotenv
+
+        load_dotenv(override=True)
+        new_config = AppConfig.load()
+        with self.app_state._lock:
+            self.app_state.config = new_config
+        return new_config
 
     def _ensure_local_model_ready(self, model: str | None) -> tuple[dict, int] | None:
         """Guard notes generation: if the model resolves to a local repo that is
@@ -1498,12 +1545,12 @@ class _Handler(BaseHTTPRequestHandler):
         if not model_id or is_model_cached(model_id):
             return None
 
-        started, _status = self._begin_model_download(model_id)
+        started, dstatus = self._begin_model_download(model_id)
         return {
             "ok": False,
             "downloading": True,
             "model": model_id,
-            "total_bytes": started.get("total_bytes", 0),
+            "total_bytes": started.get("total_bytes", 0) if dstatus == 200 else 0,
             "error": f"Model {model_id} is downloading — generate again when it finishes.",
         }, 409
 
@@ -1553,6 +1600,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._update_env_file(env_updates)
             for k, v in env_updates.items():
                 os.environ[k] = v
+                # A token entered/changed here must overwrite the mirrored vars
+                # huggingface_hub reads, so downloads authenticate immediately
+                # (a fresh restart isn't required, and a new token replaces an old).
+                if k == "HUGGINGFACE_TOKEN":
+                    os.environ["HF_TOKEN"] = v
+                    os.environ["HUGGINGFACE_HUB_TOKEN"] = v
             # API keys changed — flush the models cache so next /api/models reflects them.
             from escriba.summarize.llm_summary import invalidate_models_cache
             invalidate_models_cache()
@@ -1595,18 +1648,7 @@ class _Handler(BaseHTTPRequestHandler):
                 tmp_path.unlink(missing_ok=True)
             update_config_toml(toml_data, config_path)
 
-        with self.app_state._lock:
-            reload_fn = self.app_state.reload_config
-        if reload_fn:
-            new_config = reload_fn()
-        else:
-            from dotenv import load_dotenv
-
-            load_dotenv(override=True)
-            new_config = AppConfig.load()
-            with self.app_state._lock:
-                self.app_state.config = new_config
-
+        new_config = self._reload_live_config()
         return {"ok": True, "config": config_to_dict(new_config)}, 200
 
     @staticmethod

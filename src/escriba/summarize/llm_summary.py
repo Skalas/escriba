@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import functools
 import json
 import logging
 import os
@@ -159,8 +160,13 @@ def download_model_snapshot(model_id: str) -> str:
     return snapshot_download(repo_id=model_id)
 
 
+@functools.lru_cache(maxsize=1)
 def get_system_ram_gb() -> int:
-    """Return total system RAM in GB (macOS only)."""
+    """Return total system RAM in GB (macOS only).
+
+    Memoized — RAM is constant for the process, so this avoids forking a
+    ``sysctl`` subprocess on every recommend_model() call (e.g. per notes request).
+    """
     try:
         out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True)
         return int(out.strip()) // (1024 ** 3)

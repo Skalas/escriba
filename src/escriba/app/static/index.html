@@ -3786,7 +3786,6 @@ async function refreshModels(silent) {
     const models = res.models;
     const recommended = res.recommended;
     localModelStatus = res.local_status || {};
-    const gb = (b) => (b / 1073741824).toFixed(1) + ' GB';
     sel.innerHTML = '';
     // Add provider defaults first
     const defaultOpt = (val, label) => { const o = document.createElement('option'); o.value = val; o.textContent = label; return o; };
@@ -3827,6 +3826,10 @@ async function refreshModels(silent) {
 }
 
 var localModelStatus = {};
+var _downloadActive = false;   // true while a model download is in flight (button shows Cancel)
+
+const BYTES_PER_GB = 1073741824;
+function formatGB(b) { return (b / BYTES_PER_GB).toFixed(1) + ' GB'; }
 
 // Reflect the selected model's download state under the dropdown, and shape the
 // Download button: only local models can be downloaded; cached ones say so.
@@ -3839,9 +3842,10 @@ function updateModelCacheHint() {
   const st = localModelStatus[model];
   const isLocalRepo = model && model.includes('/');
   // Only concrete local repos are downloadable; provider shortcuts/remotes aren't.
-  btn.style.display = isLocalRepo ? '' : 'none';
+  // But never hide the button mid-download — it's the Cancel control right now.
+  if (!_downloadActive) btn.style.display = isLocalRepo ? '' : 'none';
   if (!isLocalRepo || !st) { hint.style.display = 'none'; return; }
-  const gb = (b) => (b / 1073741824).toFixed(1) + ' GB';
+  const gb = formatGB;
   hint.style.display = '';
   if (st.cached) {
     hint.style.color = 'var(--success, #16a34a)';
@@ -3854,16 +3858,20 @@ function updateModelCacheHint() {
 
 const DL_ICON = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download';
 function setDownloadBtnIdle() {
+  _downloadActive = false;
   const btn = document.getElementById('btn-download-model');
   btn.disabled = false;
   btn.onclick = downloadModel;
   btn.style.color = '';
   btn.innerHTML = DL_ICON;
+  updateModelCacheHint();   // restore correct visibility for the current selection
 }
 function setDownloadBtnCancel() {
+  _downloadActive = true;
   const btn = document.getElementById('btn-download-model');
   btn.disabled = false;
   btn.onclick = cancelModelDownload;
+  btn.style.display = '';   // always visible while a download runs, regardless of dropdown
   btn.style.color = 'var(--danger, #dc2626)';
   btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> Cancel';
 }
@@ -3872,7 +3880,12 @@ async function cancelModelDownload() {
   const status = document.getElementById('download-status');
   btn.disabled = true;
   status.textContent = 'Cancelling…';
-  try { await fetch('/api/download-model/cancel', {method: 'POST'}); } catch (e) { /* poll will resolve */ }
+  // Every POST passes _mutation_guard, which requires application/json — send it.
+  try {
+    await fetch('/api/download-model/cancel', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+    });
+  } catch (e) { /* poll will resolve the final state */ }
 }
 
 async function downloadModel() {
@@ -3913,7 +3926,7 @@ function trackDownloadProgress() {
   status.style.display = '';
   setDownloadBtnCancel();
   if (_downloadPollTimer) clearInterval(_downloadPollTimer);
-  const gb = (b) => (b / 1073741824).toFixed(1) + ' GB';
+  const gb = formatGB;
   _downloadPollTimer = setInterval(async () => {
     try {
       const s = await fetch('/api/download-model/status').then(r => r.json());
@@ -3923,7 +3936,15 @@ function trackDownloadProgress() {
           status.textContent = 'Download complete: ' + s.result.model;
           showSettingsBanner('Model downloaded — it is now your AI notes model', 'success');
           if (localModelStatus[s.result.model]) localModelStatus[s.result.model].cached = true;
-          refreshModels(true);
+          // The server committed this model; align the dropdown so a later Save
+          // can't overwrite the committed choice with a stale selection.
+          refreshModels(true).then(() => {
+            const sm = document.getElementById('s-summary-model');
+            if (sm && [...sm.options].some(o => o.value === s.result.model)) {
+              sm.value = s.result.model;
+              updateModelCacheHint();
+            }
+          });
         } else if (s.result.cancelled) {
           status.textContent = 'Download cancelled — partial progress kept; downloading again resumes where it stopped.';
         } else {
