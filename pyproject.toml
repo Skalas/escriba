@@ -19,6 +19,7 @@ dependencies = [
   "tomli_w>=1.0.0",
   "pywebview>=5.0",
   "mlx-lm>=0.20.0",
+  "hf-transfer>=0.1.9",
 ]
 
 [project.optional-dependencies]

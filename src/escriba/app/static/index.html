@@ -1747,7 +1747,7 @@
         <div class="settings-row" style="flex-wrap:wrap;">
           <span class="settings-label">Summary Model</span>
           <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:200px;">
-            <select class="settings-input" id="s-summary-model" style="flex:1;max-width:none;">
+            <select class="settings-input" id="s-summary-model" style="flex:1;max-width:none;" onchange="updateModelCacheHint()">
               <option value="auto">auto (picks best for your hardware)</option>
               <option value="local">local (on-device)</option>
               <option value="gemini">gemini</option>
@@ -1756,6 +1756,7 @@
             <button type="button" id="btn-refresh-models" onclick="refreshModels()" title="Refresh model list" aria-label="Refresh model list" style="padding:6px 8px;cursor:pointer;border:1px solid var(--border);border-radius:6px;background:var(--card);flex-shrink:0;line-height:0;"><svg class="icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg></button>
             <button type="button" id="btn-download-model" onclick="downloadModel()" title="Pre-download local model" style="padding:6px 8px;cursor:pointer;border:1px solid var(--border);border-radius:6px;background:var(--card);font-size:12px;white-space:nowrap;flex-shrink:0;display:inline-flex;align-items:center;gap:4px;"><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download</button>
           </div>
+          <div id="model-cache-hint" style="display:none;font-size:12px;margin-top:4px;width:100%;"></div>
           <div id="download-status" style="display:none;font-size:12px;color:var(--muted);margin-top:4px;width:100%;"></div>
         </div>
         <div class="settings-row">
@@ -3396,6 +3397,8 @@ async function generateSessionNotes() {
         notesInput.value = existingNotesSnapshot.trim() + separator + res.notes;
         await saveNotesForSession(sid, notesInput.value);
         renderNotesView(notesInput.value);
+      } else if (res.downloading) {
+        showError('The AI model (' + res.model + ') is downloading now. Watch progress in Settings → AI Notes, then generate again when it finishes.');
       } else {
         showError(res.error || 'Failed to generate notes');
       }
@@ -3461,6 +3464,9 @@ async function generateNotes() {
             '<span class="live-legend-sw"><span class="live-legend-bar" style="background:var(--text)"></span> Your words</span>' +
             '<span class="live-legend-sw"><span class="live-legend-bar" style="background:var(--ai-rail)"></span> AI additions</span>';
         }
+      } else if (res.downloading) {
+        out.className = 'visible';
+        out.textContent = 'The AI model (' + res.model + ') is downloading now. Watch progress in Settings → AI Notes, then try again when it finishes.';
       } else {
         out.className = 'visible';
         out.textContent = 'Error: ' + (res.error || 'Unknown');
@@ -3732,6 +3738,7 @@ async function loadSettings() {
         const o = document.createElement('option'); o.value = smVal; o.textContent = smVal; smSel.appendChild(o);
       }
       smSel.value = smVal;
+      updateModelCacheHint();
     });
     document.getElementById('s-vad-enabled').checked = c.streaming.vad_enabled;
     document.getElementById('s-vad-threshold').value = c.vad.threshold;
@@ -3777,6 +3784,8 @@ async function refreshModels(silent) {
     if (!res.ok) { showSettingsBanner('Failed to fetch models: ' + (res.error || 'unknown'), 'error'); return; }
     const models = res.models;
     const recommended = res.recommended;
+    localModelStatus = res.local_status || {};
+    const gb = (b) => (b / 1073741824).toFixed(1) + ' GB';
     sel.innerHTML = '';
     // Add provider defaults first
     const defaultOpt = (val, label) => { const o = document.createElement('option'); o.value = val; o.textContent = label; return o; };
@@ -3792,7 +3801,10 @@ async function refreshModels(silent) {
         for (const id of ids) {
           const o = document.createElement('option');
           o.value = id;
-          o.textContent = id + (id === recommended ? ' (recommended)' : '');
+          let label = id + (id === recommended ? ' (recommended)' : '');
+          const st = localModelStatus[id];
+          if (st) label += st.cached ? '  ✓ downloaded' : '  ⬇ not downloaded';
+          o.textContent = label;
           grp.appendChild(o);
         }
         sel.appendChild(grp);
@@ -3803,12 +3815,39 @@ async function refreshModels(silent) {
       sel.value = currentVal;
     }
     if (!silent) showSettingsBanner('Model list refreshed', 'success');
+    updateModelCacheHint();
     checkAiAvailability();
   } catch (e) {
     showSettingsBanner('Error refreshing models: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<svg class="icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>';
+  }
+}
+
+var localModelStatus = {};
+
+// Reflect the selected model's download state under the dropdown, and shape the
+// Download button: only local models can be downloaded; cached ones say so.
+function updateModelCacheHint() {
+  const sel = document.getElementById('s-summary-model');
+  const hint = document.getElementById('model-cache-hint');
+  const btn = document.getElementById('btn-download-model');
+  if (!sel || !hint) return;
+  const model = sel.value;
+  const st = localModelStatus[model];
+  const isLocalRepo = model && model.includes('/');
+  // Only concrete local repos are downloadable; provider shortcuts/remotes aren't.
+  btn.style.display = isLocalRepo ? '' : 'none';
+  if (!isLocalRepo || !st) { hint.style.display = 'none'; return; }
+  const gb = (b) => (b / 1073741824).toFixed(1) + ' GB';
+  hint.style.display = '';
+  if (st.cached) {
+    hint.style.color = 'var(--success, #16a34a)';
+    hint.textContent = '✓ Downloaded (' + gb(st.size_bytes || 0) + ') — used for AI notes';
+  } else {
+    hint.style.color = 'var(--warning, #b45309)';
+    hint.textContent = '⬇ Not downloaded — click Download to fetch it (used automatically otherwise on first notes generation)';
   }
 }
 
@@ -3842,7 +3881,10 @@ async function downloadModel() {
           clearInterval(poll);
           if (s.result.ok) {
             status.textContent = 'Download complete: ' + s.result.model;
-            showSettingsBanner('Model downloaded successfully', 'success');
+            showSettingsBanner('Model downloaded — it is now your AI notes model', 'success');
+            // Downloading commits the choice server-side; reflect it in the UI.
+            if (localModelStatus[s.result.model]) localModelStatus[s.result.model].cached = true;
+            refreshModels(true);
           } else {
             status.textContent = 'Download failed: ' + (s.result.error || 'unknown');
           }
@@ -3850,7 +3892,15 @@ async function downloadModel() {
           btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download';
           setTimeout(() => { status.style.display = 'none'; }, 5000);
         } else if (s.downloading) {
-          status.textContent = 'Downloading ' + s.downloading + '...';
+          const gb = (b) => (b / 1073741824).toFixed(1) + ' GB';
+          if (typeof s.percent === 'number' && s.total_bytes > 0) {
+            status.textContent = 'Downloading ' + s.downloading + '… ' + s.percent
+              + '% (' + gb(s.downloaded_bytes || 0) + ' / ' + gb(s.total_bytes) + ')';
+          } else if (s.downloaded_bytes) {
+            status.textContent = 'Downloading ' + s.downloading + '… ' + gb(s.downloaded_bytes);
+          } else {
+            status.textContent = 'Downloading ' + s.downloading + '…';
+          }
         }
       } catch (e) { /* keep polling */ }
     }, 3000);
