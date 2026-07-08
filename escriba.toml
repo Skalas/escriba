@@ -9,7 +9,7 @@ language = "auto"
 backend = "mlx-whisper"
 chunk_duration = 30
 vad_enabled = false
-summary_model = "mlx-community/gemma-4-e4b-it-4bit"
+summary_model = "mlx-community/gemma-4-26b-a4b-it-4bit"
 
 [speaker]
 mode = "pyannote"

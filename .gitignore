@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# Stray local documents (e.g. reference ebooks) — not source
+*.epub
+
 # C extensions
 *.so
 
