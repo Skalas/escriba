@@ -104,6 +104,8 @@ class AppState:
         self._downloading_model: str | None = None
         self._download_result: dict[str, Any] | None = None
         self._download_total_bytes: int = 0
+        self._download_proc: Any = None
+        self._download_cancelled: bool = False
 
     def get_active_session(self) -> TranscriptionSession | None:
         """Return the current session reference under the state lock."""
@@ -187,7 +189,31 @@ class AppState:
             self._downloading_model = model_id
             self._download_result = None
             self._download_total_bytes = total_bytes
+            self._download_cancelled = False
+            self._download_proc = None
         return {"ok": True}, 200
+
+    def set_download_process(self, proc: Any) -> None:
+        """Record the running download subprocess so it can be cancelled."""
+        with self._download_lock:
+            self._download_proc = proc
+
+    def cancel_model_download(self) -> tuple[dict[str, Any], int]:
+        """Terminate the in-flight download subprocess (partial files resume later)."""
+        with self._download_lock:
+            proc = self._download_proc
+            if not self._downloading_model or proc is None:
+                return {"ok": False, "error": "No download in progress"}, 409
+            self._download_cancelled = True
+        try:
+            proc.terminate()
+        except Exception:
+            logger.warning("Failed to terminate download process", exc_info=True)
+        return {"ok": True, "cancelled": True}, 200
+
+    def was_download_cancelled(self) -> bool:
+        with self._download_lock:
+            return self._download_cancelled
 
     def finish_model_download(self, result: dict[str, Any]) -> None:
         """Record the outcome of a background model download."""
@@ -195,6 +221,7 @@ class AppState:
             self._download_result = result
             self._downloading_model = None
             self._download_total_bytes = 0
+            self._download_proc = None
 
 if getattr(sys, "frozen", False):
     STATIC_DIR = Path(sys.executable).parent.parent / "Resources" / "static"
@@ -202,6 +229,21 @@ else:
     STATIC_DIR = Path(__file__).parent / "static"
 
 PORT = 19876
+
+
+def _run_model_download(model_id: str) -> None:
+    """Subprocess entry point for a cancellable model download.
+
+    Runs at module level so it is importable by ``multiprocessing`` (spawn).
+    A clean return is exit code 0; an exception exits non-zero; a cancel is a
+    SIGTERM from the parent — the monitor thread interprets the exit code.
+    """
+    from dotenv import load_dotenv
+
+    from escriba.summarize.llm_summary import download_model_snapshot
+
+    load_dotenv()
+    download_model_snapshot(model_id)
 
 
 def _concat_wav(
@@ -509,6 +551,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/sessions/move": lambda: self._move_sessions(self._parse_json_body()),
             "/api/folders": lambda: self._create_folder(self._parse_json_body()),
             "/api/download-model": lambda: self._download_model(self._parse_json_body()),
+            "/api/download-model/cancel": lambda: self.app_state.cancel_model_download(),
         }
         if path in _exact:
             return _exact[path]()
@@ -1348,9 +1391,14 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": False, "error": "Could not list models; check logs"}, 503
 
     def _begin_model_download(self, model_id: str) -> tuple[dict, int]:
-        """Start a background snapshot download for a resolved local model id."""
+        """Start a cancellable background snapshot download for a local model id.
+
+        The download runs in a subprocess (so Cancel can actually terminate it —
+        threads can't be killed) and a monitor thread records the outcome.
+        """
+        import multiprocessing as mp
+
         from escriba.summarize.llm_summary import (
-            download_model_snapshot,
             hf_repo_total_bytes,
             invalidate_models_cache,
         )
@@ -1361,22 +1409,31 @@ class _Handler(BaseHTTPRequestHandler):
             return claim, status  # 409 — a download is already running
 
         state = self.app_state
+        proc = mp.get_context("spawn").Process(
+            target=_run_model_download, args=(model_id,), daemon=True
+        )
+        logger.info("Downloading model: %s", model_id)
+        proc.start()
+        state.set_download_process(proc)
 
-        def _do_download() -> None:
-            try:
-                logger.info("Downloading model: %s", model_id)
-                download_model_snapshot(model_id)
+        def _monitor() -> None:
+            proc.join()
+            if state.was_download_cancelled():
+                logger.info("Model download cancelled: %s", model_id)
+                state.finish_model_download(
+                    {"ok": False, "cancelled": True, "error": "Download cancelled"}
+                )
+            elif proc.exitcode == 0:
                 logger.info("Model download complete: %s", model_id)
                 state.finish_model_download({"ok": True, "model": model_id})
-            except Exception as e:
-                logger.error("Model download failed: %s", e, exc_info=True)
+            else:
+                logger.error("Model download failed (exit %s): %s", proc.exitcode, model_id)
                 state.finish_model_download(
                     {"ok": False, "error": "Model download failed; check logs"}
                 )
-            finally:
-                invalidate_models_cache()  # refresh cached/size status in /api/models
+            invalidate_models_cache()  # refresh cached/size status in /api/models
 
-        threading.Thread(target=_do_download, daemon=True).start()
+        threading.Thread(target=_monitor, daemon=True).start()
         return {
             "ok": True,
             "message": f"Downloading {model_id}...",

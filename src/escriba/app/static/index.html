@@ -3764,6 +3764,7 @@ async function loadSettings() {
     renderChips('live-prompt-chips', 'live');
     renderChips('session-prompt-chips', 'session');
     updateSettingsSaveState();
+    resumeDownloadUiIfActive();
   } catch (e) { showSettingsBanner('Failed to load settings', 'error'); }
 }
 
@@ -3851,6 +3852,29 @@ function updateModelCacheHint() {
   }
 }
 
+const DL_ICON = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download';
+function setDownloadBtnIdle() {
+  const btn = document.getElementById('btn-download-model');
+  btn.disabled = false;
+  btn.onclick = downloadModel;
+  btn.style.color = '';
+  btn.innerHTML = DL_ICON;
+}
+function setDownloadBtnCancel() {
+  const btn = document.getElementById('btn-download-model');
+  btn.disabled = false;
+  btn.onclick = cancelModelDownload;
+  btn.style.color = 'var(--danger, #dc2626)';
+  btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> Cancel';
+}
+async function cancelModelDownload() {
+  const btn = document.getElementById('btn-download-model');
+  const status = document.getElementById('download-status');
+  btn.disabled = true;
+  status.textContent = 'Cancelling…';
+  try { await fetch('/api/download-model/cancel', {method: 'POST'}); } catch (e) { /* poll will resolve */ }
+}
+
 async function downloadModel() {
   const btn = document.getElementById('btn-download-model');
   const status = document.getElementById('download-status');
@@ -3867,48 +3891,71 @@ async function downloadModel() {
       body: JSON.stringify({model: model}),
     }).then(r => r.json());
     if (!res.ok) {
+      // A download already running (e.g. auto-download or a prior tab) — attach to it.
+      if (res.error && /in progress/i.test(res.error)) { trackDownloadProgress(); return; }
       status.textContent = 'Error: ' + (res.error || 'unknown');
-      btn.disabled = false;
-      btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download';
+      setDownloadBtnIdle();
       return;
     }
     status.textContent = 'Downloading ' + (res.model || 'model') + '...';
-    // Poll for completion
-    const poll = setInterval(async () => {
-      try {
-        const s = await fetch('/api/download-model/status').then(r => r.json());
-        if (s.result) {
-          clearInterval(poll);
-          if (s.result.ok) {
-            status.textContent = 'Download complete: ' + s.result.model;
-            showSettingsBanner('Model downloaded — it is now your AI notes model', 'success');
-            // Downloading commits the choice server-side; reflect it in the UI.
-            if (localModelStatus[s.result.model]) localModelStatus[s.result.model].cached = true;
-            refreshModels(true);
-          } else {
-            status.textContent = 'Download failed: ' + (s.result.error || 'unknown');
-          }
-          btn.disabled = false;
-          btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download';
-          setTimeout(() => { status.style.display = 'none'; }, 5000);
-        } else if (s.downloading) {
-          const gb = (b) => (b / 1073741824).toFixed(1) + ' GB';
-          if (typeof s.percent === 'number' && s.total_bytes > 0) {
-            status.textContent = 'Downloading ' + s.downloading + '… ' + s.percent
-              + '% (' + gb(s.downloaded_bytes || 0) + ' / ' + gb(s.total_bytes) + ')';
-          } else if (s.downloaded_bytes) {
-            status.textContent = 'Downloading ' + s.downloading + '… ' + gb(s.downloaded_bytes);
-          } else {
-            status.textContent = 'Downloading ' + s.downloading + '…';
-          }
-        }
-      } catch (e) { /* keep polling */ }
-    }, 3000);
+    trackDownloadProgress();
   } catch (e) {
     status.textContent = 'Error: ' + e.message;
-    btn.disabled = false;
-    btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> Download';
+    setDownloadBtnIdle();
   }
+}
+
+// Poll download status until it resolves; drives the Cancel button + progress text.
+// Reused by a fresh download, an already-in-progress claim, and resume-on-open.
+let _downloadPollTimer = null;
+function trackDownloadProgress() {
+  const status = document.getElementById('download-status');
+  status.style.display = '';
+  setDownloadBtnCancel();
+  if (_downloadPollTimer) clearInterval(_downloadPollTimer);
+  const gb = (b) => (b / 1073741824).toFixed(1) + ' GB';
+  _downloadPollTimer = setInterval(async () => {
+    try {
+      const s = await fetch('/api/download-model/status').then(r => r.json());
+      if (s.result) {
+        clearInterval(_downloadPollTimer); _downloadPollTimer = null;
+        if (s.result.ok) {
+          status.textContent = 'Download complete: ' + s.result.model;
+          showSettingsBanner('Model downloaded — it is now your AI notes model', 'success');
+          if (localModelStatus[s.result.model]) localModelStatus[s.result.model].cached = true;
+          refreshModels(true);
+        } else if (s.result.cancelled) {
+          status.textContent = 'Download cancelled — partial progress kept; downloading again resumes where it stopped.';
+        } else {
+          status.textContent = 'Download failed: ' + (s.result.error || 'unknown');
+        }
+        setDownloadBtnIdle();
+        setTimeout(() => { status.style.display = 'none'; }, 5000);
+      } else if (s.downloading) {
+        if (typeof s.percent === 'number' && s.total_bytes > 0) {
+          status.textContent = 'Downloading ' + s.downloading + '… ' + s.percent
+            + '% (' + gb(s.downloaded_bytes || 0) + ' / ' + gb(s.total_bytes) + ')';
+        } else if (s.downloaded_bytes) {
+          status.textContent = 'Downloading ' + s.downloading + '… ' + gb(s.downloaded_bytes);
+        } else {
+          status.textContent = 'Downloading ' + s.downloading + '…';
+        }
+      } else {
+        // Neither downloading nor a result (idle) — nothing to track.
+        clearInterval(_downloadPollTimer); _downloadPollTimer = null;
+        setDownloadBtnIdle();
+        status.style.display = 'none';
+      }
+    } catch (e) { /* keep polling */ }
+  }, 3000);
+}
+
+// If a download is already running when Settings opens, attach the Cancel UI to it.
+async function resumeDownloadUiIfActive() {
+  try {
+    const s = await fetch('/api/download-model/status').then(r => r.json());
+    if (s.downloading) trackDownloadProgress();
+  } catch (e) { /* ignore */ }
 }
 
 function updateSettingsSaveState() {
