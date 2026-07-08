@@ -50,6 +50,24 @@ LOCAL_MODEL_PRESETS: list[tuple[int, str]] = [
 ]
 
 
+# The app stores the HuggingFace token as HUGGINGFACE_TOKEN (used by the
+# speaker-diarization path, which passes it explicitly). huggingface_hub — which
+# backs mlx_lm.load's model downloads — only auto-reads HF_TOKEN /
+# HUGGINGFACE_HUB_TOKEN, so without this mirror the token is silently ignored and
+# downloads fall back to throttled anonymous access.
+_HF_HUB_TOKEN_ENV_VARS = ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN")
+
+
+def ensure_hf_hub_token_env() -> None:
+    """Mirror HUGGINGFACE_TOKEN into the env vars huggingface_hub reads."""
+    token = os.environ.get("HUGGINGFACE_TOKEN", "").strip()
+    if not token:
+        return
+    for var in _HF_HUB_TOKEN_ENV_VARS:
+        if not os.environ.get(var, "").strip():
+            os.environ[var] = token
+
+
 def get_system_ram_gb() -> int:
     """Return total system RAM in GB (macOS only)."""
     try:
@@ -99,6 +117,7 @@ class _LocalModelCache:
             try:
                 from mlx_lm import load
 
+                ensure_hf_hub_token_env()
                 logger.info("Loading local model: %s", model_id)
                 loaded = load(model_id)
                 model, tokenizer = loaded[0], loaded[1]
