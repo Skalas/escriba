@@ -726,6 +726,8 @@ def _deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]
     """Recursively merge ``updates`` into ``base`` (returns a new dict)."""
     result = dict(base)
     for key, value in updates.items():
+        if value is None:
+            raise ConfigValidationError(f"{key} cannot be null")
         if (
             key in result
             and isinstance(result[key], dict)

@@ -368,14 +368,15 @@ def cmd_watch_calendar(
         60, "--check-interval", help="Intervalo en segundos para verificar calendario."
     ),
 ) -> None:
+    if auto_start:
+        raise typer.BadParameter(
+            "Calendar auto-start is not implemented yet; use opt-in "
+            "Settings -> Auto-record on call for automatic recording."
+        )
     from escriba.calendar.apple_calendar import watch_calendar
 
     def on_meeting_detected(event: dict[str, object]) -> None:
         print(f"Meeting detected: {event.get('title', 'Unknown')}")
-        if auto_start:
-            logger.info(
-                "Would start transcription for: %s", event.get("title", "Unknown")
-            )
 
     print("Watching calendar for meetings...")
     print("Press Ctrl+C to stop")

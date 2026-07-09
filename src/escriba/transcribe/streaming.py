@@ -15,6 +15,7 @@ from escriba.transcribe.metrics import CaptureMetrics
 from escriba.utils.env import get_bool_env, get_float_env, get_str_env
 
 logger = logging.getLogger(__name__)
+WHISPER_SAMPLE_RATE = 16000
 
 
 def _pcm_to_float_mono(
@@ -40,6 +41,23 @@ def _pcm_to_float_mono(
     if n_channels == 2:
         audio_float = audio_float.reshape(-1, 2).mean(axis=1)
     return audio_float
+
+
+def _resample_audio(
+    audio_float: np.ndarray, source_rate: int, target_rate: int = WHISPER_SAMPLE_RATE
+) -> np.ndarray:
+    """Resample mono float audio for ndarray-based Whisper inference."""
+    if source_rate == target_rate or len(audio_float) == 0:
+        return audio_float.astype(np.float32, copy=False)
+    if source_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    duration_s = len(audio_float) / source_rate
+    target_len = max(1, int(duration_s * target_rate))
+    return np.interp(
+        np.linspace(0, len(audio_float), target_len, endpoint=False),
+        np.arange(len(audio_float)),
+        audio_float,
+    ).astype(np.float32)
 
 
 class StreamingTranscriber:
@@ -195,8 +213,9 @@ class StreamingTranscriber:
         Returns:
             Joined text or None.
         """
+        inference_audio = _resample_audio(audio_float, sample_rate)
         segments, info = self.model.transcribe(
-            audio_float,
+            inference_audio,
             language=self.language if self.language != "auto" else None,
             beam_size=5,
             vad_filter=self.vad_enabled,
@@ -284,11 +303,19 @@ class StreamingTranscriber:
             # Verificar que sea un WAV válido
             if len(wav_data) < 44:
                 logger.warning("WAV chunk too small: %s bytes", len(wav_data))
+                if self.metrics and start_timestamp:
+                    self.metrics.record_chunk_end(
+                        start_timestamp, had_transcription=False
+                    )
                 return None
 
             # Verificar header básico
             if wav_data[:4] != b"RIFF" or wav_data[8:12] != b"WAVE":
                 logger.warning("Invalid WAV header")
+                if self.metrics and start_timestamp:
+                    self.metrics.record_chunk_end(
+                        start_timestamp, had_transcription=False
+                    )
                 return None
 
             try:
@@ -296,15 +323,34 @@ class StreamingTranscriber:
                     sample_rate = wav_file.getframerate()
                     n_channels = wav_file.getnchannels()
                     sample_width = wav_file.getsampwidth()
+                    if sample_rate <= 0 or n_channels <= 0:
+                        logger.warning(
+                            "Invalid WAV parameters: sample_rate=%s channels=%s",
+                            sample_rate,
+                            n_channels,
+                        )
+                        if self.metrics and start_timestamp:
+                            self.metrics.record_chunk_end(
+                                start_timestamp, had_transcription=False
+                            )
+                        return None
                     frames = wav_file.readframes(wav_file.getnframes())
 
                     if len(frames) == 0:
+                        if self.metrics and start_timestamp:
+                            self.metrics.record_chunk_end(
+                                start_timestamp, had_transcription=False
+                            )
                         return None
 
                     audio_float = _pcm_to_float_mono(
                         frames, sample_width, n_channels
                     )
                     if audio_float is None:
+                        if self.metrics and start_timestamp:
+                            self.metrics.record_chunk_end(
+                                start_timestamp, had_transcription=False
+                            )
                         return None
 
                     # Record audio duration for metrics before _transcribe_audio increments accumulated_audio_time
@@ -351,12 +397,22 @@ class StreamingTranscriber:
             sample_rate = struct.unpack("<I", wav_data[24:28])[0]
             bits_per_sample = struct.unpack("<H", wav_data[34:36])[0]
             data_size = struct.unpack("<I", wav_data[40:44])[0]
+            if n_channels <= 0 or sample_rate <= 0 or bits_per_sample % 8 != 0:
+                logger.warning(
+                    "Invalid WAV parameters: channels=%s sample_rate=%s bits=%s",
+                    n_channels,
+                    sample_rate,
+                    bits_per_sample,
+                )
+                return None
 
             if len(wav_data) < 44 + data_size:
                 return None
 
             pcm_data = wav_data[44 : 44 + data_size]
             bytes_per_sample = bits_per_sample // 8
+            if bytes_per_sample <= 0:
+                return None
 
             audio_float = _pcm_to_float_mono(pcm_data, bytes_per_sample, n_channels)
             if audio_float is None:

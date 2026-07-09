@@ -1,104 +1,128 @@
-# Sprint plan — v1.0.1 release-blocker hardening
+# Sprint plan - merged reliability, correctness, and automation hardening
 
-> Entry doc for `metate-prep`. Selected from the discover slate: candidates **1 + 2 + 3**
+> Entry doc for `metate-prep`. Selected from the discover slate: candidates **1 + 2 + 3 + 4 + 5**
 > merged into one sprint.
-> Mode hint: **HOLD** — no new features; the P0/P1 backlog from the post-1.0.0 full-repo
-> review governs the rigor. Fix the release-blocker surface; don't widen it.
+> Mode hint: **HOLD** overall. This is a broad hardening sprint with one EXPAND-leaning
+> automation strand; keep each fix issue-sized and prove it with tests.
 
 ## Goal
 
-v1.0.0 shipped the code-side release hardening, then a full-repo review (issues #87–#105,
-bundled in #105) surfaced a stack of P0/P1 correctness, reliability, and security bugs that
-the release-readiness sprint did not cover. This sprint closes the **release-blocker tier**:
-the core transcription pipeline must produce correct, in-sync output; recording must not leak
-processes/handles or race itself; and the localhost attack surface must be closed.
+Close the current post-1.0.1 defect slate across the record -> transcribe -> summarize loop,
+dashboard notes workflow, daemon IPC, and incomplete automation surfaces.
 
-Three strands, all "make 1.0 actually solid," all HOLD:
+The sprint is intentionally broad because the open issues are clustered around the same product
+promise: a real meeting should record, transcribe, save notes, stop cleanly, and optionally run
+through automation without corrupting data, leaking processes, or silently dropping output.
 
-1. **Audio-capture correctness** — the primary pipeline currently produces garbage or
-   desynced transcription under real conditions.
-2. **Recording lifecycle** — subprocess/handle/GPU-worker leaks and start/restart races that
-   accumulate into crashes over a session.
-3. **Web-security pass** — CSRF + the P1 web-security cluster; the roadmap's "v1.0.0 security
-   pass" trigger has fired.
+## Why now
 
-**Enabler (in-strand, not separate scope):** `run_streaming_capture` (cognitive complexity
-587, #103) is too tangled to patch safely — decompose it *as part of* Strand A so the audio
-fixes land on a testable surface. Pull in only the decomposition the fixes require.
-
-## Why now (signals)
-
-- The post-1.0.0 review filed **6 P0** and **6 P1** bugs; none are covered by the v1.0.0
-  hardening sprint, which was scoped to graceful-failure + path-disclosure only.
-- Two P0s (#88 garbage transcription, #90 transcript desync) break the product's one job.
-- The roadmap explicitly defers a **"v1.0.0 security pass"** trigger — #93/#94/#95/#96 fire it.
-- The roadmap's 1.0.x gate wants a **real-meeting soak**; that soak is meaningless until the
-  audio pipeline and recording lifecycle are correct.
+- Fresh P0/P1 GitHub issues from the 2026-07-08 full-repo review identify silent audio
+  corruption, data-loss races, and lifecycle leaks.
+- The roadmap still names real-meeting soak and clean-install verification as the remaining
+  1.0.x manual gates; those gates are not meaningful while stop/finalization and live capture
+  can corrupt data.
+- The codebase graph shows the highest-risk surfaces are central: `run_streaming_capture`,
+  `TranscriptionSession.stop`, daemon start/stop, and the dashboard session-detail workflow.
+- The roadmap also calls out the next broken/incomplete-features sprint (#97/#99/#64); fold
+  that into this cycle after the P0/P1 correctness work is bounded.
 
 ## Scope note
 
-The issues below **already exist on GitHub**. `metate-prep` should **link** each test-matrix
-row to its existing issue (do not file duplicates); apply the `sprint` label and record them
-in the issue ledger.
+Most work already has GitHub issues. `metate-prep` should link existing issues rather than
+filing duplicates where a matching issue exists, then create only missing ledger entries for
+test rows without an existing issue.
 
-## Out of scope (deferred)
+## Definition of Done
 
-- **#97** `watch-calendar` no-op, **#99** GUI-path mlx fallback, **#64** calendar spike
-  (discover candidate 4 — broken/incomplete features, not release-blockers).
-- **#105** minor-cleanups bundle, **#87** sidebar title clip, concurrent note-gen race
-  (discover candidate 5 — ride-along P2, pull in only if adjacent work makes it cheap).
-- P2 backlog (persistence indexes, schema versioning, typing) — unchanged from roadmap.
+Done when: stopping a recording is exception-safe and timeout-safe; live audio buffers and
+backend resampling cannot silently corrupt transcript/audio; dashboard async note flows cannot
+cross-write or lose edits; daemon IPC is single-writer and locally hardened; the incomplete
+automation paths either work end-to-end or fail honestly. `uv run ruff check .`, `uv run mypy .`,
+and `uv run pytest` are green.
 
----
+## Test matrix
 
-## Definition of Done — test matrix
+### Strand A - recording stop/finalization data safety
 
-Done when: the core record → transcribe loop produces correct, in-sync output on real audio;
-recording start/stop/failure leaves no orphaned processes, handles, or `active` DB rows; and
-no state-changing endpoint accepts a cross-origin request. All proven by tests; the full ship
-gate (ruff + mypy + pytest) green.
+- **T1** (#114) - `TranscriptionSession.stop()` runs each cleanup step independently. A capture
+  teardown exception cannot skip buffer flush, WAV close, export, or `db.stop_session`.
+- **T2** (#115) - timed joins do not proceed as though the worker finished. If the process
+  thread is still alive, the main thread does not concurrently flush/close the transcriber or
+  WAV writer.
+- **T3** (#115) - title refinement never starts a second local generation while an earlier title
+  generation thread is still alive.
+- **T4** (#115) - app quit does not close the DB or terminate the app while a recording stop is
+  still completing.
+- **T5** - tests force teardown failure, slow process-thread join, slow title generation, and
+  quit-during-stop; all leave the session completed or clearly failed, never half-written.
 
-### Strand A — audio-capture correctness  *(enabler: decompose #103 as needed)*
+### Strand B - live audio correctness and capture lifecycle
 
-- **T1** (#88) — PCM samples are normalized by the divisor matching their **actual bit depth**
-  (32-bit input no longer divided by the 16-bit divisor). Test: a 32-bit PCM fixture
-  transcribes to correct amplitude, not garbage.
-- **T2** (#90) — a failed/dropped audio chunk **does not silently advance the transcript
-  clock**; the timeline stays aligned (backfill silence or hold the clock). Test: a dropped
-  chunk mid-stream leaves subsequent segment timestamps correct.
-- **T3** (#92) — NaN/Inf samples are sanitized **before** the `Int16(...)` conversion in the
-  Swift capture helper (no trap/crash). Test: a NaN/Inf-laden buffer is handled without a crash.
-- **T4** (#104) — in `both` mode, mic and system streams are **rate-matched** (resampled to a
-  common rate) before mixing; no progressive drift. Test: mismatched-rate inputs stay aligned
-  over a multi-minute mix.
+- **T6** (#110) - shared live audio buffers are protected by a clear locking discipline or
+  replaced with a safe queue/ring buffer. Extend, slice/consume, and clear cannot race.
+- **T7** (#111) - Swift CLI monitor backoff is interruptible via `stop_event`; a stop during
+  backoff cannot restart and orphan a new capture process.
+- **T8** (#116) - faster-whisper resamples non-16 kHz audio to 16 kHz before ndarray inference,
+  matching the MLX backend behavior.
+- **T9** (#113) - invalid WAV headers cannot produce zero-byte chunks or a CPU busy-loop.
+- **T10** (#123) - faster-whisper early-return guards close chunk metrics, and MLX rejects
+  unsupported sample widths instead of decoding them as 8-bit.
+- **T11** - tests cover both-mode buffer concurrency, stop-during-restart, non-16 kHz WAV input,
+  malformed WAV headers, and unsupported sample widths.
 
-### Strand B — recording lifecycle (leaks & races)
+### Strand C - dashboard note and session async safety
 
-- **T5** (#89) — `TranscriptionSession.start()` failure **releases** the subprocess and WAV
-  handle and marks the DB row `failed` (never leaves it `active`). Test: a forced start
-  failure leaves no live child, no open handle, and a non-`active` row.
-- **T6** (#91) — the exhausted-retry path in `monitor_swift_cli` **kills** the Swift child
-  (no orphan). Test: retries exhausted → child process is reaped.
-- **T7** (#102) — `ScreenCaptureAudioCapture` start/restart is **single-spawn** and never
-  skips cleanup (no double-spawn race). Test: rapid restart spawns exactly one capture.
-- **T8** (#100) — a timed-out local inference **reaps** its GPU-loaded worker process (no
-  leak). Test: an inference timeout terminates the worker.
-- **T9** (#98) — the daemon **validates socket liveness** (doesn't trust a stale socket file);
-  the CLI does not throw raw tracebacks after a crash. Test: a stale socket is detected and
-  handled cleanly.
+- **T12** (#120) - stale `selectSession` responses cannot render into a newer selected session
+  or cause notes from one session to be saved into another.
+- **T13** (#121) - `generateSessionNotes()` appends to the current post-await notes content, or
+  otherwise prevents editing while generation is in flight; saved edits are not lost.
+- **T14** (#123) - `retranscribeSession` and other long session actions capture the session id
+  before `await` and never refresh or mutate the wrong selected session on completion.
+- **T15** (#123) - pending search/deep-link highlight state is cleared on `selectSession` early
+  returns; stale highlight state cannot leak into a later unrelated session.
+- **T16** - Playwright tests prove rapid A -> B selection, edit-during-generation, and
+  navigate-during-retranscribe do not corrupt notes or UI state.
 
-### Strand C — web-security pass (localhost attack surface)
+### Strand D - daemon IPC hardening
 
-- **T10** (#93, **P0**) — state-changing endpoints (`POST`/`PUT`/`DELETE`) **reject
-  cross-origin requests** via an Origin/Host check (CSRF guard). Test: a request with a
-  foreign Origin is refused; a same-origin request succeeds.
-- **T11** (#95) — `escAttr` actually escapes for **attribute/inline-handler** context (the
-  stored-XSS via `onclick` is closed). Test: a session title containing an `onclick`-breaking
-  payload renders inert.
-- **T12** (#94) — `PUT /api/config` **rejects newline injection** into `.env` values. Test: a
-  value containing `\n KEY=evil` is rejected, not written as a second env line.
-- **T13** (#96) — the Telegram bot token is **redacted** from logs on send failure. Test: a
-  forced send failure logs no token substring.
-- **T14** (#101) — watched-folder filenames **cannot inject argv** into the whisper
-  `_build_command` (argv list, not shell; validated names). Test: a filename crafted as a flag
-  is passed as a literal path, not an option.
+- **T17** (#117) - daemon start/stop check-and-set is guarded by a recording lock; concurrent
+  `start-recording` commands can create at most one capture thread.
+- **T18** (#117) - daemon command reads are framed or read to EOF; long valid JSON commands are
+  not truncated by a single `recv(4096)`.
+- **T19** (#117) - daemon socket directory and socket file are owner-only (`0700`/`0600` or
+  equivalent), with tests that assert the final modes.
+- **T20** - daemon tests cover concurrent starts, long commands, stop during active recording,
+  and stale/permission-sensitive socket setup.
+
+### Strand E - incomplete automation and notification reliability
+
+- **T21** (#99) - GUI recording path has the same mlx -> faster-whisper fallback behavior as the
+  hardened backend path; a missing MLX backend does not produce a no-transcriber session.
+- **T22** (#97/#64) - calendar-driven recording is either made functional for the current
+  supported path or explicitly disabled/marked unavailable in CLI/UI/docs instead of being a
+  silent no-op.
+- **T23** (#118) - watch-folder handles atomically written files via `on_moved` and allows a
+  corrected replacement file after a failed attempt.
+- **T24** (#119) - Telegram notifications cannot be dropped by Telegram Markdown parse errors
+  from untrusted LLM text. Prefer plain text unless formatting is proven safe.
+- **T25** (#122) - menubar auto-stop tracking id is cleared only after stop initiation succeeds;
+  a failed stop attempt does not orphan an auto-started recording from future auto-stop checks.
+
+### Strand F - bundled low-risk correctness polish
+
+- **T26** (#123) - API edge cases return clear 4xx responses where appropriate: invalid Range
+  start, chunked request body handling, unknown folder id, nonexistent merge ids, and TOML null
+  config leaves.
+- **T27** (#123) - SRT export cue numbers are contiguous after empty segments are skipped.
+- **T28** (#123) - local summary timeout errors are handled and logged with the same clarity as
+  Gemini/Claude timeout paths.
+- **T29** (#123) - live transcript polling renders the empty state when segments reset instead
+  of leaving stale transcript content on screen.
+
+## Out of scope
+
+- New product features beyond making the existing automation surfaces honest and reliable.
+- Framework changes to the stdlib server or single-file SPA.
+- Persistence-index/schema-version P2 backlog unless directly required by a selected test row.
+- Real-meeting soak and clean-install verification themselves; those remain human-run gates
+  after this plan lands and tests pass.

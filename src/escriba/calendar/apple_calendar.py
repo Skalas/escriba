@@ -25,20 +25,19 @@ def get_upcoming_events(minutes_ahead: int = 5) -> list[dict[str, str]]:
         tell application "Calendar"
             set nowDate to current date
             set futureDate to nowDate + ({minutes_ahead} * minutes)
-            
-            set upcomingEvents to {{}}
+            set outputLines to {{}}
             repeat with cal in calendars
                 set eventsList to (every event of cal whose start date is greater than nowDate and start date is less than futureDate)
                 repeat with evt in eventsList
-                    set eventInfo to {{}}
-                    set end of eventInfo to (summary of evt as string)
-                    set end of eventInfo to (start date of evt as string)
-                    set end of eventInfo to (end date of evt as string)
-                    set end of eventInfo to (url of evt as string)
-                    set end of upcomingEvents to eventInfo
+                    set eventUrl to ""
+                    try
+                        set eventUrl to (url of evt as string)
+                    end try
+                    set end of outputLines to ((summary of evt as string) & tab & (start date of evt as string) & tab & (end date of evt as string) & tab & eventUrl)
                 end repeat
             end repeat
-            return upcomingEvents
+            set AppleScript's text item delimiters to linefeed
+            return outputLines as text
         end tell
         """
         
@@ -53,10 +52,21 @@ def get_upcoming_events(minutes_ahead: int = 5) -> list[dict[str, str]]:
             logger.debug("osascript error: %s", result.stderr)
             return []
 
-        # Parsear resultado (formato puede variar)
         events: list[dict[str, str]] = []
-        # Por ahora retornar lista vacía - implementación completa requeriría
-        # parsing más robusto del output de osascript
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            title, start_time, end_time = parts[:3]
+            url = parts[3] if len(parts) > 3 else ""
+            events.append(
+                {
+                    "title": title,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "url": url,
+                }
+            )
         return events
 
     except subprocess.TimeoutExpired:

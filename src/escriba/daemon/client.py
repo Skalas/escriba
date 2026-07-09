@@ -49,6 +49,7 @@ class DaemonClient:
             # Enviar comando
             command_data = {"command": command, "args": args or {}}
             client_socket.sendall(json.dumps(command_data).encode("utf-8"))
+            client_socket.shutdown(socket.SHUT_WR)
 
             # Recibir respuesta
             response_data = b""

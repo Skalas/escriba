@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 MEETING_APPS = {
     "zoom": ["zoom", "ZoomOpener", "zTray"],
     "teams": ["Microsoft Teams", "teams"],
-    "meet": ["Google Chrome", "Google Meet"],
+    "meet": ["Google Meet"],
     "webex": ["Cisco Webex", "webexmta"],
     "skype": ["Skype", "Skype for Business"],
     "facetime": ["FaceTime"],
@@ -33,17 +33,20 @@ def _find_running_meeting_app() -> Optional[str]:
         App label (e.g. ``zoom``) or None if no known app is running.
     """
     for app_name, process_names in MEETING_APPS.items():
-        try:
-            result = subprocess.run(
-                ["pgrep", "-f", process_names[0]],
-                capture_output=True,
-                timeout=1,
-            )
-            if result.returncode == 0:
-                logger.debug("Found meeting app process: %s", app_name)
-                return app_name
-        except Exception:
-            continue
+        for process_name in process_names:
+            try:
+                result = subprocess.run(
+                    ["pgrep", "-f", process_name],
+                    capture_output=True,
+                    timeout=1,
+                )
+                if result.returncode == 0:
+                    logger.debug(
+                        "Found meeting app process: %s (%s)", app_name, process_name
+                    )
+                    return app_name
+            except Exception:
+                continue
     return None
 
 
@@ -105,5 +108,4 @@ def wait_for_call_start(
             return None
 
         time.sleep(check_interval)
-
 

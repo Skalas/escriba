@@ -227,7 +227,12 @@ class StreamingTranscriberMLX:
             elif sampwidth == 4:
                 audio_np = np.frombuffer(raw_frames, dtype=np.int32).astype(np.float32) / 2147483648.0
             else:
-                audio_np = np.frombuffer(raw_frames, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+                logger.warning("Unsupported sample width: %s", sampwidth)
+                if self.metrics and start_timestamp:
+                    self.metrics.record_chunk_end(
+                        start_timestamp, had_transcription=False
+                    )
+                return None
 
             if n_channels > 1:
                 audio_np = audio_np.reshape(-1, n_channels).mean(axis=1)

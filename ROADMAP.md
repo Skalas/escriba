@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-07-04 · Current version: `1.0.1` (release-blocker hardening — audio-capture correctness, recording-lifecycle leaks/races, web-security pass; closes #88–#104) · next up: real-meeting soak + clean-install verification (still 1.0.x manual gates), then the broken/incomplete-features sprint (#97/#99/#64)_
+_Last updated: 2026-07-08 · Current version: `1.1.0` (merged reliability, correctness, and automation hardening; closes #64, #97, #99, #110–#123) · next up: real-meeting soak + clean-install verification, then decide whether to keep expanding calendar-driven recording._
 
 ---
 
@@ -33,7 +33,7 @@ The app is feature-rich. Since `v0.2.0` we shipped (unreleased):
 
 **The gap (closed in `v0.4.0`):** core app modules had near-zero test coverage, shared state was largely unsynchronized, the HTTP server handled one request at a time, and LLM calls had no timeout/retry. Addressed under **[Epic #12: Backend hardening](https://github.com/Skalas/escriba/issues/12)** — the core loop is now concurrency-safe, the server is threaded with input validation, LLM calls time out/retry, and `server.py`/`database.py`/`session.py` have meaningful coverage (84 tests).
 
-As of **`1.0.0`** (2026-06-30) the request spine fails gracefully end-to-end (the dashboard never throws on a failed call), API responses no longer leak filesystem paths, and the test suite (283) runs reliably headless. The only remaining 1.0 gate is human-run: a real-meeting soak and a clean install-from-scratch.
+As of **`1.1.0`** (2026-07-08) the stop/finalization path is exception-safe, live capture buffer handling and faster-whisper resampling are hardened, dashboard note writes are guarded against stale async responses, daemon IPC is single-writer with owner-only socket permissions, and the previously silent automation paths now either work or fail honestly. The remaining release-quality proof is human-run: a real-meeting soak and a clean install-from-scratch.
 
 ---
 
@@ -231,6 +231,24 @@ A post-1.0.0 full-repo review filed 6 P0 + 6 P1 correctness/reliability/security
 **Deferred (with triggers — read these at next discover):**
 - **No Swift unit-test target.** T3 (#92 NaN guard) is covered by a source-regression guard + `swift build`, not a real XCTest. _Trigger:_ any further Swift change to `PCMConverter`/`CoreAudioTap`, or a second Swift bug — stand up an XCTest target (needs the converter moved to a testable library target).
 - **`_abort_start` uses an exception-funnel for cleanup.** Adds one indentation level to `start()`. Acceptable for now (reviewer: no change needed). _Trigger:_ if `start()` grows another capture mode, extract `_start_transcriber()`/`_start_system_capture()`/`_start_mic_capture_guarded()` so the body flattens.
+
+---
+
+### `v1.1.0` — Reliability, correctness, and automation hardening  ·  _shipped 2026-07-08 (#64/#97/#99/#110–#123)_
+
+Merged the fresh full-repo defect slate into one HOLD sprint so the real-meeting loop is safer before the manual soak.
+
+- [x] **Stop/finalization data safety.** `TranscriptionSession.stop()` now isolates cleanup-step failures, avoids concurrent flush/close when the process thread outlives the stop timeout, skips title refinement while a prior local generation is still alive, and app quit no longer closes the DB under an in-flight stop (#114/#115).
+- [x] **Live audio correctness.** System/mic buffers are lock-protected, Swift restart backoff is stop-aware, faster-whisper resamples ndarray input to 16 kHz, malformed WAV parameters are rejected, unsupported MLX sample widths fail closed, and SRT cue numbers stay contiguous (#110/#111/#113/#116/#123).
+- [x] **Dashboard note safety.** Saved-session selection, note generation, re-transcription, transcript polling, and pending highlight state now guard against stale async completions and resets (#120/#121/#123).
+- [x] **Daemon and automation.** Daemon start/stop is single-writer, command reads are complete, socket permissions are owner-only, GUI MLX fallback degrades to faster-whisper, Calendar watch parses events while `--auto-start` fails clearly, watch-folder handles atomic moves/retries, Telegram sends plain text, and menubar auto-stop only clears tracking after stop begins (#64/#97/#99/#117/#118/#119/#122).
+- [x] **API/config polish.** Range, chunked body, move-folder, merge-missing-session, TOML `null`, and local-summary-timeout edge cases now return clear behavior instead of hidden 500s or stale state (#123).
+
+**Done when:** `uv run ruff check .`, `uv run mypy .`, and `uv run pytest` are green; smoke launches `uv run escriba app` and confirms `/api/status`, `/api/version`, and `/api/sessions` return valid JSON. ✅ (315 tests; smoke passed on localhost. Human real-meeting soak and clean-install verification remain manual gates.)
+
+**Deferred (with triggers — read these at next discover):**
+- **Calendar auto-start remains intentionally unavailable.** Calendar event detection now parses upcoming events, but automatic recording from calendar events is still blocked with a clear CLI error. _Trigger:_ product decision to support calendar-driven recording beyond mic-activation auto-record.
+- **Swift unit-test target remains absent.** Same trigger as v1.0.1: any further Swift `PCMConverter`/`CoreAudioTap` change or another Swift bug should justify moving the converter into a testable library target.
 
 ---
 

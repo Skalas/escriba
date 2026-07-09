@@ -720,6 +720,12 @@ class Database:
                 f"ORDER BY started_at ASC",
                 session_ids,
             ).fetchall()
+            if len(src_rows) != len(set(session_ids)):
+                found_ids = {row["id"] for row in src_rows}
+                missing_ids = [sid for sid in session_ids if sid not in found_ids]
+                raise ValueError(
+                    "Cannot merge nonexistent session(s): " + ", ".join(missing_ids)
+                )
 
             offsets: list[tuple[str | None, float, float]] = []
             cumulative = 0.0

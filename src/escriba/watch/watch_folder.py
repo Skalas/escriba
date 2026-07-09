@@ -49,6 +49,16 @@ def watch_folder(
     processed: set[Path] = set()
     lock = threading.Lock()
 
+    def enqueue_path(path: Path) -> None:
+        if path.suffix.lower() not in normalized_ext:
+            return
+        with lock:
+            if path in processed:
+                return
+            processed.add(path)
+        LOGGER.info("Queued file: %s", path)
+        work_queue.put(path)
+
     def worker() -> None:
         LOGGER.info("Worker started")
         while True:
@@ -69,7 +79,10 @@ def watch_folder(
                 LOGGER.info("Processing file: %s", path)
                 if not skip_stability_check:
                     _wait_for_stable_file(path)
-                _retry_transcribe(path, output_dir, combined_transcript)
+                transcribed = _retry_transcribe(path, output_dir, combined_transcript)
+                if not transcribed:
+                    with lock:
+                        processed.discard(path)
             finally:
                 work_queue.task_done()
         LOGGER.info("Worker stopped")
@@ -81,15 +94,12 @@ def watch_folder(
         def on_created(self, event) -> None:  # type: ignore[override]
             if event.is_directory:
                 return
-            path = Path(event.src_path)
-            if path.suffix.lower() not in normalized_ext:
+            enqueue_path(Path(event.src_path))
+
+        def on_moved(self, event) -> None:  # type: ignore[override]
+            if event.is_directory:
                 return
-            with lock:
-                if path in processed:
-                    return
-                processed.add(path)
-            LOGGER.info("Queued file: %s", path)
-            work_queue.put(path)
+            enqueue_path(Path(event.dest_path))
 
     observer = Observer()
     observer.schedule(Handler(), str(input_dir), recursive=False)
@@ -185,7 +195,7 @@ def _retry_transcribe(
     combined_transcript: Optional[Path],
     attempts: int = 3,
     delay: float = 1.0,
-) -> None:
+) -> bool:
     for attempt in range(attempts):
         try:
             if not path.exists() or path.stat().st_size == 0:
@@ -195,13 +205,14 @@ def _retry_transcribe(
             if result is None:
                 LOGGER.warning("Transcript not created for %s", path)
                 if attempt >= attempts - 1:
-                    return
+                    return False
                 time.sleep(delay)
                 continue
             LOGGER.info("Transcribed: %s", path)
-            return
+            return True
         except Exception:
             if attempt >= attempts - 1:
                 LOGGER.exception("Skipping %s due to error", path)
-                return
+                return False
             time.sleep(delay)
+    return False

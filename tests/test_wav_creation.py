@@ -5,7 +5,7 @@ from __future__ import annotations
 import struct
 
 
-from escriba.audio.live_capture import _create_wav_chunk
+from escriba.audio.live_capture import _create_wav_chunk, _parse_live_wav_header
 
 
 def test_create_wav_chunk_basic():
@@ -88,3 +88,27 @@ def test_create_wav_chunk_stereo():
 
     assert wav_chunk.startswith(b"RIFF")
     assert len(wav_chunk) >= 44 + len(pcm_data)
+
+
+def test_parse_live_wav_header_rejects_zero_sample_rate():
+    """#113: live_capture must reject headers that would make chunk size zero."""
+    wav_header = bytearray(44)
+    wav_header[0:4] = b"RIFF"
+    wav_header[8:12] = b"WAVE"
+    wav_header[22:24] = struct.pack("<H", 1)
+    wav_header[24:28] = struct.pack("<I", 0)
+    wav_header[34:36] = struct.pack("<H", 16)
+
+    assert _parse_live_wav_header(bytes(wav_header)) is None
+
+
+def test_parse_live_wav_header_rejects_zero_channels():
+    """#113: invalid channel count cannot feed chunk-size math."""
+    wav_header = bytearray(44)
+    wav_header[0:4] = b"RIFF"
+    wav_header[8:12] = b"WAVE"
+    wav_header[22:24] = struct.pack("<H", 0)
+    wav_header[24:28] = struct.pack("<I", 16000)
+    wav_header[34:36] = struct.pack("<H", 16)
+
+    assert _parse_live_wav_header(bytes(wav_header)) is None
