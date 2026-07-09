@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-08
+
+Merged reliability, correctness, and automation hardening across the record -> transcribe -> summarize loop. Closes #64, #97, #99, and #110-#123.
+
+### Fixed
+- **Recording stop is data-safe.** Stop cleanup steps are isolated, slow process/title threads no longer cause concurrent writer/model access, and quitting the app will not close SQLite under an in-flight stop.
+- **Live capture corruption paths closed.** System/mic audio buffers are lock-protected, Swift restart backoff is stop-aware, faster-whisper resamples ndarray input to 16 kHz, malformed WAV parameters fail closed, and unsupported MLX sample widths are rejected.
+- **Dashboard async note races fixed.** Stale session loads, note generation, re-transcription, transcript resets, and pending search/deep-link highlights no longer cross-write or render into the wrong session.
+- **Daemon IPC hardened.** Start/stop is lock-guarded, commands are read completely, the client half-closes after sending, and daemon socket paths are owner-only.
+- **Automation paths made reliable or honest.** GUI MLX fallback now degrades to faster-whisper; Calendar watch parses events while `--auto-start` clearly reports unsupported behavior; watch-folder handles atomic moves and retry replacements; Telegram notifications use plain text so LLM Markdown cannot drop the whole request.
+- **P2 correctness polish.** Range, chunked body, move-folder, merge-missing-session, TOML `null`, SRT numbering, local-summary-timeout, and test import-mocking edge cases now behave clearly.
+
+### Internal
+- Test suite at 315. Verified with `uv run ruff check .`, `uv run mypy .`, `uv run pytest`, and smoke launch of `uv run escriba app` with `/api/status`, `/api/version`, and `/api/sessions` probes.
+
 ## [1.0.1] - 2026-07-04
 
 Release-blocker hardening: a post-1.0.0 full-repo review surfaced a stack of P0/P1 correctness, reliability, and security bugs the release-readiness sprint did not cover. No new features — the core record → transcribe loop now produces correct, in-sync output; recording no longer leaks processes/handles or races itself; and the localhost attack surface is closed. Closes #88–#104.

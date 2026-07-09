@@ -496,3 +496,178 @@ def test_t1_retranscribe_faster_whisper_passes_full_streaming_config(
         hallucination_config=config.hallucination,
         device=config.streaming.device,
     )
+
+
+# ---------------------------------------------------------------------------
+# Strand A (T1-T5): recording stop / finalization data safety
+# ---------------------------------------------------------------------------
+
+
+def _make_active_session(
+    config: AppConfig, db: Database
+) -> TranscriptionSession:
+    """Build a session that is 'active' with a mock transcriber, no threads."""
+    session = TranscriptionSession(config, database=db)
+    session.db_session_id = db.create_session(
+        name="s", model="tiny", language="en", backend="mlx-whisper"
+    )
+    session.is_active = True
+    transcriber = MagicMock()
+    transcriber.get_full_transcript.return_value = ""
+    transcriber.segments = []
+    transcriber.lock = threading.Lock()
+    session.transcriber = transcriber
+    return session
+
+
+def test_t1_stop_finalizes_db_even_when_capture_teardown_raises(
+    minimal_config: AppConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T1: a capture-teardown exception cannot skip DB finalization."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    db = Database(tmp_path / "t1.db")
+    try:
+        session = _make_active_session(minimal_config, db)
+        session.screen_capture = MagicMock()
+        session.screen_capture.stop.side_effect = RuntimeError("teardown boom")
+
+        with patch.object(TranscriptionSession, "_refine_title"), patch.object(
+            TranscriptionSession, "_export_to_knowledge_store"
+        ):
+            session.stop()
+
+        assert session.is_active is False
+        assert session.db_session_id is not None
+        row = db.get_session(session.db_session_id)
+        assert row is not None
+        # Even though teardown raised, the row is finalized (not left ACTIVE).
+        assert row["status"] in ("completed", "error")
+    finally:
+        db.close()
+
+
+def test_t1_stop_runs_every_cleanup_step_independently(
+    minimal_config: AppConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T1: an exception in one step does not skip flush / close / export / db."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    db = Database(tmp_path / "t1b.db")
+    try:
+        session = _make_active_session(minimal_config, db)
+
+        calls: list[str] = []
+
+        def rec(name: str, raise_it: bool = False):
+            def _step() -> None:
+                calls.append(name)
+                if raise_it:
+                    raise RuntimeError(f"{name} boom")
+
+            return _step
+
+        with patch.object(
+            session, "_flush_buffer", side_effect=rec("flush", raise_it=True)
+        ), patch.object(
+            session, "_close_audio_file", side_effect=rec("close")
+        ), patch.object(
+            session, "_export", side_effect=rec("export", raise_it=True)
+        ), patch.object(
+            session, "_export_to_knowledge_store", side_effect=rec("knowledge")
+        ), patch.object(
+            session, "_refine_title", side_effect=rec("refine")
+        ):
+            session.stop()
+
+        # Every step ran despite flush and export raising.
+        assert calls == ["flush", "close", "export", "knowledge", "refine"]
+        assert session.db_session_id is not None
+        row = db.get_session(session.db_session_id)
+        assert row is not None and row["status"] in ("completed", "error")
+    finally:
+        db.close()
+
+
+def test_t2_slow_process_thread_join_skips_flush_and_close(
+    minimal_config: AppConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T2: if the process thread is still alive, do not flush/close concurrently."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr("escriba.app.session.PROCESS_JOIN_TIMEOUT_S", 0.01)
+    db = Database(tmp_path / "t2.db")
+    try:
+        session = _make_active_session(minimal_config, db)
+
+        still_alive = MagicMock()
+        still_alive.is_alive.return_value = True
+        session._process_thread = still_alive
+
+        with patch.object(session, "_flush_buffer") as flush, patch.object(
+            session, "_close_audio_file"
+        ) as close, patch.object(
+            TranscriptionSession, "_export_to_knowledge_store"
+        ), patch.object(TranscriptionSession, "_refine_title"), patch.object(
+            session, "_export"
+        ):
+            session.stop()
+
+        flush.assert_not_called()
+        close.assert_not_called()
+        # The session is finalized clearly (errored), never left ACTIVE.
+        assert session.db_session_id is not None
+        row = db.get_session(session.db_session_id)
+        assert row is not None and row["status"] == "error"
+        assert session.error is not None
+    finally:
+        db.close()
+
+
+def test_t3_slow_title_thread_skips_refine(
+    minimal_config: AppConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T3: never start a refine generation while a title thread is still alive."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr("escriba.app.session.TITLE_JOIN_TIMEOUT_S", 0.01)
+    db = Database(tmp_path / "t3.db")
+    try:
+        session = _make_active_session(minimal_config, db)
+
+        title_thread = MagicMock()
+        title_thread.is_alive.return_value = True
+        session._title_thread = title_thread
+
+        with patch.object(session, "_refine_title") as refine, patch.object(
+            TranscriptionSession, "_export_to_knowledge_store"
+        ), patch.object(session, "_export"), patch.object(
+            session, "_flush_buffer"
+        ), patch.object(session, "_close_audio_file"):
+            session.stop()
+
+        refine.assert_not_called()
+        title_thread.join.assert_called_once()
+    finally:
+        db.close()
+
+
+def test_t3_finished_title_thread_allows_refine(
+    minimal_config: AppConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T3: once the title thread has finished, the refine pass runs."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    db = Database(tmp_path / "t3b.db")
+    try:
+        session = _make_active_session(minimal_config, db)
+
+        title_thread = MagicMock()
+        title_thread.is_alive.return_value = False
+        session._title_thread = title_thread
+
+        with patch.object(session, "_refine_title") as refine, patch.object(
+            TranscriptionSession, "_export_to_knowledge_store"
+        ), patch.object(session, "_export"), patch.object(
+            session, "_flush_buffer"
+        ), patch.object(session, "_close_audio_file"):
+            session.stop()
+
+        refine.assert_called_once()
+    finally:
+        db.close()

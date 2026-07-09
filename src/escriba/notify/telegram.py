@@ -36,7 +36,10 @@ def send_telegram_message(
         import requests
 
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        data = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
+        # Send plain text: summaries contain untrusted LLM/transcript text, and
+        # Telegram's Markdown parser rejects the whole request on unbalanced
+        # markup characters such as `_` or `*`.
+        data = {"chat_id": chat_id, "text": message}
 
         response = requests.post(url, json=data, timeout=10)
         response.raise_for_status()

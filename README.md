@@ -9,17 +9,17 @@ Local audio transcription app for macOS. Captures system audio + microphone, tra
 
 - **Real-time transcription** — system audio + microphone capture via ScreenCaptureKit
 - **Menu bar app** — start/stop recording from the macOS menu bar
-- **Auto-record on call** — opt-in mic-activation detection (Notion-style): debounced auto start/stop when you join and leave a call, with a prompt or fully-automatic mode (Settings → Auto-record on call)
+- **Auto-record on call** — opt-in mic-activation detection (Notion-style): debounced auto start/stop when you join and leave a call, with a prompt or fully-automatic mode (Settings → Auto-record on call); auto-stop state is guarded so failed stop attempts do not orphan an auto-started recording
 - **Web dashboard** — manage sessions with folders, search, rename, view transcripts, generate AI notes with markdown rendering
 - **Audio recording & playback** — WAV files saved alongside transcripts with seek-to-segment
-- **Re-transcribe** — retry failed transcriptions from saved audio
+- **Re-transcribe** — retry failed transcriptions from saved audio, including non-16 kHz WAVs on the faster-whisper backend
 - **AI notes** — generate summaries, action items, meeting minutes on-device (local `mlx-lm`) or via Gemini/Claude; local generation runs in a subprocess so the dashboard stays responsive while notes are produced
 - **Live notepad (jot & enhance)** — jot key points during a meeting on the primary notepad; one **Enhance** turns your shorthand into a finished note in place, combined with the transcript — your words are kept and AI additions are clearly marked. Enhanced notes persist with the session, and you can later edit **both** your own notes and the AI output on a saved session
 - **Markdown export** — auto-save each session's notes + transcript as a Markdown file via a configurable export adapter (`[knowledge_store]` in `escriba.toml`); fully local by default
 - **Speaker detection** — simple energy-based or pyannote diarization
 - **Keyboard navigation** — arrow keys move through the session list and seek the player, Space plays/pauses, with focus rings and screen-reader labels
 - **Settings UI** — configure everything from the dashboard
-- **100% local transcription** — Whisper runs on-device (mlx-whisper on Apple Silicon)
+- **100% local transcription** — Whisper runs on-device (mlx-whisper on Apple Silicon, with faster-whisper fallback when MLX is unavailable)
 
 ### Requirements
 

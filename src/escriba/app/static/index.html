@@ -2377,7 +2377,10 @@ async function pollTranscript() {
   try {
     const t = await apiCall('/api/transcript');
     const box = document.getElementById('transcript-box');
-    if (!t.segments || t.segments.length === 0) return;
+    if (!t.segments || t.segments.length === 0) {
+      box.innerHTML = '<span class="transcript-placeholder">Listening for speech...</span>';
+      return;
+    }
     box.innerHTML = t.segments.map(seg => {
       const ts = formatTime(seg.start);
       const speaker = segmentSpeakerLabel(seg);
@@ -2693,6 +2696,8 @@ async function selectSession(id) {
     viewingHistory = false;
     showLiveView();
     document.querySelectorAll('.session-item').forEach(el => el.classList.remove('selected'));
+    pendingHighlightSegmentId = null;
+    pendingHighlightQuery = '';
     return;
   }
 
@@ -2701,7 +2706,12 @@ async function selectSession(id) {
   hideError();
   try {
     const res = await apiCall('/api/sessions/' + id);
-    if (!res.ok) return;
+    if (selectedSessionId !== id) return;
+    if (!res.ok) {
+      pendingHighlightSegmentId = null;
+      pendingHighlightQuery = '';
+      return;
+    }
     const s = res.session;
     document.getElementById('session-title').textContent = s.name;
     const dt = s.started_at ? new Date(s.started_at) : null;
@@ -2777,7 +2787,13 @@ async function selectSession(id) {
       highlightSearchSegment(pendingHighlightSegmentId);
     }
     updateSessionNotesButton(id);
-  } catch (e) {}
+  } catch (e) {
+  } finally {
+    if (selectedSessionId === id && (!pendingHighlightSegmentId || document.getElementById('seg-' + pendingHighlightSegmentId))) {
+      pendingHighlightSegmentId = null;
+      pendingHighlightQuery = '';
+    }
+  }
 }
 
 // --- Selection ---
@@ -3383,7 +3399,6 @@ async function generateSessionNotes() {
   const sid = selectedSessionId;
   const promptVal = document.getElementById('session-prompt-input').value.trim();
   const notesInput = document.getElementById('session-notes-input');
-  const existingNotesSnapshot = notesInput.value;
   notesGeneratingFor = sid;
   updateSessionNotesButton(sid);
   try {
@@ -3393,8 +3408,9 @@ async function generateSessionNotes() {
     });
     if (selectedSessionId === sid) {
       if (res.ok && res.notes) {
-        const separator = existingNotesSnapshot.trim() ? '\n\n---\n\n' : '';
-        notesInput.value = existingNotesSnapshot.trim() + separator + res.notes;
+        const currentNotes = notesInput.value;
+        const separator = currentNotes.trim() ? '\n\n---\n\n' : '';
+        notesInput.value = currentNotes.trim() + separator + res.notes;
         await saveNotesForSession(sid, notesInput.value);
         renderNotesView(notesInput.value);
       } else if (res.downloading) {
@@ -4312,13 +4328,16 @@ function showSplitProgress() {
 
 async function retranscribeSession() {
   if (!selectedSessionId) return;
+  const sid = selectedSessionId;
   if (!await confirmDialog({ title: 'Re-transcribe recording?', message: 'This will replace the current transcript with a fresh transcription from the saved audio.', confirmText: 'Re-transcribe', danger: true })) return;
+  if (selectedSessionId !== sid) return;
   hideError();
   const btn = document.getElementById('btn-retranscribe');
   btn.disabled = true; btn.innerHTML = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Transcribing...';
   try {
-    const res = await apiCall('/api/sessions/' + selectedSessionId + '/retranscribe', { method: 'POST' });
-    if (res.ok) { btn.textContent = res.segment_count + ' segments'; await selectSession(selectedSessionId); }
+    const res = await apiCall('/api/sessions/' + sid + '/retranscribe', { method: 'POST' });
+    if (selectedSessionId !== sid) return;
+    if (res.ok) { btn.textContent = res.segment_count + ' segments'; await selectSession(sid); }
     else showError(res.error || 'Re-transcription failed');
   } catch (e) { showError('Error: ' + e.message); }
   finally { btn.disabled = false; btn.textContent = 'Re-transcribe'; }

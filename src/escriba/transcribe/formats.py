@@ -218,7 +218,8 @@ def export_to_srt(
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8") as f:
-            for index, segment in enumerate(segments, start=1):
+            index = 1
+            for segment in segments:
                 start_time = segment.get("start", 0.0)
                 end_time = segment.get("end", start_time)
                 text = segment.get("text", "").strip()
@@ -235,6 +236,7 @@ def export_to_srt(
                 f.write(f"{start_str} --> {end_str}\n")
                 f.write(f"{text}\n")
                 f.write("\n")
+                index += 1
 
         logger.info("Exported SRT transcript to: %s", output_path)
     except Exception as e:

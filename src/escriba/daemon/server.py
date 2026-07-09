@@ -37,9 +37,11 @@ class DaemonServer:
         self.running = False
         self.current_recording: Optional[threading.Thread] = None
         self.stop_recording_event = threading.Event()
+        self._recording_lock = threading.Lock()
 
         # Crear directorio para socket si no existe
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.socket_path.parent, 0o700)
 
     def start(self) -> bool:
         """Inicia el servidor daemon."""
@@ -55,6 +57,7 @@ class DaemonServer:
 
             self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.server_socket.bind(str(self.socket_path))
+            os.chmod(self.socket_path, 0o600)
             self.server_socket.listen(5)
             logger.info("Daemon socket listening on: %s", self.socket_path)
 
@@ -104,8 +107,15 @@ class DaemonServer:
     def _handle_client(self, client_socket: socket.socket):
         """Maneja un cliente conectado."""
         try:
-            # Leer comando
-            data = client_socket.recv(4096)
+            # Leer comando completo. Clients close/shutdown write after sending;
+            # a single recv(4096) truncates long but valid JSON commands.
+            chunks = []
+            while True:
+                chunk = client_socket.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            data = b"".join(chunks)
             if not data:
                 return
 
@@ -160,41 +170,50 @@ class DaemonServer:
                 "running": self.running,
                 "model_loaded": False,
                 "model_size": self.model_size,
-                "recording": self.current_recording is not None
-                and self.current_recording.is_alive(),
+                "recording": self._is_recording_active(),
             },
         }
 
+    def _is_recording_active(self) -> bool:
+        return self.current_recording is not None and self.current_recording.is_alive()
+
     def _cmd_start_recording(self, args: dict[str, Any]) -> dict[str, Any]:
         """Comando: start-recording"""
-        if self.current_recording and self.current_recording.is_alive():
-            return {"success": False, "error": "Recording already in progress"}
+        with self._recording_lock:
+            if self._is_recording_active():
+                return {"success": False, "error": "Recording already in progress"}
 
-        output_dir = Path(args.get("output_dir", "transcripts"))
-        combined = args.get("combined")
+            output_dir = Path(args.get("output_dir", "transcripts"))
+            combined = args.get("combined")
 
-        self.stop_recording_event.clear()
+            self.stop_recording_event.clear()
 
-        def recording_thread():
-            try:
-                combined_path = Path(combined) if combined else None
-                run_streaming_capture(output_dir, combined_path)
-            except Exception as e:
-                logger.error("Error in recording thread: %s", e, exc_info=True)
+            def recording_thread():
+                try:
+                    combined_path = Path(combined) if combined else None
+                    run_streaming_capture(output_dir, combined_path)
+                except Exception as e:
+                    logger.error("Error in recording thread: %s", e, exc_info=True)
 
-        self.current_recording = threading.Thread(target=recording_thread, daemon=True)
-        self.current_recording.start()
+            self.current_recording = threading.Thread(
+                target=recording_thread, daemon=True
+            )
+            self.current_recording.start()
 
         return {"success": True, "message": "Recording started"}
 
     def _cmd_stop_recording(self) -> dict[str, Any]:
         """Comando: stop-recording"""
-        if not self.current_recording or not self.current_recording.is_alive():
-            return {"success": False, "error": "No recording in progress"}
+        with self._recording_lock:
+            if not self._is_recording_active():
+                return {"success": False, "error": "No recording in progress"}
+            recording = self.current_recording
+            if recording is None:
+                return {"success": False, "error": "No recording in progress"}
+            self.stop_recording_event.set()
 
-        self.stop_recording_event.set()
-        # Esperar a que termine (con timeout)
-        self.current_recording.join(timeout=5.0)
+        # Esperar a que termine (con timeout) outside the lock so status can read.
+        recording.join(timeout=5.0)
 
         return {"success": True, "message": "Recording stopped"}
 
@@ -214,9 +233,12 @@ class DaemonServer:
         self.running = False
 
         # Detener grabación si está activa
-        if self.current_recording and self.current_recording.is_alive():
-            self.stop_recording_event.set()
-            self.current_recording.join(timeout=5.0)
+        with self._recording_lock:
+            recording = self.current_recording if self._is_recording_active() else None
+            if recording:
+                self.stop_recording_event.set()
+        if recording:
+            recording.join(timeout=5.0)
 
         # Cerrar socket
         if self.server_socket:

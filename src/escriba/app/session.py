@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 AUDIO_BUFFER_CAP_FACTOR = 2
 AUDIO_BUFFER_OVERFLOW_LOG_INTERVAL_S = 5.0
 
+# How long stop() waits for the audio-processing thread to finish before it
+# gives up. If the thread is still alive after this, the main thread must NOT
+# touch the transcriber or WAV writer concurrently (see stop()).
+PROCESS_JOIN_TIMEOUT_S = 10.0
+# How long stop() waits for an in-flight preliminary title generation before
+# refining. Two concurrent mlx-lm generations crash Metal, so if the thread is
+# still alive after this, the refine pass is skipped.
+TITLE_JOIN_TIMEOUT_S = 30.0
+
 
 class _SessionStartAborted(Exception):
     """Raised internally to funnel every start() failure through cleanup.
@@ -208,6 +217,22 @@ class TranscriptionSession:
             except Exception:
                 logger.warning("Failed to mark session errored during abort", exc_info=True)
 
+    @staticmethod
+    def _run_cleanup_step(name: str, step) -> bool:
+        """Run one finalization step, isolating its failure from the others.
+
+        stop() must complete every cleanup step (buffer flush, WAV close,
+        export, DB finalization) even if an earlier one raises, so a capture
+        teardown exception can never leave a session half-written. Returns True
+        on success, False if the step raised.
+        """
+        try:
+            step()
+            return True
+        except Exception:
+            logger.exception("Session stop step failed: %s", name)
+            return False
+
     def stop(self):
         if not self.is_active:
             return
@@ -215,41 +240,71 @@ class TranscriptionSession:
         self.is_active = False
         self._stop_event.set()
 
+        # Tear down capture sources first. Each runs independently so one
+        # failure cannot skip the rest of finalization.
         if self._mic_stream is not None:
-            self._close_mic_stream_safely()
-
+            self._run_cleanup_step("mic stream close", self._close_mic_stream_safely)
         if self.screen_capture:
-            self.screen_capture.stop()
+            self._run_cleanup_step("screen capture stop", self.screen_capture.stop)
 
+        # Join the audio-processing thread. If it does NOT finish in time it may
+        # still be reading the buffers / driving the transcriber / writing the
+        # WAV, so the main thread must not flush the buffer or close the WAV
+        # writer concurrently — that races on shared state and can corrupt the
+        # recording. We still finalize the DB row so the session isn't left
+        # ACTIVE forever.
+        process_thread_finished = True
         if self._process_thread:
-            self._process_thread.join(timeout=10)
+            self._process_thread.join(timeout=PROCESS_JOIN_TIMEOUT_S)
+            process_thread_finished = not self._process_thread.is_alive()
+            if not process_thread_finished:
+                logger.error(
+                    "Audio-processing thread still alive after %.0fs; skipping final "
+                    "flush and WAV close to avoid concurrent access",
+                    PROCESS_JOIN_TIMEOUT_S,
+                )
+                self.error = self.error or "Recording did not stop cleanly"
 
-        # Process any remaining audio
-        self._flush_buffer()
+        if process_thread_finished:
+            self._run_cleanup_step("final buffer flush", self._flush_buffer)
+            self._run_cleanup_step("audio file close", self._close_audio_file)
 
-        # Close audio file and store path
-        self._close_audio_file()
+        # Export transcript (reads segments under the transcriber lock).
+        self._run_cleanup_step("transcript export", self._export)
 
-        # Export transcript
-        self._export()
-
-        # Mark session completed in DB before the LLM title refinement —
+        # Mark session completed/errored in DB before the LLM title refinement —
         # otherwise the sidebar keeps showing an ACTIVE badge for the full
         # duration of the (unbounded) title-generation call.
+        if self.db and self.db_session_id:
+            status = "error" if self.error else "completed"
+            self._run_cleanup_step(
+                "db stop_session",
+                lambda: self.db.stop_session(self.db_session_id, status=status),
+            )
+            self._run_cleanup_step(
+                "knowledge store export", self._export_to_knowledge_store
+            )
+
+        # Wait for the preliminary title thread — running two mlx-lm
+        # generations concurrently crashes Metal. Only refine if it actually
+        # finished; a still-alive generation must not have a second one started
+        # on top of it.
         # Keep _refine_title synchronous: running it on a background thread
         # races with the screen-capture read thread's Metal cleanup and
         # crashes the process (observed: IOGPUMetalCommandBuffer assertion).
-        if self.db and self.db_session_id:
-            status = "error" if self.error else "completed"
-            self.db.stop_session(self.db_session_id, status=status)
-            self._export_to_knowledge_store()
-
-        # Wait for the preliminary title thread — running two mlx-lm
-        # generations concurrently crashes Metal.
+        title_thread_finished = True
         if self._title_thread and self._title_thread.is_alive():
-            self._title_thread.join(timeout=30)
+            self._title_thread.join(timeout=TITLE_JOIN_TIMEOUT_S)
+            title_thread_finished = not self._title_thread.is_alive()
 
-        self._refine_title()
+        if title_thread_finished:
+            self._run_cleanup_step("title refinement", self._refine_title)
+        else:
+            logger.warning(
+                "Preliminary title thread still alive after %.0fs; skipping refine "
+                "pass to avoid a concurrent mlx-lm generation",
+                TITLE_JOIN_TIMEOUT_S,
+            )
 
         logger.info("Session stopped: %s", self.session_id)
 
@@ -767,12 +822,17 @@ def _build_transcriber(config, *, realtime_output: bool) -> Any:
     }
 
     if config.streaming.backend == "mlx-whisper":
-        from escriba.transcribe.streaming_mlx import StreamingTranscriberMLX
+        try:
+            from escriba.transcribe.streaming_mlx import StreamingTranscriberMLX
 
-        return StreamingTranscriberMLX(
-            **shared_kwargs,
-            dictionary=config.dictionary,
-        )
+            return StreamingTranscriberMLX(
+                **shared_kwargs,
+                dictionary=config.dictionary,
+            )
+        except ImportError:
+            logger.warning(
+                "mlx-whisper backend unavailable; falling back to faster-whisper"
+            )
 
     from escriba.transcribe.streaming import StreamingTranscriber
 

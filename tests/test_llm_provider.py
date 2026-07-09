@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import builtins
 from unittest.mock import MagicMock, patch
 
 
@@ -211,7 +212,8 @@ class TestListAvailableModels:
     def test_ai_unavailable_no_providers(self):
         from escriba.summarize.llm_summary import list_available_models
 
-        with patch("builtins.__import__", side_effect=lambda name, *a, **kw: (_ for _ in ()).throw(ImportError()) if name == "mlx_lm" else __builtins__.__import__(name, *a, **kw)), \
+        real_import = builtins.__import__
+        with patch("builtins.__import__", side_effect=lambda name, *a, **kw: (_ for _ in ()).throw(ImportError()) if name == "mlx_lm" else real_import(name, *a, **kw)), \
              patch.dict(os.environ, {"GEMINI_API_KEY": "", "ANTHROPIC_API_KEY": ""}, clear=False):
             result = list_available_models()
 

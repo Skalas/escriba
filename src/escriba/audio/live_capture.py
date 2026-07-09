@@ -387,6 +387,35 @@ def _resample_int16(samples: np.ndarray, target_len: int) -> np.ndarray:
     return resampled.astype(np.int16)
 
 
+def _parse_live_wav_header(wav_header: bytes) -> tuple[int, int, int, int] | None:
+    """Validate the ffmpeg WAV header before deriving chunk sizes from it."""
+    if len(wav_header) < 44:
+        logger.error("Could not read complete WAV header")
+        return None
+    if wav_header[:4] != b"RIFF" or wav_header[8:12] != b"WAVE":
+        logger.error("Invalid WAV header from ffmpeg")
+        return None
+
+    n_channels = struct.unpack("<H", wav_header[22:24])[0]
+    file_sample_rate = struct.unpack("<I", wav_header[24:28])[0]
+    bits_per_sample = struct.unpack("<H", wav_header[34:36])[0]
+    bytes_per_sample = bits_per_sample // 8
+    if (
+        n_channels <= 0
+        or file_sample_rate <= 0
+        or bits_per_sample not in (8, 16, 32)
+        or bytes_per_sample <= 0
+    ):
+        logger.error(
+            "Invalid WAV stream parameters: channels=%s sample_rate=%s bits=%s",
+            n_channels,
+            file_sample_rate,
+            bits_per_sample,
+        )
+        return None
+    return n_channels, file_sample_rate, bits_per_sample, bytes_per_sample
+
+
 def mix_audio(
     system: np.ndarray, mic: np.ndarray, mic_boost: float = 1.2
 ) -> np.ndarray:
@@ -606,6 +635,7 @@ def run_streaming_capture(
         combined_audio_buffer = bytearray()
         system_audio_buffer = bytearray()
         mic_audio_buffer = bytearray()
+        audio_buffer_lock = threading.Lock()
 
         # Iniciar ScreenCaptureKit si está disponible
         if use_screen_capture:
@@ -613,13 +643,15 @@ def run_streaming_capture(
 
                 def system_audio_callback(pcm_data: bytes):
                     """Callback para audio del sistema desde ScreenCaptureKit"""
-                    system_audio_buffer.extend(pcm_data)
+                    with audio_buffer_lock:
+                        system_audio_buffer.extend(pcm_data)
+                        system_buffer_size = len(system_audio_buffer)
                     # Log solo ocasionalmente para no saturar los logs
                     if (
-                        len(system_audio_buffer) % 64000 == 0
+                        system_buffer_size % 64000 == 0
                     ):  # ~4 segundos de audio a 16kHz
                         logger.debug(
-                            f"System audio buffer: {len(system_audio_buffer)} bytes"
+                            f"System audio buffer: {system_buffer_size} bytes"
                         )
 
                 screen_capture = ScreenCaptureAudioCapture(
@@ -657,7 +689,8 @@ def run_streaming_capture(
 
             while not stop_event.is_set():
                 # Verificar cada 5 segundos si el proceso está vivo
-                time.sleep(5.0)
+                if stop_event.wait(5.0):
+                    break
 
                 if stop_event.is_set():
                     break
@@ -678,10 +711,15 @@ def run_streaming_capture(
                                 f"after {backoff_time:.1f}s..."
                             )
 
-                            time.sleep(backoff_time)
+                            if stop_event.wait(backoff_time):
+                                break
 
                             # Limpiar buffer de audio del sistema
-                            system_audio_buffer.clear()
+                            with audio_buffer_lock:
+                                system_audio_buffer.clear()
+
+                            if stop_event.is_set():
+                                break
 
                             # Intentar reiniciar
                             if screen_capture.restart():
@@ -798,18 +836,11 @@ def run_streaming_capture(
                 continue
             wav_header += chunk
 
-        if len(wav_header) < 44:
-            logger.error("Could not read complete WAV header")
+        parsed_header = _parse_live_wav_header(wav_header)
+        if parsed_header is None:
             return
 
-        # Parsear header para obtener información
-        # bytes 22-23: número de canales
-        # bytes 24-27: sample rate
-        # bytes 34-35: bits per sample
-        n_channels = struct.unpack("<H", wav_header[22:24])[0]
-        file_sample_rate = struct.unpack("<I", wav_header[24:28])[0]
-        bits_per_sample = struct.unpack("<H", wav_header[34:36])[0]
-        bytes_per_sample = bits_per_sample // 8
+        n_channels, file_sample_rate, bits_per_sample, bytes_per_sample = parsed_header
 
         logger.info(
             f"WAV format: {n_channels} channels, {file_sample_rate} Hz, {bits_per_sample} bits"
@@ -820,6 +851,9 @@ def run_streaming_capture(
         chunk_audio_bytes = int(
             file_sample_rate * n_channels * bytes_per_sample * chunk_duration
         )
+        if chunk_audio_bytes <= 0:
+            logger.error("Invalid chunk size calculated from WAV header")
+            return
 
         # El stream de sistema lo entrega el Swift CLI al `sample_rate`
         # configurado (int16, `channels` canales), que puede diferir del rate
@@ -906,7 +940,8 @@ def run_streaming_capture(
                 chunk = stdout.read(8192)
                 if chunk:
                     # El header WAV ya fue leído, estos son datos PCM puros
-                    mic_audio_buffer.extend(chunk)
+                    with audio_buffer_lock:
+                        mic_audio_buffer.extend(chunk)
 
                 # Combinar audio del sistema + micrófono si ScreenCaptureKit está activo
                 if screen_capture and screen_capture.is_capturing:
@@ -919,22 +954,28 @@ def run_streaming_capture(
                     mic_chunk_size = chunk_audio_bytes
                     system_chunk_size = system_chunk_bytes
 
-                    if (
-                        len(system_audio_buffer) >= system_chunk_size
-                        and len(mic_audio_buffer) >= mic_chunk_size
-                    ):
+                    with audio_buffer_lock:
+                        has_mixed_chunk = (
+                            len(system_audio_buffer) >= system_chunk_size
+                            and len(mic_audio_buffer) >= mic_chunk_size
+                        )
+                        if has_mixed_chunk:
+                            # Extraer un chunk de igual DURACIÓN de cada stream
+                            system_chunk = bytes(
+                                system_audio_buffer[:system_chunk_size]
+                            )
+                            mic_chunk = bytes(mic_audio_buffer[:mic_chunk_size])
+
+                            # Remover del buffer (cada uno por su propio tamaño)
+                            del system_audio_buffer[:system_chunk_size]
+                            del mic_audio_buffer[:mic_chunk_size]
+
+                    if has_mixed_chunk:
                         if not logged_system_audio_ok[0]:
                             logger.info(
                                 "System audio (Core Audio Taps) + mic: mixing and recording"
                             )
                             logged_system_audio_ok[0] = True
-                        # Extraer un chunk de igual DURACIÓN de cada stream
-                        system_chunk = bytes(system_audio_buffer[:system_chunk_size])
-                        mic_chunk = bytes(mic_audio_buffer[:mic_chunk_size])
-
-                        # Remover del buffer (cada uno por su propio tamaño)
-                        system_audio_buffer = system_audio_buffer[system_chunk_size:]
-                        mic_audio_buffer = mic_audio_buffer[mic_chunk_size:]
 
                         # Convertir a numpy arrays para mezclar
                         system_array = np.frombuffer(system_chunk, dtype=np.int16)

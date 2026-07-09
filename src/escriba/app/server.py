@@ -467,7 +467,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(self._search_segments(q))
             elif path == "/api/download-model/status":
                 downloading, result, total = self.app_state.get_download_status()
-                payload = {"ok": True, "downloading": downloading, "result": result}
+                payload: dict[str, Any] = {
+                    "ok": True,
+                    "downloading": downloading,
+                    "result": result,
+                }
                 if downloading:
                     from escriba.summarize.llm_summary import model_cache_size_bytes
 
@@ -776,7 +780,8 @@ class _Handler(BaseHTTPRequestHandler):
                 else:
                     start = int(parts[0])
                     end = int(parts[1]) if parts[1] else file_size - 1
-                start = max(0, min(start, file_size - 1))
+                if start < 0 or start >= file_size:
+                    raise ValueError("range start outside file")
                 end = max(start, min(end, file_size - 1))
             except ValueError as exc:
                 raise ApiError("Invalid Range header", 416) from exc
@@ -867,6 +872,9 @@ class _Handler(BaseHTTPRequestHandler):
         rejected with 413 regardless of what the headers claim.
         """
         raw_length = self.headers.get("Content-Length")
+        transfer_encoding = self.headers.get("Transfer-Encoding", "").lower()
+        if "chunked" in transfer_encoding:
+            raise ApiError("Chunked request bodies are not supported", 411)
         if raw_length is None:
             # Stream-and-count: read one byte over the cap so we can detect it.
             data = self.rfile.read(MAX_BODY_BYTES + 1)
@@ -1108,6 +1116,9 @@ class _Handler(BaseHTTPRequestHandler):
 
         try:
             merged_id, sources = db.merge_sessions(session_ids, name)
+        except ValueError as e:
+            logger.warning("Merge validation failed: %s", e)
+            return {"ok": False, "error": str(e)}, 400
         except Exception as e:
             logger.error("Merge DB step failed: %s", e, exc_info=True)
             return {"ok": False, "error": "Merge failed"}, 503
@@ -1302,6 +1313,10 @@ class _Handler(BaseHTTPRequestHandler):
         folder_id = body.get("folder_id")  # None means "unfiled"
         if not session_ids:
             return {"ok": False, "error": "No sessions specified"}, 400
+        if folder_id is not None:
+            folders = db.list_folders()
+            if not any(folder["id"] == folder_id for folder in folders):
+                return {"ok": False, "error": "Folder not found"}, 400
         db.move_sessions_to_folder(session_ids, folder_id)
         return {"ok": True}, 200
 
@@ -1502,9 +1517,11 @@ class _Handler(BaseHTTPRequestHandler):
         from escriba.config import resolve_config_path, update_config_toml
 
         try:
-            update_config_toml(
-                {"streaming": {"summary_model": model_id}}, resolve_config_path()
-            )
+            config_path = resolve_config_path()
+            if config_path is None:
+                logger.warning("No config path available; summary_model not persisted")
+                return
+            update_config_toml({"streaming": {"summary_model": model_id}}, config_path)
             self._reload_live_config()
         except Exception:
             logger.warning("Could not persist summary_model=%s", model_id, exc_info=True)

@@ -804,9 +804,13 @@ def _generate_summary_local(
         logger.error("No local model available for this hardware")
         return None
 
-    response_text = _call_llm_local(
-        _build_summary_prompt(transcript), model_id, max_tokens=4096
-    )
+    try:
+        response_text = _call_llm_local(
+            _build_summary_prompt(transcript), model_id, max_tokens=4096
+        )
+    except TimeoutError as e:
+        logger.error("Local summary timed out: %s", e)
+        return None
     if not response_text:
         return None
 

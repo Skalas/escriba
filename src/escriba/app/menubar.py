@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 _DASHBOARD_APP_DIR = Path.home() / "Library" / "Application Support" / "Escriba"
 _DASHBOARD_APP = _DASHBOARD_APP_DIR / "Escriba.app"
 
+# Upper bound on how long quit waits for an in-flight session stop to finish
+# before it stops waiting. Covers stop()'s own internal joins (process-thread
+# join + title-thread join + mic close) with headroom, so a normal stop always
+# completes before the DB connection is closed.
+QUIT_STOP_TIMEOUT_S = 45.0
+
 
 def _ensure_dashboard_app(icon_path: Path | None = None) -> Path:
     """Create (or update) a tiny .app bundle used to open the dashboard.
@@ -291,13 +297,13 @@ class TranscriberMenuBar(rumps.App):
         """Stop the active recording session. Returns True if stop was initiated."""
         import threading
 
-        self._recording_item.title = "Start Recording"
-        self.title = "\u3030"
-        self._auto_started_session_id = None
-
         _data, status, session = self.app_state.begin_stop_recording()
         if status != 200 or session is None:
             return False
+
+        self._recording_item.title = "Start Recording"
+        self.title = "\u3030"
+        self._auto_started_session_id = None
 
         def _stop_async():
             try:
@@ -388,15 +394,26 @@ class TranscriberMenuBar(rumps.App):
         with self.app_state._lock:
             session = self.app_state.session
             active = session is not None and session.is_active
+        stop_completed = True
         if active and session is not None:
             stop_thread = threading.Thread(target=session.stop, daemon=True)
             stop_thread.start()
-            stop_thread.join(timeout=5)
-            if stop_thread.is_alive():
-                logger.warning("Session stop still running at quit — proceeding anyway")
+            # Wait long enough to cover stop()'s own internal joins so we never
+            # close the DB out from under a stop that is still finalizing the
+            # session row (which would leave it ACTIVE / half-written).
+            stop_thread.join(timeout=QUIT_STOP_TIMEOUT_S)
+            stop_completed = not stop_thread.is_alive()
+            if not stop_completed:
+                logger.warning(
+                    "Session stop still running after %.0fs at quit — leaving the DB "
+                    "connection open so the in-flight stop can finish its write",
+                    QUIT_STOP_TIMEOUT_S,
+                )
         if self.server:
             self.server.shutdown()
-        self.db.close()
+        # Only close the DB once we know no stop is still writing to it.
+        if stop_completed:
+            self.db.close()
         rumps.quit_application()
 
 
