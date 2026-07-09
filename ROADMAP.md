@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-07-08 · Current version: `1.1.0` (merged reliability, correctness, and automation hardening; closes #64, #97, #99, #110–#123) · next up: real-meeting soak + clean-install verification, then decide whether to keep expanding calendar-driven recording._
+_Last updated: 2026-07-08 · Current version: `1.2.0` (merged reliability, correctness, and automation hardening; closes #97, #99, #110–#123) · next up: real-meeting soak + clean-install verification, then decide whether to keep expanding calendar-driven recording._
 
 ---
 
@@ -33,7 +33,7 @@ The app is feature-rich. Since `v0.2.0` we shipped (unreleased):
 
 **The gap (closed in `v0.4.0`):** core app modules had near-zero test coverage, shared state was largely unsynchronized, the HTTP server handled one request at a time, and LLM calls had no timeout/retry. Addressed under **[Epic #12: Backend hardening](https://github.com/Skalas/escriba/issues/12)** — the core loop is now concurrency-safe, the server is threaded with input validation, LLM calls time out/retry, and `server.py`/`database.py`/`session.py` have meaningful coverage (84 tests).
 
-As of **`1.1.0`** (2026-07-08) the stop/finalization path is exception-safe, live capture buffer handling and faster-whisper resampling are hardened, dashboard note writes are guarded against stale async responses, daemon IPC is single-writer with owner-only socket permissions, and the previously silent automation paths now either work or fail honestly. The remaining release-quality proof is human-run: a real-meeting soak and a clean install-from-scratch.
+As of **`1.2.0`** (2026-07-08) the stop/finalization path is exception-safe, live capture buffer handling and faster-whisper resampling are hardened, dashboard note writes are guarded against stale async responses, daemon IPC is single-writer with owner-only socket permissions, and the previously silent automation paths now either work or fail honestly. The remaining release-quality proof is human-run: a real-meeting soak and a clean install-from-scratch.
 
 ---
 
@@ -234,7 +234,7 @@ A post-1.0.0 full-repo review filed 6 P0 + 6 P1 correctness/reliability/security
 
 ---
 
-### `v1.1.0` — Reliability, correctness, and automation hardening  ·  _shipped 2026-07-08 (#64/#97/#99/#110–#123)_
+### `v1.2.0` — Reliability, correctness, and automation hardening  ·  _shipped 2026-07-08 (#97/#99/#110–#123)_
 
 Merged the fresh full-repo defect slate into one HOLD sprint so the real-meeting loop is safer before the manual soak.
 
