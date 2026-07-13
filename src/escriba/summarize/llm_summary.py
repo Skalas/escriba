@@ -21,7 +21,11 @@ LLM_TIMEOUT_SECONDS = 30
 LLM_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY_SECONDS = 1.0
 LOCAL_MODEL_MAX_ATTEMPTS = 2
-_LOCAL_INFERENCE_TIMEOUT = 300  # seconds; covers model loading + generation
+_LOCAL_MODEL_LOAD_TIMEOUT = 600  # seconds; cold weight load into RAM (generous)
+_LOCAL_GENERATION_TIMEOUT = 300  # seconds; token generation only
+# Parent ProcessPool wait exceeds load+gen so IPC/scheduling skew does not kill
+# a worker that met both internal budgets.
+_LOCAL_INFERENCE_PARENT_GRACE_SECONDS = 60
 
 T = TypeVar("T")
 
@@ -278,19 +282,52 @@ _model_cache = _LocalModelCache()
 # T1: Subprocess-based local inference
 # ---------------------------------------------------------------------------
 
-def _subprocess_run_generation(
+def _subprocess_run_inference(
     prompt: str,
     model_id: str,
     max_tokens: int,
     enable_thinking: bool,
 ) -> str | None:
-    """Worker entry point — runs inside the persistent subprocess.
+    """Worker entry point — atomically load then generate with separate deadlines.
 
-    The subprocess has its own ``_model_cache`` singleton, so the model
-    stays loaded between successive calls to the same worker process.
     Must be a top-level function so it is picklable by ProcessPoolExecutor.
     """
-    return _run_local_generation(prompt, model_id, max_tokens, enable_thinking)
+    def _load_model() -> bool:
+        model, tokenizer = _model_cache.get(model_id)
+        return model is not None and tokenizer is not None
+
+    load_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        load_future = load_pool.submit(_load_model)
+        try:
+            loaded = load_future.result(timeout=_LOCAL_MODEL_LOAD_TIMEOUT)
+        except concurrent.futures.TimeoutError as exc:
+            raise TimeoutError(
+                f"Local model load timed out after {_LOCAL_MODEL_LOAD_TIMEOUT}s"
+            ) from exc
+    finally:
+        load_pool.shutdown(wait=False, cancel_futures=True)
+
+    if not loaded:
+        return None
+
+    gen_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        gen_future = gen_pool.submit(
+            _run_local_generation_only,
+            prompt,
+            model_id,
+            max_tokens,
+            enable_thinking,
+        )
+        try:
+            return gen_future.result(timeout=_LOCAL_GENERATION_TIMEOUT)
+        except concurrent.futures.TimeoutError as exc:
+            raise TimeoutError(
+                f"Local inference timed out after {_LOCAL_GENERATION_TIMEOUT}s"
+            ) from exc
+    finally:
+        gen_pool.shutdown(wait=False, cancel_futures=True)
 
 
 class _LocalInferenceProcess:
@@ -304,7 +341,7 @@ class _LocalInferenceProcess:
 
     def __init__(self) -> None:
         self._executor: concurrent.futures.ProcessPoolExecutor | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def _get_executor(self) -> concurrent.futures.ProcessPoolExecutor:
         with self._lock:
@@ -361,41 +398,47 @@ class _LocalInferenceProcess:
         max_tokens: int,
         enable_thinking: bool,
     ) -> str | None:
+        job_timeout = _LOCAL_MODEL_LOAD_TIMEOUT + _LOCAL_GENERATION_TIMEOUT
+        parent_timeout = job_timeout + _LOCAL_INFERENCE_PARENT_GRACE_SECONDS
         for attempt in range(LOCAL_MODEL_MAX_ATTEMPTS):
-            executor = self._get_executor()
-            future = executor.submit(
-                _subprocess_run_generation,
-                prompt,
-                model_id,
-                max_tokens,
-                enable_thinking,
-            )
-            try:
-                return future.result(timeout=_LOCAL_INFERENCE_TIMEOUT)
-            except concurrent.futures.TimeoutError:
-                # The worker is still running with the model loaded; kill it so
-                # it cannot linger holding GPU memory (#100).
-                self._reset_executor(kill_workers=True)
-                raise TimeoutError(
-                    f"Local inference timed out after {_LOCAL_INFERENCE_TIMEOUT}s"
+            with self._lock:
+                executor = self._get_executor()
+                future = executor.submit(
+                    _subprocess_run_inference,
+                    prompt,
+                    model_id,
+                    max_tokens,
+                    enable_thinking,
                 )
-            except ImportError:
-                logger.warning("mlx-lm not installed — local models unavailable")
-                return None
-            except (MemoryError, RuntimeError) as exc:
-                logger.error(
-                    "Local inference subprocess failed (attempt %d/%d): %s",
-                    attempt + 1,
-                    LOCAL_MODEL_MAX_ATTEMPTS,
-                    exc,
-                )
-                self._reset_executor()
-                if attempt >= LOCAL_MODEL_MAX_ATTEMPTS - 1:
+                try:
+                    return future.result(timeout=parent_timeout)
+                except TimeoutError as exc:
+                    self._reset_executor(kill_workers=True)
+                    msg = str(exc)
+                    if msg.startswith(
+                        ("Local model load timed out", "Local inference timed out after")
+                    ):
+                        raise
+                    raise TimeoutError(
+                        f"Local inference timed out after {job_timeout}s"
+                    ) from exc
+                except ImportError:
+                    logger.warning("mlx-lm not installed — local models unavailable")
                     return None
-            except Exception as exc:
-                logger.error("Local inference subprocess error: %s", exc)
-                self._reset_executor()
-                return None
+                except (MemoryError, RuntimeError) as exc:
+                    logger.error(
+                        "Local inference subprocess failed (attempt %d/%d): %s",
+                        attempt + 1,
+                        LOCAL_MODEL_MAX_ATTEMPTS,
+                        exc,
+                    )
+                    self._reset_executor()
+                    if attempt >= LOCAL_MODEL_MAX_ATTEMPTS - 1:
+                        return None
+                except Exception as exc:
+                    logger.error("Local inference subprocess error: %s", exc)
+                    self._reset_executor()
+                    return None
         return None
 
 
@@ -859,16 +902,20 @@ def _extract_response(text: str) -> str:
     return cleaned
 
 
-def _run_local_generation(
+def _run_local_generation_only(
     prompt: str,
     model_id: str,
     max_tokens: int,
     enable_thinking: bool,
+    *,
+    model: Any | None = None,
+    tokenizer: Any | None = None,
 ) -> str | None:
-    """Run one local MLX generation pass (caller must hold the semaphore)."""
-    model, tokenizer = _model_cache.get(model_id)
+    """Run one local MLX generation pass (model must already be in cache)."""
     if model is None or tokenizer is None:
-        raise RuntimeError(f"Failed to load local model: {model_id}")
+        model, tokenizer = _model_cache.get(model_id)
+        if model is None or tokenizer is None:
+            raise RuntimeError(f"Failed to load local model: {model_id}")
 
     from mlx_lm import generate
 
@@ -891,6 +938,26 @@ def _run_local_generation(
     if not result:
         return None
     return _extract_response(result)
+
+
+def _run_local_generation(
+    prompt: str,
+    model_id: str,
+    max_tokens: int,
+    enable_thinking: bool,
+) -> str | None:
+    """Run one local MLX generation pass (loads model if needed)."""
+    model, tokenizer = _model_cache.get(model_id)
+    if model is None or tokenizer is None:
+        raise RuntimeError(f"Failed to load local model: {model_id}")
+    return _run_local_generation_only(
+        prompt,
+        model_id,
+        max_tokens,
+        enable_thinking,
+        model=model,
+        tokenizer=tokenizer,
+    )
 
 
 def _call_llm_local(

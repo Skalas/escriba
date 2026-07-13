@@ -71,10 +71,11 @@ def test_subprocess_failure_returns_none_not_exception() -> None:
         result = proc.run("prompt", "model", 100, False)
 
     assert result is None
+    assert mock_executor.submit.call_count == llm_summary.LOCAL_MODEL_MAX_ATTEMPTS
 
 
 def test_subprocess_timeout_resets_executor_and_raises() -> None:
-    """A TimeoutError kills the stuck subprocess (resets executor) and propagates."""
+    """A generation TimeoutError kills the stuck subprocess (resets executor) and propagates."""
     import concurrent.futures
 
     proc = _LocalInferenceProcess()
