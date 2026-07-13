@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-07-08 · Current version: `1.2.0` (merged reliability, correctness, and automation hardening; closes #97, #99, #110–#123) · next up: real-meeting soak + clean-install verification, then decide whether to keep expanding calendar-driven recording._
+_Last updated: 2026-07-13 · Current version: `1.2.0` (working tree: session-scoped notes + local-LLM timeout split + capture decomposition; closes #125/#108/#103 via #126–#135) · next up: real-meeting soak + clean-install verification, then calendar-driven recording product decision (#64)._
 
 ---
 
@@ -33,7 +33,9 @@ The app is feature-rich. Since `v0.2.0` we shipped (unreleased):
 
 **The gap (closed in `v0.4.0`):** core app modules had near-zero test coverage, shared state was largely unsynchronized, the HTTP server handled one request at a time, and LLM calls had no timeout/retry. Addressed under **[Epic #12: Backend hardening](https://github.com/Skalas/escriba/issues/12)** — the core loop is now concurrency-safe, the server is threaded with input validation, LLM calls time out/retry, and `server.py`/`database.py`/`session.py` have meaningful coverage (84 tests).
 
-As of **`1.2.0`** (2026-07-08) the stop/finalization path is exception-safe, live capture buffer handling and faster-whisper resampling are hardened, dashboard note writes are guarded against stale async responses, daemon IPC is single-writer with owner-only socket permissions, and the previously silent automation paths now either work or fail honestly. The remaining release-quality proof is human-run: a real-meeting soak and a clean install-from-scratch.
+As of **`1.2.0`** (2026-07-08) the stop/finalization path is exception-safe, live capture buffer handling and faster-whisper resampling are hardened, dashboard note writes are guarded against stale async responses, daemon IPC is single-writer with owner-only socket permissions, and the previously silent automation paths now either work or fail honestly.
+
+As of the **`1.3.0` sprint** (2026-07-13, unreleased until tagged) live notepad/notes-output are session-scoped across every start route and view transition (#125 / T1–T4); local inference separates model-load vs generation deadlines atomically (#108 / T5–T7); and `run_streaming_capture` is decomposed into `CaptureSupervisor` + `ChunkPump` with unit coverage (#103 / T8–T10). The remaining release-quality proof is still human-run: a real-meeting soak and a clean install-from-scratch.
 
 ---
 
@@ -249,6 +251,24 @@ Merged the fresh full-repo defect slate into one HOLD sprint so the real-meeting
 **Deferred (with triggers — read these at next discover):**
 - **Calendar auto-start remains intentionally unavailable.** Calendar event detection now parses upcoming events, but automatic recording from calendar events is still blocked with a clear CLI error. _Trigger:_ product decision to support calendar-driven recording beyond mic-activation auto-record.
 - **Swift unit-test target remains absent.** Same trigger as v1.0.1: any further Swift `PCMConverter`/`CoreAudioTap` change or another Swift bug should justify moving the converter into a testable library target.
+
+---
+
+### `v1.3.0` — Session-scoped notes + local-LLM timeouts + capture decomposition  ·  _unreleased (#126–#135; parents #125/#108/#103)_
+
+HOLD sprint (REDUCE on the capture spine). No product-surface expansion.
+
+- [x] **Session-scoped live notes (#125 / T1–T4).** Notepad + notes-output reconcile on every displayed `session_id` change (poll, showLiveView, all start routes); autosave posts `session_id` and the server rejects mismatches; Enhance/generate refuse cross-session writes; debounced-save and slow-fetch races closed.
+- [x] **Local inference load vs generation timeout (#108 / T5–T7).** Atomic `_subprocess_run_inference` worker job with separate load/generation deadlines, parent grace for IPC skew, RLock to avoid timeout-reset deadlock.
+- [x] **Decompose `run_streaming_capture` (#103 / T8–T10).** `CaptureSupervisor` + `ChunkPump` extracted; mic-only pop retains audio when partial system data is buffered; unit tests on the new seams; behavior-preserving.
+
+**Done when:** T1–T10 green; `uv run ruff check .` + `uv run pytest` green (340 tests); smoke probes `/api/status`, `/api/version`, `/api/sessions`. ✅ code half. Human soak + clean-install remain the 1.0.x gate.
+
+**Deferred (with triggers — read these at next discover):**
+- **Calendar auto-start / Up-next spike (#64).** Still intentionally unavailable beyond mic-activation auto-record. _Trigger:_ product decision after soak.
+- **Swift unit-test target.** Unchanged. _Trigger:_ further Swift `PCMConverter`/`CoreAudioTap` change or another Swift bug.
+- **Further split `CaptureSupervisor` stderr-drainer.** Review declined this sprint (REDUCE scope). _Trigger:_ adding another process-lifecycle concern to `CaptureSupervisor`, or a bug that needs isolated stderr-drain tests.
+- **Server-side atomic `append-notes`.** Concurrent background Enhance still mitigated by the in-flight button guard. _Trigger:_ users report lost/overwritten notes from rapid re-generation, or multi-session concurrent generate.
 
 ---
 
