@@ -27,11 +27,23 @@ from escriba.transcribe.formats import (
     build_session_export_markdown,
     build_session_export_txt,
 )
+from escriba.app.model_download import (
+    DownloadAlreadyInProgress,
+    DownloadStartFailed,
+    ModelDownloadService,
+    NoDownloadInProgress,
+    USER_DOWNLOAD_FAILED,
+)
 from escriba.app.observability import (
     get_correlation_id,
     latency_store,
     new_correlation_id,
     set_correlation_id,
+)
+from escriba.app.session_titles import (
+    TitleRegenerationResult,
+    regenerate_session_title,
+    title_result_to_dict,
 )
 
 if TYPE_CHECKING:
@@ -94,18 +106,13 @@ class AppState:
         reload_config: Callable[[], AppConfig] | None = None,
     ) -> None:
         self._lock = threading.RLock()
-        self._download_lock = threading.Lock()
         self._stop_in_progress = False
         self._start_in_progress = False
         self.config = config
         self.db = db
         self.session: TranscriptionSession | None = None
         self.reload_config = reload_config
-        self._downloading_model: str | None = None
-        self._download_result: dict[str, Any] | None = None
-        self._download_total_bytes: int = 0
-        self._download_proc: Any = None
-        self._download_cancelled: bool = False
+        self.model_download = ModelDownloadService()
 
     def get_active_session(self) -> TranscriptionSession | None:
         """Return the current session reference under the state lock."""
@@ -167,102 +174,12 @@ class AppState:
         with self._lock:
             self._stop_in_progress = False
 
-    def get_download_status(self) -> tuple[str | None, dict[str, Any] | None, int]:
-        """Return current download state, finished result, and expected size.
-
-        The result is NOT consumed on read — it persists until the next download
-        starts, so concurrent pollers (e.g. two tabs, or resume-on-open racing the
-        active poller) all observe the completion instead of one eating it.
-        """
-        with self._download_lock:
-            return (
-                self._downloading_model,
-                self._download_result,
-                self._download_total_bytes,
-            )
-
-    def try_begin_model_download(
-        self, model_id: str, total_bytes: int = 0
-    ) -> tuple[dict[str, Any], int]:
-        """Claim a model download; only one may run at a time."""
-        with self._download_lock:
-            if self._downloading_model:
-                return {
-                    "ok": False,
-                    "error": "A download is already in progress",
-                }, 409
-            self._downloading_model = model_id
-            self._download_result = None
-            self._download_total_bytes = total_bytes
-            self._download_cancelled = False
-            self._download_proc = None
-        return {"ok": True}, 200
-
-    def set_download_total_bytes(self, total_bytes: int) -> None:
-        """Record expected size after the claim (kept off the 409 fast-path)."""
-        with self._download_lock:
-            if self._downloading_model:
-                self._download_total_bytes = total_bytes
-
-    def set_download_process(self, proc: Any) -> None:
-        """Record the running download subprocess so it can be cancelled."""
-        with self._download_lock:
-            self._download_proc = proc
-
-    def cancel_model_download(self) -> tuple[dict[str, Any], int]:
-        """Terminate the in-flight download subprocess (partial files resume later)."""
-        with self._download_lock:
-            proc = self._download_proc
-            if not self._downloading_model or proc is None:
-                return {"ok": False, "error": "No download in progress"}, 409
-            self._download_cancelled = True
-        try:
-            proc.terminate()
-        except Exception:
-            logger.warning("Failed to terminate download process", exc_info=True)
-        return {"ok": True, "cancelled": True}, 200
-
-    def was_download_cancelled(self) -> bool:
-        with self._download_lock:
-            return self._download_cancelled
-
-    def finish_model_download(self, result: dict[str, Any]) -> None:
-        """Record the outcome of a background model download."""
-        with self._download_lock:
-            self._download_result = result
-            self._downloading_model = None
-            self._download_total_bytes = 0
-            self._download_proc = None
-
 if getattr(sys, "frozen", False):
     STATIC_DIR = Path(sys.executable).parent.parent / "Resources" / "static"
 else:
     STATIC_DIR = Path(__file__).parent / "static"
 
 PORT = 19876
-
-
-def _run_model_download(model_id: str) -> None:
-    """Subprocess entry point for a cancellable model download.
-
-    Runs at module level so it is importable by ``multiprocessing`` (spawn).
-    A clean return is exit code 0; an exception exits non-zero; a cancel is a
-    SIGTERM from the parent — the monitor thread interprets the exit code.
-    """
-    import traceback
-
-    from dotenv import load_dotenv
-
-    from escriba.summarize.llm_summary import download_model_snapshot
-
-    load_dotenv()
-    try:
-        download_model_snapshot(model_id)
-    except Exception:
-        # The parent only sees the exit code; print the real cause (401 gated
-        # repo / bad token, disk full, network) to stderr → app.log for triage.
-        traceback.print_exc()
-        sys.exit(1)
 
 
 def _concat_wav(
@@ -466,7 +383,7 @@ class _Handler(BaseHTTPRequestHandler):
                 q = params.get("q", [""])[0]
                 self._respond(self._search_segments(q))
             elif path == "/api/download-model/status":
-                downloading, result, total = self.app_state.get_download_status()
+                downloading, result, total = self.app_state.model_download.get_status()
                 payload: dict[str, Any] = {
                     "ok": True,
                     "downloading": downloading,
@@ -574,7 +491,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/sessions/move": lambda: self._move_sessions(self._parse_json_body()),
             "/api/folders": lambda: self._create_folder(self._parse_json_body()),
             "/api/download-model": lambda: self._download_model(self._parse_json_body()),
-            "/api/download-model/cancel": lambda: self.app_state.cancel_model_download(),
+            "/api/download-model/cancel": lambda: self._cancel_model_download(),
         }
         if path in _exact:
             return _exact[path]()
@@ -1259,56 +1176,31 @@ class _Handler(BaseHTTPRequestHandler):
                     "Could not finalize first-half WAV", exc_info=True,
                 )
 
-        # Regenerate titles for both halves — splits usually separate two
-        # unrelated meetings, so "(part 1)"/"(part 2)" is rarely right.
-        # Synchronous on purpose: the mlx-lm cache lock protects us from
-        # gemma-gemma races, and keeping this inline avoids the
-        # whisper-race that a new recording could trigger.
-        self._regenerate_title(db, session_id)
-        self._regenerate_title(db, new_id)
+        first_title = self._regenerate_title(db, session_id)
+        second_title = self._regenerate_title(db, new_id)
 
         return {
             "ok": True,
             "first_session_id": session_id,
             "second_session_id": new_id,
             "split_at_seconds": split_time,
+            "titles": {
+                "first": title_result_to_dict(first_title),
+                "second": title_result_to_dict(second_title),
+            },
         }, 200
 
-    def _regenerate_title(self, db, session_id: str) -> None:
-        """Run `generate_session_title` against a session's transcript.
-
-        Silent on failure — the caller doesn't block on the title and the
-        session always has a valid fallback name ("(part 1)"/"(part 2)").
-        """
-        config: AppConfig | None
+    def _regenerate_title(self, db, session_id: str) -> TitleRegenerationResult:
+        """Run auto-title generation for a session after split or merge."""
         with self.app_state._lock:
             config = self.app_state.config
-        if not config or not getattr(config.auto_name, "enabled", True):
-            return
-
-        segments = db.get_segments(session_id)
-        if not segments:
-            return
-
-        words = " ".join((s.get("text") or "") for s in segments[:40]).split()
-        max_words = getattr(config.auto_name, "max_snippet_words", 500)
-        snippet = " ".join(words[:max_words])
-        if not snippet.strip():
-            return
-
-        try:
-            from escriba.summarize.llm_summary import generate_session_title
-
-            title = generate_session_title(
-                snippet,
-                app_name=None,
-                model=config.streaming.summary_model,
+        if not config:
+            return TitleRegenerationResult(
+                session_id,
+                ok=False,
+                reason="config_unavailable",
             )
-            if title:
-                db.rename_session(session_id, title)
-                logger.info("Post-split title for %s: %s", session_id, title)
-        except Exception:
-            logger.debug("Post-split title generation failed", exc_info=True)
+        return regenerate_session_title(db, session_id, config)
 
     def _move_sessions(self, body: dict) -> tuple[dict, int]:
         db = self._require_db()
@@ -1432,69 +1324,35 @@ class _Handler(BaseHTTPRequestHandler):
     def _begin_model_download(
         self, model_id: str, *, commit: bool = False
     ) -> tuple[dict, int]:
-        """Start a cancellable background snapshot download for a local model id.
-
-        The download runs in a subprocess (so Cancel can actually terminate it —
-        threads can't be killed) and a monitor thread records the outcome. When
-        ``commit`` is set, the model is saved as ``streaming.summary_model`` only
-        *after* it fully downloads, so a cancelled/failed download never leaves the
-        config pointing at an uncached model.
-        """
-        import multiprocessing as mp
-
-        from escriba.summarize.llm_summary import (
-            hf_repo_total_bytes,
-            invalidate_models_cache,
-            is_model_cached,
-        )
-
-        # Claim the slot before any network work, so an already-running download
-        # short-circuits to 409 without a wasted HfApi round-trip.
-        claim, status = self.app_state.try_begin_model_download(model_id)
-        if status != 200:
-            return claim, status
-
-        total_bytes = hf_repo_total_bytes(model_id)  # for the progress bar only
-        self.app_state.set_download_total_bytes(total_bytes)
-
-        state = self.app_state
-        proc = mp.get_context("spawn").Process(
-            target=_run_model_download, args=(model_id,), daemon=True
-        )
-        logger.info("Downloading model: %s", model_id)
-        proc.start()
-        state.set_download_process(proc)
-
-        def _monitor() -> None:
-            proc.join()
-            # A process that exited cleanly with a complete cache succeeded — even
-            # if Cancel was clicked in the race window after it finished, so check
-            # success before cancellation. A 0 exit with an incomplete cache means
-            # the fetch reported done but files are missing → treat as failure.
-            if proc.exitcode == 0 and is_model_cached(model_id):
-                logger.info("Model download complete: %s", model_id)
-                if commit:
-                    self._persist_summary_model(model_id)
-                state.finish_model_download({"ok": True, "model": model_id})
-            elif state.was_download_cancelled():
-                logger.info("Model download cancelled: %s", model_id)
-                state.finish_model_download(
-                    {"ok": False, "cancelled": True, "error": "Download cancelled"}
-                )
-            else:
-                logger.error("Model download failed (exit %s): %s", proc.exitcode, model_id)
-                state.finish_model_download(
-                    {"ok": False, "error": "Model download failed; check logs"}
-                )
-            invalidate_models_cache()  # refresh cached/size status in /api/models
-
-        threading.Thread(target=_monitor, daemon=True).start()
+        """Start a cancellable background snapshot download for a local model id."""
+        persist = self._persist_summary_model if commit else None
+        try:
+            started = self.app_state.model_download.start_background_download(
+                model_id,
+                commit=commit,
+                persist_model=persist,
+            )
+        except DownloadAlreadyInProgress:
+            return {
+                "ok": False,
+                "error": "A download is already in progress",
+            }, 409
+        except DownloadStartFailed:
+            return {"ok": False, "error": USER_DOWNLOAD_FAILED}, 503
         return {
             "ok": True,
-            "message": f"Downloading {model_id}...",
-            "model": model_id,
-            "total_bytes": total_bytes,
+            "message": started.message,
+            "model": started.model_id,
+            "total_bytes": started.total_bytes,
         }, 200
+
+    def _cancel_model_download(self) -> tuple[dict, int]:
+        """Cancel the in-flight model download."""
+        try:
+            self.app_state.model_download.cancel()
+        except NoDownloadInProgress:
+            return {"ok": False, "error": "No download in progress"}, 409
+        return {"ok": True, "cancelled": True}, 200
 
     def _download_model(self, body: dict) -> tuple[dict, int]:
         """Download a local LLM model in the background and make it the active model.

@@ -12,6 +12,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from escriba.app.session_names import strip_part_suffix
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_DIR = Path.home() / "Library" / "Application Support" / "Escriba"
@@ -635,9 +637,10 @@ class Database:
 
             new_id = str(uuid.uuid4())
             orig_name = session.get("name") or "Session"
+            base_name = strip_part_suffix(orig_name)
+            part1_name = f"{base_name} (part 1)"
+            part2_name = f"{base_name} (part 2)"
             orig_audio_path = session.get("audio_path")
-            part1_name = f"{orig_name} (part 1)"
-            part2_name = f"{orig_name} (part 2)"
 
             # Derive timestamps for the second half.
             started_at_iso = session.get("started_at")
