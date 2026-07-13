@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-13
+
+Post-split auto-rename, model-download service extraction, and release metadata for the session-scoped notes + local-LLM timeout + capture decomposition sprint. Closes #137, #109, and ledger T1–T12 (tag T13 deferred to ship).
+
+### Added
+- **Post-split auto-rename.** Splitting a session now regenerates titles for both halves when auto-name is enabled; failures log at warning level and return structured status in the split API response (dashboard shows a non-blocking banner).
+- **`ModelDownloadService`.** Download claim/cancel/progress/completion moved out of `server.py`; HTTP handlers and `escriba download-model` share the same application service.
+
 ### Fixed
 - **Live notes are session-scoped.** The live notepad and notes-output reconcile on every displayed session change (including auto-record / menubar / poll-detected starts). Autosave sends `session_id` and the server rejects mismatches; Enhance/generate and debounced saves refuse cross-session writes. Closes #125 via #126–#129.
 - **Local inference timeouts no longer conflate load and generate.** Model load and token generation use separate deadlines inside an atomic worker job, with a parent-side grace for IPC/scheduling skew. Closes #108 via #130–#132.
@@ -15,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 - **`run_streaming_capture` decomposed** into `CaptureSupervisor` + `ChunkPump` with unit tests (`tests/test_capture_decomposition.py`). Closes #103 via #133–#135.
-- Test suite at 340. Verified with `uv run ruff check .`, `uv run pytest`, and smoke launch of `uv run escriba app` with `/api/status`, `/api/version`, and `/api/sessions` probes.
+- Test suite expanded with split title-regeneration and model-download service coverage. Verified with `uv run ruff check .` and `uv run pytest`.
 
 ## [1.2.0] - 2026-07-08
 

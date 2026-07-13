@@ -4412,6 +4412,12 @@ async function splitSessionHere(sessionId, segmentId, timestampLabel) {
     }
     await refreshSessionList();
     await selectSession(res.first_session_id);
+    const titleIssues = [];
+    if (res.titles?.first && !res.titles.first.ok) titleIssues.push('first half');
+    if (res.titles?.second && !res.titles.second.ok) titleIssues.push('second half');
+    if (titleIssues.length) {
+      showError('Split succeeded, but auto-naming failed for the ' + titleIssues.join(' and ') + '. Part names were kept — rename manually if needed.');
+    }
   } catch (e) {
     showError('Error: ' + e.message);
   } finally {

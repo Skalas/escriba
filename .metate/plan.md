@@ -1,79 +1,96 @@
-# Sprint plan — session-scoped notes + local-LLM timeouts + capture decomposition
+# Sprint plan — post-split auto-rename + soak gates + download extraction + v1.3.0 tag
 
-> Entry doc for `metate-prep`. Selected from the discover slate: candidates **1 + 3 + 4**
+> Entry doc for `metate-prep`. Selected from the discover slate: candidates **1 + 2 + 4 + 5**
 > merged into one sprint.
-> Mode hint: **HOLD** overall (with a REDUCE strand on the capture spine). Fix correctness
-> and structure; do not expand product surface (calendar / soak stay out of scope).
+> Mode hint: **HOLD** overall (REDUCE for model-download extraction; release chore for the tag).
+> Do not expand calendar (#64) this cycle.
 
 ## Goal
 
-Make the live notes path session-correct, stop cold local-model loads from being misread as
-generation timeouts, and shrink `run_streaming_capture` so future audio fixes land on testable
-units — without changing capture behavior in this sprint.
+Make post-split session titles auto-rename reliably (the real #137 failure), close the
+remaining human release gates (soak + clean install), extract model-download orchestration
+out of the HTTP presentation layer (#109), and cut/tag `v1.3.0` so the shipped code matches
+the docs.
+
+## Clarification on #137 (candidate 1)
+
+The reporter does **not** mind `(part 1)` / `(part 2)` as interim labels. The failure is that
+halves **did not automatically rename themselves** after split (post-split
+`_regenerate_title` / auto-name path). Nested `(part N)` stacking may still be cleaned as a
+small defensive side fix if cheap, but it is **not** the DoD of this strand.
 
 ## Why now
 
-- **#125** (filed 2026-07-13): live notepad + notes-output are global DOM state; notes bleed
-  across view switches, auto-record / menubar starts, and Enhance/generate, then autosave onto
-  the wrong session. Blocks a trustworthy soak of the notes loop.
-- **#108**: cached-but-cold `mlx_lm` load still shares the 300s generation deadline; legitimate
-  slow loads kill the worker with no notes.
-- **#103**: `run_streaming_capture` is the graph hotspot (cognitive ~639, ~997 LOC, fan-out 49);
-  decomposition is the prerequisite for safe audio fixes and unit coverage.
+- **#137** (filed 2026-07-13): live sidebar left with stacked/default part names after split;
+  user expectation is LLM (or other) auto-rename of both halves.
+- **Aftercare / roadmap**: real-meeting soak + clean-install are still the open 1.0.x human
+  gates after the 1.3.0 code merge.
+- **#109**: download lifecycle still lives in `server.py` handlers — structural debt that
+  blocks CLI/daemon reuse and testability.
+- **v1.3.0 tag**: code for notes/timeouts/capture is on `main` but version metadata still
+  reads `1.2.0`; Unreleased changelog entries need a dated release.
 
 ## Scope note
 
-Most work already has GitHub issues. `metate-prep` should link **#125**, **#108**, and **#103**
-rather than filing duplicates, then create only missing ledger entries for test-matrix rows
-without an existing issue.
-
-Out of scope this sprint: real-meeting soak / clean-install (#2), calendar spike (#64),
-model-download extraction (#109), P2 checklist (#105), sidebar clip (#87).
+Link existing issues where they match: **#137** (reframed), **#109**. Soak/clean-install and
+the release cut may need new ledger rows from prep. Out of scope: calendar spike (#64),
+sidebar clip (#87), P2 checklist (#105), CaptureSupervisor further split, server
+`append-notes`.
 
 ## Definition of Done
 
-Done when: notepad and notes-output always reflect the session on display (every start route
-and view transition); local inference separates load vs generation deadlines so a cold load
-cannot be reported as a hung generate; `run_streaming_capture` is decomposed into named units
-with behavior preserved and focused unit tests on the new seams. `uv run ruff check .`,
-`uv run mypy .`, and `uv run pytest` green.
+Done when: after a split, both halves receive auto-generated titles when auto-name is enabled
+(and failures are visible/logged, not silent forever-stuck part labels); soak + clean-install
+are executed and documented; model download is owned by an application-layer service shared
+by HTTP + CLI; `v1.3.0` is bumped, changelog-dated, tagged, and pushed. Ship gate green.
 
 ## Seed test matrix
 
-### Strand A — Session-scoped live notes (#125) · HOLD
+### Strand A — Post-split auto-rename (#137) · HOLD
 
 | ID | Criterion |
 |----|-----------|
-| T1 | On every displayed `session_id` change (poll/`syncStatus`, `showLiveView`, back-to-live), `#live-notepad` loads that session’s authoritative `user_notes` (empty for a brand-new session) and `#notes-output` / legend reset |
-| T2 | Recordings started via auto-record, menubar, or poll-detected active session (not only the dashboard Start button) reconcile notepad state the same way |
-| T3 | Enhance / generate never reads or writes notes belonging to a prior session; autosave refuses writes when the notepad’s keyed `session_id` ≠ current session |
-| T4 | SPA regression: view-switch + different-route start + generate-then-switch do not cross-contaminate notes |
+| T1 | With auto-name enabled, splitting a session regenerates titles for **both** halves (not left on `(part N)` forever when generation succeeds) |
+| T2 | Auto-rename failure is observable (log + optional UI signal) without blocking the split response forever; fallback part names remain valid |
+| T3 | Manual rename still persists and refreshes the sidebar immediately |
+| T4 | Tests cover success path + failure/degraded path for post-split title regeneration |
 
-### Strand B — Local inference load vs generation timeout (#108) · HOLD
+Optional (non-blocking): strip/avoid nested `(part N)` when re-splitting an already-named half.
 
-| ID | Criterion |
-|----|-----------|
-| T5 | Model load (`mlx_lm.load` / weight load into RAM) uses a separate deadline (generous or unbounded with progress), not the generation budget |
-| T6 | Generation-only timeout still kills a hung generate and surfaces a clear timeout |
-| T7 | Cached-but-cold large model + long transcript still produces notes (load no longer eats the generation window) |
-
-### Strand C — Decompose `run_streaming_capture` (#103) · REDUCE
+### Strand B — Human release gates · HOLD
 
 | ID | Criterion |
 |----|-----------|
-| T8 | Extract `CaptureSupervisor` (Swift-CLI spawn/monitor/restart + stderr drain) and `ChunkPump` (buffer accumulation, chunk slicing, rate/duration accounting); `run_streaming_capture` becomes thin orchestration |
-| T9 | Behavior-preserving: existing live-capture / mixing / restart tests stay green; no intentional audio-behavior change |
-| T10 | Unit tests cover the new chunking and restart seams (the extraction’s reason to exist) |
+| T5 | Real-meeting soak: record → transcribe → summarize without manual rescue; results documented |
+| T6 | Clean install-from-scratch (one-liner → `/Applications`) verified; results documented |
+| T7 | Any soak/install blockers filed as issues (or confirmed none) |
+
+### Strand C — Model-download extraction (#109) · REDUCE
+
+| ID | Criterion |
+|----|-----------|
+| T8 | `ModelDownloadService` (or equivalent) owns claim/cancel/progress/completion; HTTP handler is thin |
+| T9 | CLI `download-model` (and any daemon path) reuses the same service |
+| T10 | Unit tests cover the service without spinning the full HTTP server |
+
+### Strand D — Cut `v1.3.0` · HOLD (release)
+
+| ID | Criterion |
+|----|-----------|
+| T11 | Version unified at `1.3.0` across `pyproject.toml`, `src/escriba/__init__.py`, `uv.lock` |
+| T12 | CHANGELOG `[1.3.0]` dated; Unreleased cleared appropriately; ROADMAP marks 1.3.0 shipped |
+| T13 | Tag `v1.3.0` created and pushed (prep/ship timing: tag at ship after gate green) |
 
 ## Suggested issue mapping for prep
 
-- Strand A → [#125](https://github.com/Skalas/escriba/issues/125) (split T1–T4 only if prep’s granularity needs one issue per matrix row)
-- Strand B → [#108](https://github.com/Skalas/escriba/issues/108)
-- Strand C → [#103](https://github.com/Skalas/escriba/issues/103)
+- Strand A → [#137](https://github.com/Skalas/escriba/issues/137) (update body/title if needed to match auto-rename focus)
+- Strand B → new issues or a single soak/install checklist issue (prep decides granularity)
+- Strand C → [#109](https://github.com/Skalas/escriba/issues/109)
+- Strand D → new release chore issue(s) or fold into ship without separate GitHub issues if prep prefers
 
 ## Explicit non-goals
 
 - Calendar-driven recording / Up-next (#64)
-- Human soak + clean-install verification
-- Moving model-download orchestration out of the presentation layer (#109)
-- Opportunistic P2 backlog (#105, #87)
+- Making `(part N)` stacking the primary bug (reporter OK with part labels as interim)
+- Sidebar title clipping (#87)
+- P2 review checklist (#105)

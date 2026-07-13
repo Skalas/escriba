@@ -456,15 +456,15 @@ def cmd_download_model(
     print("This may take a while on first download...\n")
 
     try:
-        from mlx_lm import load
+        from escriba.app.model_download import ModelDownloadService, ModelDownloadError
 
-        load(model_id)
+        ModelDownloadService().download_blocking(model_id)
         print(f"\nModel ready: {model_id}")
     except ImportError:
         print("Error: mlx-lm is not installed. Run: uv sync")
         raise typer.Exit(code=1)
-    except Exception as e:
-        print(f"Error downloading model: {e}")
+    except ModelDownloadError as e:
+        print(f"Error downloading model: {e.message}")
         raise typer.Exit(code=1)
 
 

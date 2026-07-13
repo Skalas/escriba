@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-07-13 · Current version: `1.2.0` (working tree: session-scoped notes + local-LLM timeout split + capture decomposition; closes #125/#108/#103 via #126–#135) · next up: real-meeting soak + clean-install verification, then calendar-driven recording product decision (#64)._
+_Last updated: 2026-07-13 · Current version: `1.3.0` (post-split auto-rename + model-download extraction; human soak + clean-install still open) · next up: real-meeting soak + clean-install verification, then calendar-driven recording product decision (#64)._
 
 ---
 
@@ -254,15 +254,18 @@ Merged the fresh full-repo defect slate into one HOLD sprint so the real-meeting
 
 ---
 
-### `v1.3.0` — Session-scoped notes + local-LLM timeouts + capture decomposition  ·  _unreleased (#126–#135; parents #125/#108/#103)_
+### `v1.3.0` — Session-scoped notes + local-LLM timeouts + capture decomposition  ·  _shipped 2026-07-13 (#126–#150; parents #125/#108/#103/#137/#109)_
 
-HOLD sprint (REDUCE on the capture spine). No product-surface expansion.
+HOLD sprint (REDUCE on model-download extraction). No product-surface expansion.
 
 - [x] **Session-scoped live notes (#125 / T1–T4).** Notepad + notes-output reconcile on every displayed `session_id` change (poll, showLiveView, all start routes); autosave posts `session_id` and the server rejects mismatches; Enhance/generate refuse cross-session writes; debounced-save and slow-fetch races closed.
 - [x] **Local inference load vs generation timeout (#108 / T5–T7).** Atomic `_subprocess_run_inference` worker job with separate load/generation deadlines, parent grace for IPC skew, RLock to avoid timeout-reset deadlock.
 - [x] **Decompose `run_streaming_capture` (#103 / T8–T10).** `CaptureSupervisor` + `ChunkPump` extracted; mic-only pop retains audio when partial system data is buffered; unit tests on the new seams; behavior-preserving.
+- [x] **Post-split auto-rename (#137 / T1–T4).** Both halves regenerate titles when auto-name is on; failures are logged and surfaced in the split API/UI; manual rename unchanged.
+- [x] **Model-download extraction (#109 / T8–T10).** `ModelDownloadService` owns claim/cancel/progress/completion; HTTP handlers thin; CLI `download-model` reuses the service.
+- [x] **Version metadata (#148–#149 / T11–T12).** `1.3.0` unified across `pyproject.toml`, `__init__.py`, `uv.lock`; CHANGELOG dated; ROADMAP updated. Tag/push (`T13`) at ship.
 
-**Done when:** T1–T10 green; `uv run ruff check .` + `uv run pytest` green (340 tests); smoke probes `/api/status`, `/api/version`, `/api/sessions`. ✅ code half. Human soak + clean-install remain the 1.0.x gate.
+**Done when:** T1–T12 green; `uv run ruff check .` + `uv run pytest` green. Human soak + clean-install remain the 1.0.x gate (T5–T7).
 
 **Deferred (with triggers — read these at next discover):**
 - **Calendar auto-start / Up-next spike (#64).** Still intentionally unavailable beyond mic-activation auto-record. _Trigger:_ product decision after soak.
