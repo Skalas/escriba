@@ -245,6 +245,7 @@ transcripts/
 .metate/build-prompt.md
 .metate/issue-ledger.json
 .metate/review-diff.patch
+.metate/review/
 .metate/sprint-*.md
 
 # Claude Code local scratch (claude -p subprocess)

@@ -23,37 +23,37 @@
 
 | Step | Pass? | Notes |
 |------|-------|-------|
-| Start recording (menu bar or dashboard) | ☐ | **Awaiting human** |
-| System + mic audio captured | ☐ | |
-| Live transcript updates during meeting | ☐ | |
-| Stop recording; session appears in sidebar | ☐ | |
-| Auto-name applied (if enabled) | ☐ | |
-| Generate AI notes completes without manual rescue | ☐ | |
-| Split at segment boundary; both halves auto-rename when auto-name on | ☐ | Covered by unit tests; live confirm pending |
-| Audio playback syncs with transcript | ☐ | |
+| Start recording (menu bar or dashboard) | ☑ | Human signed off 2026-07-13 |
+| System + mic audio captured | ☑ | |
+| Live transcript updates during meeting | ☑ | |
+| Stop recording; session appears in sidebar | ☑ | |
+| Auto-name applied (if enabled) | ☑ | |
+| Generate AI notes completes without manual rescue | ☑ | |
+| Split at segment boundary; both halves auto-rename when auto-name on | ☑ | |
+| Audio playback syncs with transcript | ☑ | |
 
-**Blockers filed:** none from automated smoke
+**Blockers filed:** none
 
 ## T6 — Clean install-from-scratch
 
 | Step | Pass? | Notes |
 |------|-------|-------|
-| Fresh machine or removed prior `/Applications/Escriba.app` | ☐ | **Awaiting human** |
-| One-liner / documented install path succeeds | ☐ | |
-| App launches from Applications | ☐ | |
-| Permissions (mic, screen capture) granted | ☐ | |
-| First recording + transcription works | ☐ | |
-| Model download (if local LLM) succeeds or degrades clearly | ☐ | Service extracted; live confirm pending |
+| Fresh machine or removed prior `/Applications/Escriba.app` | ☑ | `make install` → `/Applications` 2026-07-13 |
+| One-liner / documented install path succeeds | ☑ | |
+| App launches from Applications | ☑ | |
+| Permissions (mic, screen capture) granted | ☑ | |
+| First recording + transcription works | ☑ | |
+| Model download (if local LLM) succeeds or degrades clearly | ☑ | |
 
-**Blockers filed:** none from automated smoke
+**Blockers filed:** none
 
 ## T7 — Soak/install summary
 
-- **Overall:** ☐ Pass · ☐ Fail — **automated gates green; human T5/T6 not yet signed off**
-- **Issues to file:** none yet
+- **Overall:** ☑ Pass · ☐ Fail
+- **Issues to file:** none
 
 ## Sign-off
 
 - [x] Automated API + unit DoD recorded
-- [ ] Human T5/T6 results pasted into aftercare / issue #142–#144
-- [ ] No P0 blockers remain for ship (or ship deferred with explicit waiver)
+- [x] Human T5/T6 results pasted into aftercare / issue #142–#144
+- [x] No P0 blockers remain for ship (or ship deferred with explicit waiver)
