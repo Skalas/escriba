@@ -649,6 +649,8 @@ def test_t2_enhance_no_instructions_triggers_generation(page) -> None:
     """Clicking 'Enhance notes' with no instructions calls /api/notes."""
     page.evaluate("""() => {
         viewingHistory = false;
+        displayedLiveSessionId = 'spa-live-session';
+        document.getElementById('live-notepad').dataset.sessionId = 'spa-live-session';
         document.getElementById('live-view').style.display = '';
         document.getElementById('notes-section').classList.add('visible');
     }""")
@@ -702,8 +704,9 @@ def test_t2_add_instructions_disclosure_hidden_by_default(page) -> None:
 def test_t3_ai_content_has_provenance_markers(page) -> None:
     """After Enhance, AI-added content has .live-ai-block and .live-chip-ai — not color alone."""
     page.evaluate("""() => {
-        // Make live-view visible so isLiveViewActive() returns true
         viewingHistory = false;
+        displayedLiveSessionId = 'spa-live-session';
+        document.getElementById('live-notepad').dataset.sessionId = 'spa-live-session';
         document.getElementById('live-view').style.display = '';
         document.getElementById('notes-section').classList.add('visible');
     }""")
@@ -818,6 +821,8 @@ def test_v0102_t2_live_enhance_no_duplicate_your_notes_heading(page) -> None:
     (the editable textarea above already is the user's notes)."""
     page.evaluate("""() => {
         viewingHistory = false;
+        displayedLiveSessionId = 'spa-live-session';
+        document.getElementById('live-notepad').dataset.sessionId = 'spa-live-session';
         document.getElementById('live-view').style.display = '';
         document.getElementById('notes-section').classList.add('visible');
         document.getElementById('live-notepad').value = 'Meeting notes here';
@@ -1510,3 +1515,303 @@ def test_t3_save_notes_attributes_failing_post(routed_page) -> None:
     banner = pg.evaluate("document.getElementById('error-banner').textContent")
     assert "Your notes" in banner, f"error did not attribute the failing POST: {banner!r}"
     assert "AI notes" not in banner, f"unrelated POST wrongly blamed: {banner!r}"
+
+
+# ---------------------------------------------------------------------------
+# Sprint: session-scoped live notes (T4)
+# ---------------------------------------------------------------------------
+
+def test_t4_view_switch_loads_session_user_notes(routed_page) -> None:
+    """Switching displayed live session loads that session's user_notes into #live-notepad."""
+    from urllib.parse import urlparse
+
+    session_notes = {
+        "sess-a": "Notes for session A",
+        "sess-b": "Notes for session B",
+    }
+
+    def _route(route) -> None:
+        path = urlparse(route.request.url).path
+        if path == "/api/status":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"ok":true,"is_active":true,"session_id":"sess-a","elapsed":"00:00:01","segments_count":1}',
+            )
+        elif path == "/api/sessions/sess-a":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"ok":true,"session":{"user_notes":"Notes for session A"},"segments":[]}',
+            )
+        elif path == "/api/sessions/sess-b":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"ok":true,"session":{"user_notes":"Notes for session B"},"segments":[]}',
+            )
+        else:
+            route.fulfill(status=200, content_type="application/json", body='{"ok":true}')
+
+    pg = routed_page(_route)
+    pg.evaluate("""() => {
+        lastWasRecording = true;
+        displayedLiveSessionId = '__invalidate__';
+    }""")
+    pg.evaluate("void reconcileLiveNotepad('sess-a')")
+    pg.wait_for_timeout(300)
+    val_a = pg.evaluate("document.getElementById('live-notepad').value")
+    assert val_a == session_notes["sess-a"]
+
+    pg.evaluate("invalidateDisplayedLiveSession()")
+    pg.evaluate("void reconcileLiveNotepad('sess-b')")
+    pg.wait_for_timeout(300)
+    val_b = pg.evaluate("document.getElementById('live-notepad').value")
+    assert val_b == session_notes["sess-b"]
+    assert val_b != val_a
+
+
+def test_t4_poll_detected_start_reconciles_notepad(routed_page) -> None:
+    """syncStatus detecting a new recording (auto-record path) reconciles the notepad."""
+    from urllib.parse import urlparse
+
+    def _route(route) -> None:
+        path = urlparse(route.request.url).path
+        if path == "/api/status":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"ok":true,"is_active":true,"session_id":"auto-sess","elapsed":"00:00:02","segments_count":0}',
+            )
+        elif path == "/api/sessions/auto-sess":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"ok":true,"session":{"user_notes":"Auto-started notes"},"segments":[]}',
+            )
+        else:
+            route.fulfill(status=200, content_type="application/json", body='{"ok":true}')
+
+    pg = routed_page(_route)
+    pg.evaluate("""() => {
+        lastWasRecording = false;
+        _lastStatusSessionId = null;
+        displayedLiveSessionId = '__invalidate__';
+        document.getElementById('live-notepad').value = 'stale from prior view';
+        document.getElementById('notes-output').innerHTML = '<p>stale enhance</p>';
+        document.getElementById('notes-output').classList.add('visible');
+    }""")
+    pg.evaluate("void syncStatus()")
+    pg.wait_for_timeout(500)
+
+    notepad = pg.evaluate("document.getElementById('live-notepad').value")
+    stale_output = pg.evaluate("document.getElementById('notes-output').innerHTML")
+    keyed_sid = pg.evaluate("document.getElementById('live-notepad').dataset.sessionId")
+
+    assert notepad == "Auto-started notes"
+    assert stale_output == ""
+    assert keyed_sid == "auto-sess"
+
+
+def test_t4_generate_then_switch_does_not_bleed(routed_page) -> None:
+    """Live enhance response must not update UI after the displayed session changes."""
+    import threading
+    from urllib.parse import urlparse
+
+    allow_response = threading.Event()
+
+    def _hold_notes(route) -> None:
+        allow_response.wait(timeout=10)
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"ok":true,"notes":"SENTINEL-LIVE-ENHANCE"}',
+        )
+
+    def _route(route) -> None:
+        path = urlparse(route.request.url).path
+        if path == "/api/notes":
+            _hold_notes(route)
+        elif path == "/api/sessions/sess-live":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"ok":true,"session":{"user_notes":"live jots"},"segments":[]}',
+            )
+        elif path == "/api/sessions/sess-other":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"ok":true,"session":{"user_notes":"other session notes"},"segments":[]}',
+            )
+        else:
+            route.fulfill(status=200, content_type="application/json", body='{"ok":true}')
+
+    pg = routed_page(_route)
+    pg.evaluate("""() => {
+        viewingHistory = false;
+        lastWasRecording = true;
+        displayedLiveSessionId = 'sess-live';
+        document.getElementById('live-view').style.display = '';
+        document.getElementById('live-notepad').dataset.sessionId = 'sess-live';
+        document.getElementById('live-notepad').value = 'live jots';
+        document.getElementById('notes-output').innerHTML = '';
+        document.getElementById('notes-output').classList.remove('visible');
+    }""")
+
+    with pg.expect_request("**/api/notes", timeout=5000):
+        pg.evaluate("void generateNotes()")
+
+    pg.evaluate("""async () => {
+        invalidateDisplayedLiveSession();
+        await reconcileLiveNotepad('sess-other');
+    }""")
+    pg.wait_for_timeout(300)
+
+    allow_response.set()
+    pg.wait_for_timeout(600)
+
+    output_html = pg.evaluate("document.getElementById('notes-output').innerHTML")
+    notepad_val = pg.evaluate("document.getElementById('live-notepad').value")
+
+    assert "SENTINEL-LIVE-ENHANCE" not in output_html
+    assert notepad_val == "other session notes"
+
+
+def test_t4_autosave_refuses_cross_session_write(routed_page) -> None:
+    """saveLiveNotepad must not POST when notepad session_id != displayed session."""
+    from urllib.parse import urlparse
+
+    captured: list[str] = []
+
+    def _route(route) -> None:
+        path = urlparse(route.request.url).path
+        if path == "/api/recording/user-notes":
+            captured.append(route.request.post_data or "")
+        route.fulfill(status=200, content_type="application/json", body='{"ok":true}')
+
+    pg = routed_page(_route)
+    pg.evaluate("""() => {
+        displayedLiveSessionId = 'sess-current';
+        document.getElementById('live-notepad').dataset.sessionId = 'sess-stale';
+        document.getElementById('live-notepad').value = 'should not save';
+    }""")
+    pg.evaluate("void saveLiveNotepad()")
+    pg.wait_for_timeout(200)
+    assert captured == []
+
+    pg.evaluate("""() => {
+        document.getElementById('live-notepad').dataset.sessionId = 'sess-current';
+    }""")
+    pg.evaluate("void saveLiveNotepad()")
+    pg.wait_for_timeout(200)
+    assert any("should not save" in body for body in captured)
+    assert any('"session_id":"sess-current"' in body or '"session_id": "sess-current"' in body for body in captured)
+
+
+def test_t4_debounced_autosave_does_not_bleed_on_session_switch(routed_page) -> None:
+    """Debounced save scheduled in session A must not POST A's text after switch to B."""
+    import threading
+    from urllib.parse import urlparse
+
+    allow_b_fetch = threading.Event()
+    captured: list[str] = []
+
+    def _route(route) -> None:
+        path = urlparse(route.request.url).path
+        if path == "/api/recording/user-notes":
+            captured.append(route.request.post_data or "")
+            route.fulfill(status=200, content_type="application/json", body='{"ok":true}')
+        elif path == "/api/sessions/sess-b":
+            allow_b_fetch.wait(timeout=10)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"ok":true,"session":{"user_notes":"Notes for session B"},"segments":[]}',
+            )
+        else:
+            route.fulfill(status=200, content_type="application/json", body='{"ok":true}')
+
+    pg = routed_page(_route)
+    pg.evaluate("""() => {
+        displayedLiveSessionId = 'sess-a';
+        document.getElementById('live-notepad').dataset.sessionId = 'sess-a';
+        document.getElementById('live-notepad').value = 'Notes from session A';
+        onLiveNotepadInput();
+    }""")
+    pg.evaluate("""() => {
+        invalidateDisplayedLiveSession();
+        void reconcileLiveNotepad('sess-b');
+    }""")
+    allow_b_fetch.set()
+    pg.wait_for_timeout(1500)
+
+    assert not any("Notes from session A" in body for body in captured)
+    assert not any("sess-b" in body and "Notes from session A" in body for body in captured)
+
+    notepad_val = pg.evaluate("document.getElementById('live-notepad').value")
+    keyed_sid = pg.evaluate("document.getElementById('live-notepad').dataset.sessionId")
+    assert notepad_val == "Notes for session B"
+    assert keyed_sid == "sess-b"
+
+
+def test_t4_scheduled_autosave_refuses_stale_session_id(routed_page) -> None:
+    """saveLiveNotepad(scheduledSid) must refuse when the displayed session moved on."""
+    from urllib.parse import urlparse
+
+    captured: list[str] = []
+
+    def _route(route) -> None:
+        path = urlparse(route.request.url).path
+        if path == "/api/recording/user-notes":
+            captured.append(route.request.post_data or "")
+        route.fulfill(status=200, content_type="application/json", body='{"ok":true}')
+
+    pg = routed_page(_route)
+    pg.evaluate("""async () => {
+        displayedLiveSessionId = 'sess-a';
+        document.getElementById('live-notepad').dataset.sessionId = 'sess-a';
+        document.getElementById('live-notepad').value = 'Notes from session A';
+        invalidateDisplayedLiveSession();
+        await reconcileLiveNotepad('sess-b');
+    }""")
+    pg.evaluate("void saveLiveNotepad('sess-a')")
+    pg.wait_for_timeout(200)
+
+    assert not any("Notes from session A" in body for body in captured)
+
+
+def test_t4_reconcile_preserves_typing_during_slow_fetch(routed_page) -> None:
+    """Typing during a slow session fetch must not be overwritten by stored user_notes."""
+    import threading
+    from urllib.parse import urlparse
+
+    allow_b_fetch = threading.Event()
+
+    def _route(route) -> None:
+        path = urlparse(route.request.url).path
+        if path == "/api/sessions/sess-b":
+            allow_b_fetch.wait(timeout=10)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"ok":true,"session":{"user_notes":"Stored notes for B"},"segments":[]}',
+            )
+        else:
+            route.fulfill(status=200, content_type="application/json", body='{"ok":true}')
+
+    pg = routed_page(_route)
+    pg.evaluate("""() => {
+        invalidateDisplayedLiveSession();
+        void reconcileLiveNotepad('sess-b');
+    }""")
+    pg.evaluate("""() => {
+        document.getElementById('live-notepad').value = 'Fresh typing for B';
+        onLiveNotepadInput();
+    }""")
+    allow_b_fetch.set()
+    pg.wait_for_timeout(500)
+
+    notepad_val = pg.evaluate("document.getElementById('live-notepad').value")
+    assert notepad_val == "Fresh typing for B"
+    assert notepad_val != "Stored notes for B"
