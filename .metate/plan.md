@@ -1,128 +1,79 @@
-# Sprint plan - merged reliability, correctness, and automation hardening
+# Sprint plan — session-scoped notes + local-LLM timeouts + capture decomposition
 
-> Entry doc for `metate-prep`. Selected from the discover slate: candidates **1 + 2 + 3 + 4 + 5**
+> Entry doc for `metate-prep`. Selected from the discover slate: candidates **1 + 3 + 4**
 > merged into one sprint.
-> Mode hint: **HOLD** overall. This is a broad hardening sprint with one EXPAND-leaning
-> automation strand; keep each fix issue-sized and prove it with tests.
+> Mode hint: **HOLD** overall (with a REDUCE strand on the capture spine). Fix correctness
+> and structure; do not expand product surface (calendar / soak stay out of scope).
 
 ## Goal
 
-Close the current post-1.0.1 defect slate across the record -> transcribe -> summarize loop,
-dashboard notes workflow, daemon IPC, and incomplete automation surfaces.
-
-The sprint is intentionally broad because the open issues are clustered around the same product
-promise: a real meeting should record, transcribe, save notes, stop cleanly, and optionally run
-through automation without corrupting data, leaking processes, or silently dropping output.
+Make the live notes path session-correct, stop cold local-model loads from being misread as
+generation timeouts, and shrink `run_streaming_capture` so future audio fixes land on testable
+units — without changing capture behavior in this sprint.
 
 ## Why now
 
-- Fresh P0/P1 GitHub issues from the 2026-07-08 full-repo review identify silent audio
-  corruption, data-loss races, and lifecycle leaks.
-- The roadmap still names real-meeting soak and clean-install verification as the remaining
-  1.0.x manual gates; those gates are not meaningful while stop/finalization and live capture
-  can corrupt data.
-- The codebase graph shows the highest-risk surfaces are central: `run_streaming_capture`,
-  `TranscriptionSession.stop`, daemon start/stop, and the dashboard session-detail workflow.
-- The roadmap also calls out the next broken/incomplete-features sprint (#97/#99/#64); fold
-  that into this cycle after the P0/P1 correctness work is bounded.
+- **#125** (filed 2026-07-13): live notepad + notes-output are global DOM state; notes bleed
+  across view switches, auto-record / menubar starts, and Enhance/generate, then autosave onto
+  the wrong session. Blocks a trustworthy soak of the notes loop.
+- **#108**: cached-but-cold `mlx_lm` load still shares the 300s generation deadline; legitimate
+  slow loads kill the worker with no notes.
+- **#103**: `run_streaming_capture` is the graph hotspot (cognitive ~639, ~997 LOC, fan-out 49);
+  decomposition is the prerequisite for safe audio fixes and unit coverage.
 
 ## Scope note
 
-Most work already has GitHub issues. `metate-prep` should link existing issues rather than
-filing duplicates where a matching issue exists, then create only missing ledger entries for
-test rows without an existing issue.
+Most work already has GitHub issues. `metate-prep` should link **#125**, **#108**, and **#103**
+rather than filing duplicates, then create only missing ledger entries for test-matrix rows
+without an existing issue.
+
+Out of scope this sprint: real-meeting soak / clean-install (#2), calendar spike (#64),
+model-download extraction (#109), P2 checklist (#105), sidebar clip (#87).
 
 ## Definition of Done
 
-Done when: stopping a recording is exception-safe and timeout-safe; live audio buffers and
-backend resampling cannot silently corrupt transcript/audio; dashboard async note flows cannot
-cross-write or lose edits; daemon IPC is single-writer and locally hardened; the incomplete
-automation paths either work end-to-end or fail honestly. `uv run ruff check .`, `uv run mypy .`,
-and `uv run pytest` are green.
+Done when: notepad and notes-output always reflect the session on display (every start route
+and view transition); local inference separates load vs generation deadlines so a cold load
+cannot be reported as a hung generate; `run_streaming_capture` is decomposed into named units
+with behavior preserved and focused unit tests on the new seams. `uv run ruff check .`,
+`uv run mypy .`, and `uv run pytest` green.
 
-## Test matrix
+## Seed test matrix
 
-### Strand A - recording stop/finalization data safety
+### Strand A — Session-scoped live notes (#125) · HOLD
 
-- **T1** (#114) - `TranscriptionSession.stop()` runs each cleanup step independently. A capture
-  teardown exception cannot skip buffer flush, WAV close, export, or `db.stop_session`.
-- **T2** (#115) - timed joins do not proceed as though the worker finished. If the process
-  thread is still alive, the main thread does not concurrently flush/close the transcriber or
-  WAV writer.
-- **T3** (#115) - title refinement never starts a second local generation while an earlier title
-  generation thread is still alive.
-- **T4** (#115) - app quit does not close the DB or terminate the app while a recording stop is
-  still completing.
-- **T5** - tests force teardown failure, slow process-thread join, slow title generation, and
-  quit-during-stop; all leave the session completed or clearly failed, never half-written.
+| ID | Criterion |
+|----|-----------|
+| T1 | On every displayed `session_id` change (poll/`syncStatus`, `showLiveView`, back-to-live), `#live-notepad` loads that session’s authoritative `user_notes` (empty for a brand-new session) and `#notes-output` / legend reset |
+| T2 | Recordings started via auto-record, menubar, or poll-detected active session (not only the dashboard Start button) reconcile notepad state the same way |
+| T3 | Enhance / generate never reads or writes notes belonging to a prior session; autosave refuses writes when the notepad’s keyed `session_id` ≠ current session |
+| T4 | SPA regression: view-switch + different-route start + generate-then-switch do not cross-contaminate notes |
 
-### Strand B - live audio correctness and capture lifecycle
+### Strand B — Local inference load vs generation timeout (#108) · HOLD
 
-- **T6** (#110) - shared live audio buffers are protected by a clear locking discipline or
-  replaced with a safe queue/ring buffer. Extend, slice/consume, and clear cannot race.
-- **T7** (#111) - Swift CLI monitor backoff is interruptible via `stop_event`; a stop during
-  backoff cannot restart and orphan a new capture process.
-- **T8** (#116) - faster-whisper resamples non-16 kHz audio to 16 kHz before ndarray inference,
-  matching the MLX backend behavior.
-- **T9** (#113) - invalid WAV headers cannot produce zero-byte chunks or a CPU busy-loop.
-- **T10** (#123) - faster-whisper early-return guards close chunk metrics, and MLX rejects
-  unsupported sample widths instead of decoding them as 8-bit.
-- **T11** - tests cover both-mode buffer concurrency, stop-during-restart, non-16 kHz WAV input,
-  malformed WAV headers, and unsupported sample widths.
+| ID | Criterion |
+|----|-----------|
+| T5 | Model load (`mlx_lm.load` / weight load into RAM) uses a separate deadline (generous or unbounded with progress), not the generation budget |
+| T6 | Generation-only timeout still kills a hung generate and surfaces a clear timeout |
+| T7 | Cached-but-cold large model + long transcript still produces notes (load no longer eats the generation window) |
 
-### Strand C - dashboard note and session async safety
+### Strand C — Decompose `run_streaming_capture` (#103) · REDUCE
 
-- **T12** (#120) - stale `selectSession` responses cannot render into a newer selected session
-  or cause notes from one session to be saved into another.
-- **T13** (#121) - `generateSessionNotes()` appends to the current post-await notes content, or
-  otherwise prevents editing while generation is in flight; saved edits are not lost.
-- **T14** (#123) - `retranscribeSession` and other long session actions capture the session id
-  before `await` and never refresh or mutate the wrong selected session on completion.
-- **T15** (#123) - pending search/deep-link highlight state is cleared on `selectSession` early
-  returns; stale highlight state cannot leak into a later unrelated session.
-- **T16** - Playwright tests prove rapid A -> B selection, edit-during-generation, and
-  navigate-during-retranscribe do not corrupt notes or UI state.
+| ID | Criterion |
+|----|-----------|
+| T8 | Extract `CaptureSupervisor` (Swift-CLI spawn/monitor/restart + stderr drain) and `ChunkPump` (buffer accumulation, chunk slicing, rate/duration accounting); `run_streaming_capture` becomes thin orchestration |
+| T9 | Behavior-preserving: existing live-capture / mixing / restart tests stay green; no intentional audio-behavior change |
+| T10 | Unit tests cover the new chunking and restart seams (the extraction’s reason to exist) |
 
-### Strand D - daemon IPC hardening
+## Suggested issue mapping for prep
 
-- **T17** (#117) - daemon start/stop check-and-set is guarded by a recording lock; concurrent
-  `start-recording` commands can create at most one capture thread.
-- **T18** (#117) - daemon command reads are framed or read to EOF; long valid JSON commands are
-  not truncated by a single `recv(4096)`.
-- **T19** (#117) - daemon socket directory and socket file are owner-only (`0700`/`0600` or
-  equivalent), with tests that assert the final modes.
-- **T20** - daemon tests cover concurrent starts, long commands, stop during active recording,
-  and stale/permission-sensitive socket setup.
+- Strand A → [#125](https://github.com/Skalas/escriba/issues/125) (split T1–T4 only if prep’s granularity needs one issue per matrix row)
+- Strand B → [#108](https://github.com/Skalas/escriba/issues/108)
+- Strand C → [#103](https://github.com/Skalas/escriba/issues/103)
 
-### Strand E - incomplete automation and notification reliability
+## Explicit non-goals
 
-- **T21** (#99) - GUI recording path has the same mlx -> faster-whisper fallback behavior as the
-  hardened backend path; a missing MLX backend does not produce a no-transcriber session.
-- **T22** (#97/#64) - calendar-driven recording is either made functional for the current
-  supported path or explicitly disabled/marked unavailable in CLI/UI/docs instead of being a
-  silent no-op.
-- **T23** (#118) - watch-folder handles atomically written files via `on_moved` and allows a
-  corrected replacement file after a failed attempt.
-- **T24** (#119) - Telegram notifications cannot be dropped by Telegram Markdown parse errors
-  from untrusted LLM text. Prefer plain text unless formatting is proven safe.
-- **T25** (#122) - menubar auto-stop tracking id is cleared only after stop initiation succeeds;
-  a failed stop attempt does not orphan an auto-started recording from future auto-stop checks.
-
-### Strand F - bundled low-risk correctness polish
-
-- **T26** (#123) - API edge cases return clear 4xx responses where appropriate: invalid Range
-  start, chunked request body handling, unknown folder id, nonexistent merge ids, and TOML null
-  config leaves.
-- **T27** (#123) - SRT export cue numbers are contiguous after empty segments are skipped.
-- **T28** (#123) - local summary timeout errors are handled and logged with the same clarity as
-  Gemini/Claude timeout paths.
-- **T29** (#123) - live transcript polling renders the empty state when segments reset instead
-  of leaving stale transcript content on screen.
-
-## Out of scope
-
-- New product features beyond making the existing automation surfaces honest and reliable.
-- Framework changes to the stdlib server or single-file SPA.
-- Persistence-index/schema-version P2 backlog unless directly required by a selected test row.
-- Real-meeting soak and clean-install verification themselves; those remain human-run gates
-  after this plan lands and tests pass.
+- Calendar-driven recording / Up-next (#64)
+- Human soak + clean-install verification
+- Moving model-download orchestration out of the presentation layer (#109)
+- Opportunistic P2 backlog (#105, #87)

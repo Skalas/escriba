@@ -454,6 +454,247 @@ def mix_audio(
     return mixed.astype(np.int16)
 
 
+class ChunkPump:
+    """Buffer accumulation and duration-aligned chunk slicing for mixed capture."""
+
+    def __init__(
+        self,
+        *,
+        mic_chunk_bytes: int,
+        system_chunk_bytes: int,
+        pcm_chunk_bytes: int | None = None,
+    ) -> None:
+        """Configure per-stream chunk byte counts for equal-duration slices."""
+        self.mic_chunk_bytes = mic_chunk_bytes
+        self.system_chunk_bytes = system_chunk_bytes
+        self.pcm_chunk_bytes = pcm_chunk_bytes or mic_chunk_bytes
+        self._lock = threading.Lock()
+        self.system_audio_buffer = bytearray()
+        self.mic_audio_buffer = bytearray()
+        self.pcm_buffer = bytearray()
+
+    def append_mic(self, data: bytes) -> None:
+        """Append raw mic PCM bytes from ffmpeg stdout."""
+        with self._lock:
+            self.mic_audio_buffer.extend(data)
+
+    def append_system(self, data: bytes) -> None:
+        """Append raw system PCM bytes from the Swift CLI callback."""
+        with self._lock:
+            self.system_audio_buffer.extend(data)
+
+    def clear_system(self) -> None:
+        """Drop buffered system audio (used after Swift CLI restart)."""
+        with self._lock:
+            self.system_audio_buffer.clear()
+
+    def system_buffer_size(self) -> int:
+        """Return current system buffer length (for debug logging)."""
+        with self._lock:
+            return len(self.system_audio_buffer)
+
+    def try_pop_mixed_chunks(self) -> tuple[bytes, bytes] | None:
+        """Pop equal-duration system + mic chunks when both streams are ready."""
+        with self._lock:
+            if (
+                len(self.system_audio_buffer) >= self.system_chunk_bytes
+                and len(self.mic_audio_buffer) >= self.mic_chunk_bytes
+            ):
+                system_chunk = bytes(
+                    self.system_audio_buffer[: self.system_chunk_bytes]
+                )
+                mic_chunk = bytes(self.mic_audio_buffer[: self.mic_chunk_bytes])
+                del self.system_audio_buffer[: self.system_chunk_bytes]
+                del self.mic_audio_buffer[: self.mic_chunk_bytes]
+                return system_chunk, mic_chunk
+        return None
+
+    def try_pop_mic_only(self) -> bytes | None:
+        """Pop a mic chunk only when no system audio is buffered."""
+        with self._lock:
+            if self.system_audio_buffer:
+                return None
+            if len(self.mic_audio_buffer) >= self.mic_chunk_bytes:
+                chunk = bytes(self.mic_audio_buffer[: self.mic_chunk_bytes])
+                del self.mic_audio_buffer[: self.mic_chunk_bytes]
+                return chunk
+        return None
+
+    def try_pop_system_only(self) -> bytes | None:
+        """Pop a system chunk when the microphone is silent."""
+        with self._lock:
+            if len(self.system_audio_buffer) >= self.system_chunk_bytes:
+                chunk = bytes(self.system_audio_buffer[: self.system_chunk_bytes])
+                del self.system_audio_buffer[: self.system_chunk_bytes]
+                return chunk
+        return None
+
+    def has_system_data(self) -> bool:
+        """True when any system audio bytes are buffered."""
+        with self._lock:
+            return len(self.system_audio_buffer) > 0
+
+    def mic_buffer_empty(self) -> bool:
+        """True when no mic audio bytes are buffered."""
+        with self._lock:
+            return len(self.mic_audio_buffer) == 0
+
+    def append_pcm(self, data: bytes) -> None:
+        """Append mic-only PCM when ScreenCaptureKit is inactive."""
+        with self._lock:
+            self.pcm_buffer.extend(data)
+
+    def try_pop_pcm_chunk(self) -> bytes | None:
+        """Pop a mic-only chunk sized for the ffmpeg WAV rate."""
+        with self._lock:
+            if len(self.pcm_buffer) >= self.pcm_chunk_bytes:
+                chunk = bytes(self.pcm_buffer[: self.pcm_chunk_bytes])
+                del self.pcm_buffer[: self.pcm_chunk_bytes]
+                return chunk
+        return None
+
+
+class CaptureSupervisor:
+    """Swift-CLI spawn monitor/restart and ffmpeg stderr drain."""
+
+    def __init__(
+        self,
+        stop_event: threading.Event,
+        *,
+        max_retries: int = 3,
+        poll_interval: float = 5.0,
+    ) -> None:
+        """Create a supervisor bound to the capture stop event."""
+        self.stop_event = stop_event
+        self.max_retries = max_retries
+        self.poll_interval = poll_interval
+        self.stderr_tail: deque[str] = deque(maxlen=50)
+        self._stderr_thread: threading.Thread | None = None
+        self._monitor_thread: threading.Thread | None = None
+        self.screen_capture: Any | None = None
+        self.retry_count = 0
+
+    def start_stderr_drain(self, process: subprocess.Popen) -> None:
+        """Drain ffmpeg stderr into a bounded tail for post-mortem logs."""
+
+        def read_stderr() -> None:
+            if process.stderr:
+                for line in iter(process.stderr.readline, b""):
+                    if line:
+                        line_str = line.decode("utf-8", errors="ignore").strip()
+                        self.stderr_tail.append(line_str)
+                        if (
+                            "error" in line_str.lower()
+                            or "warning" in line_str.lower()
+                            or "failed" in line_str.lower()
+                        ):
+                            logger.warning("ffmpeg: %s", line_str)
+                        else:
+                            logger.debug("ffmpeg: %s", line_str)
+
+        self._stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+        self._stderr_thread.start()
+
+    def start_swift_monitor(
+        self,
+        screen_capture: Any,
+        chunk_pump: ChunkPump,
+    ) -> None:
+        """Monitor the Swift CLI and restart it with exponential backoff."""
+        self.screen_capture = screen_capture
+
+        def monitor_swift_cli() -> None:
+            nonlocal screen_capture
+
+            if not screen_capture:
+                return
+
+            while not self.stop_event.is_set():
+                if self.stop_event.wait(self.poll_interval):
+                    break
+
+                if self.stop_event.is_set():
+                    break
+
+                if screen_capture and screen_capture.process:
+                    if screen_capture.process.poll() is not None:
+                        if self.retry_count < self.max_retries:
+                            self.retry_count += 1
+                            backoff_time = min(2.0**self.retry_count, 10.0)
+
+                            logger.warning(
+                                "Swift CLI process ended unexpectedly. "
+                                "Attempting to restart (%d/%d) "
+                                "after %.1fs...",
+                                self.retry_count,
+                                self.max_retries,
+                                backoff_time,
+                            )
+
+                            if self.stop_event.wait(backoff_time):
+                                break
+
+                            chunk_pump.clear_system()
+
+                            if self.stop_event.is_set():
+                                break
+
+                            if screen_capture.restart():
+                                logger.info("✓ Swift CLI restarted successfully")
+                                self.retry_count = 0
+                            else:
+                                logger.error(
+                                    "Failed to restart Swift CLI (%d/%d)",
+                                    self.retry_count,
+                                    self.max_retries,
+                                )
+                        else:
+                            logger.error(
+                                "Max retries (%d) reached for Swift CLI. "
+                                "Continuing with microphone-only capture.",
+                                self.max_retries,
+                            )
+                            _stop_capture_quietly(screen_capture)
+                            screen_capture = None
+                            self.screen_capture = None
+                            break
+                elif screen_capture and not screen_capture.is_capturing:
+                    if self.retry_count < self.max_retries:
+                        self.retry_count += 1
+                        logger.warning(
+                            "Swift CLI not capturing. Attempting restart (%d/%d)...",
+                            self.retry_count,
+                            self.max_retries,
+                        )
+                        if screen_capture.restart():
+                            logger.info("✓ Swift CLI restarted successfully")
+                            self.retry_count = 0
+                        else:
+                            logger.error(
+                                "Failed to restart Swift CLI (%d/%d)",
+                                self.retry_count,
+                                self.max_retries,
+                            )
+                    else:
+                        logger.error("Max retries reached for Swift CLI")
+                        _stop_capture_quietly(screen_capture)
+                        screen_capture = None
+                        self.screen_capture = None
+                        break
+
+        self._monitor_thread = threading.Thread(target=monitor_swift_cli, daemon=True)
+        self._monitor_thread.start()
+        logger.debug("Started Swift CLI monitoring thread")
+
+    def join_stderr(self, timeout: float = 2.0) -> None:
+        """Wait briefly for the stderr drain thread to finish."""
+        try:
+            if self._stderr_thread is not None:
+                self._stderr_thread.join(timeout=timeout)
+        except Exception:
+            logger.debug("Failed to join ffmpeg stderr thread", exc_info=True)
+
+
 def run_streaming_capture(
     output_dir: Path,
     combined_transcript: Path | None = None,
@@ -631,11 +872,8 @@ def run_streaming_capture(
             logger.info("Using ffmpeg for microphone only")
             logger.info("ffmpeg command: %s", ' '.join(ffmpeg_cmd))
 
-        # Buffer para combinar audio del sistema + micrófono
-        combined_audio_buffer = bytearray()
-        system_audio_buffer = bytearray()
-        mic_audio_buffer = bytearray()
-        audio_buffer_lock = threading.Lock()
+        chunk_pump_holder: list[ChunkPump | None] = [None]
+        supervisor = CaptureSupervisor(stop_event)
 
         # Iniciar ScreenCaptureKit si está disponible
         if use_screen_capture:
@@ -643,15 +881,14 @@ def run_streaming_capture(
 
                 def system_audio_callback(pcm_data: bytes):
                     """Callback para audio del sistema desde ScreenCaptureKit"""
-                    with audio_buffer_lock:
-                        system_audio_buffer.extend(pcm_data)
-                        system_buffer_size = len(system_audio_buffer)
-                    # Log solo ocasionalmente para no saturar los logs
-                    if (
-                        system_buffer_size % 64000 == 0
-                    ):  # ~4 segundos de audio a 16kHz
+                    pump = chunk_pump_holder[0]
+                    if pump is None:
+                        return
+                    pump.append_system(pcm_data)
+                    system_buffer_size = pump.system_buffer_size()
+                    if system_buffer_size % 64000 == 0:
                         logger.debug(
-                            f"System audio buffer: {system_buffer_size} bytes"
+                            "System audio buffer: %s bytes", system_buffer_size
                         )
 
                 screen_capture = ScreenCaptureAudioCapture(
@@ -676,94 +913,6 @@ def run_streaming_capture(
                 logger.error("Error starting ScreenCaptureKit: %s", e, exc_info=True)
                 screen_capture = None
 
-        # Thread para monitorear y reconectar Swift CLI si falla
-        max_retries = 3
-        retry_count = 0
-
-        def monitor_swift_cli():
-            """Monitorea el proceso Swift CLI y lo reinicia si falla."""
-            nonlocal screen_capture, retry_count, system_audio_buffer
-
-            if not use_screen_capture or not screen_capture:
-                return
-
-            while not stop_event.is_set():
-                # Verificar cada 5 segundos si el proceso está vivo
-                if stop_event.wait(5.0):
-                    break
-
-                if stop_event.is_set():
-                    break
-
-                # Verificar si el proceso Swift terminó inesperadamente
-                if screen_capture and screen_capture.process:
-                    if screen_capture.process.poll() is not None:
-                        # Proceso terminó
-                        if retry_count < max_retries:
-                            retry_count += 1
-                            backoff_time = min(
-                                2.0**retry_count, 10.0
-                            )  # Exponential backoff, max 10s
-
-                            logger.warning(
-                                f"Swift CLI process ended unexpectedly. "
-                                f"Attempting to restart ({retry_count}/{max_retries}) "
-                                f"after {backoff_time:.1f}s..."
-                            )
-
-                            if stop_event.wait(backoff_time):
-                                break
-
-                            # Limpiar buffer de audio del sistema
-                            with audio_buffer_lock:
-                                system_audio_buffer.clear()
-
-                            if stop_event.is_set():
-                                break
-
-                            # Intentar reiniciar
-                            if screen_capture.restart():
-                                logger.info("✓ Swift CLI restarted successfully")
-                                retry_count = 0  # Reset retry count on success
-                            else:
-                                logger.error(
-                                    f"Failed to restart Swift CLI ({retry_count}/{max_retries})"
-                                )
-                        else:
-                            logger.error(
-                                f"Max retries ({max_retries}) reached for Swift CLI. "
-                                "Continuing with microphone-only capture."
-                            )
-                            _stop_capture_quietly(screen_capture)
-                            screen_capture = None
-                            break
-                elif screen_capture and not screen_capture.is_capturing:
-                    # Si no está capturando pero debería, intentar reiniciar
-                    if retry_count < max_retries:
-                        retry_count += 1
-                        logger.warning(
-                            f"Swift CLI not capturing. Attempting restart ({retry_count}/{max_retries})..."
-                        )
-                        if screen_capture.restart():
-                            logger.info("✓ Swift CLI restarted successfully")
-                            retry_count = 0
-                        else:
-                            logger.error(
-                                f"Failed to restart Swift CLI ({retry_count}/{max_retries})"
-                            )
-                    else:
-                        logger.error("Max retries reached for Swift CLI")
-                        _stop_capture_quietly(screen_capture)
-                        screen_capture = None
-                        break
-
-        # Iniciar thread de monitoreo si ScreenCaptureKit está activo
-        monitor_thread = None
-        if use_screen_capture and screen_capture:
-            monitor_thread = threading.Thread(target=monitor_swift_cli, daemon=True)
-            monitor_thread.start()
-            logger.debug("Started Swift CLI monitoring thread")
-
         # Iniciar ffmpeg con stdout como pipe (micrófono)
         process = subprocess.Popen(
             ffmpeg_cmd,
@@ -772,27 +921,7 @@ def run_streaming_capture(
             bufsize=0,  # Sin buffering
         )
 
-        # Thread para leer stderr (logs de ffmpeg)
-        stderr_tail: deque[str] = deque(maxlen=50)
-
-        def read_stderr():
-            if process.stderr:
-                for line in iter(process.stderr.readline, b""):
-                    if line:
-                        line_str = line.decode("utf-8", errors="ignore").strip()
-                        stderr_tail.append(line_str)
-                        # Mostrar errores y warnings en nivel INFO
-                        if (
-                            "error" in line_str.lower()
-                            or "warning" in line_str.lower()
-                            or "failed" in line_str.lower()
-                        ):
-                            logger.warning("ffmpeg: %s", line_str)
-                        else:
-                            logger.debug("ffmpeg: %s", line_str)
-
-        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
-        stderr_thread.start()
+        supervisor.start_stderr_drain(process)
 
         # Leer stream de audio desde stdout
         # ffmpeg con -f wav - escribe un WAV continuo con header al inicio
@@ -887,19 +1016,22 @@ def run_streaming_capture(
             logger.warning("Failed to open session WAV for diarization (continuing)")
             session_wav_writer = None
 
-        # Buffer para acumular datos PCM (solo micrófono cuando no hay ScreenCaptureKit)
-        pcm_buffer = bytearray()
+        chunk_pump = ChunkPump(
+            mic_chunk_bytes=chunk_audio_bytes,
+            system_chunk_bytes=system_chunk_bytes,
+            pcm_chunk_bytes=chunk_audio_bytes,
+        )
+        chunk_pump_holder[0] = chunk_pump
+        if use_screen_capture and screen_capture:
+            supervisor.start_swift_monitor(screen_capture, chunk_pump)
+
         warned_no_system_audio = [False]
         logged_system_audio_ok = [False]
         system_amplitude_log_count = [0]
 
         # Thread para leer y procesar chunks
         def process_audio_stream(transcriber_local: Any) -> None:
-            nonlocal \
-                pcm_buffer, \
-                system_audio_buffer, \
-                mic_audio_buffer, \
-                combined_audio_buffer
+            nonlocal screen_capture
 
             logger.debug("process_audio_stream started")
             iteration = 0
@@ -908,17 +1040,18 @@ def run_streaming_capture(
                 iteration += 1
                 poll_result = process.poll()
                 if poll_result is not None:
-                    # ffmpeg process died - capture stderr for diagnosis
                     logger.error(
-                        f"ffmpeg process died unexpectedly after {iteration} iterations. "
-                        f"Exit code: {poll_result}"
+                        "ffmpeg process died unexpectedly after %d iterations. "
+                        "Exit code: %s",
+                        iteration,
+                        poll_result,
                     )
                     logger.error("ffmpeg command was: %s", ' '.join(ffmpeg_cmd))
-                    if stderr_tail:
+                    if supervisor.stderr_tail:
                         logger.error(
-                            "ffmpeg stderr (recent):\n%s", "\n".join(stderr_tail)
+                            "ffmpeg stderr (recent):\n%s",
+                            "\n".join(supervisor.stderr_tail),
                         )
-                    # Read any remaining stderr for the error message
                     if process.stderr:
                         try:
                             stderr_data = process.stderr.read()
@@ -936,60 +1069,29 @@ def run_streaming_capture(
                     logger.error("ffmpeg stdout pipe is unavailable")
                     break
 
-                # Leer datos PCM del micrófono (sin header WAV, solo datos PCM)
                 chunk = stdout.read(8192)
-                if chunk:
-                    # El header WAV ya fue leído, estos son datos PCM puros
-                    with audio_buffer_lock:
-                        mic_audio_buffer.extend(chunk)
 
-                # Combinar audio del sistema + micrófono si ScreenCaptureKit está activo
-                if screen_capture and screen_capture.is_capturing:
-                    # Combinar buffers cuando tengamos datos de ambos
-                    # Necesitamos sincronizar los dos streams
-                    # Por simplicidad, combinamos cuando ambos tienen datos suficientes
-
-                    # Tamaños de chunk POR STREAM: cada uno representa la misma
-                    # duración (chunk_duration) aunque los rates difieran.
-                    mic_chunk_size = chunk_audio_bytes
-                    system_chunk_size = system_chunk_bytes
-
-                    with audio_buffer_lock:
-                        has_mixed_chunk = (
-                            len(system_audio_buffer) >= system_chunk_size
-                            and len(mic_audio_buffer) >= mic_chunk_size
-                        )
-                        if has_mixed_chunk:
-                            # Extraer un chunk de igual DURACIÓN de cada stream
-                            system_chunk = bytes(
-                                system_audio_buffer[:system_chunk_size]
-                            )
-                            mic_chunk = bytes(mic_audio_buffer[:mic_chunk_size])
-
-                            # Remover del buffer (cada uno por su propio tamaño)
-                            del system_audio_buffer[:system_chunk_size]
-                            del mic_audio_buffer[:mic_chunk_size]
-
-                    if has_mixed_chunk:
+                active_capture = supervisor.screen_capture or screen_capture
+                if active_capture and active_capture.is_capturing:
+                    if chunk:
+                        chunk_pump.append_mic(chunk)
+                    mixed = chunk_pump.try_pop_mixed_chunks()
+                    if mixed is not None:
+                        system_chunk, mic_chunk = mixed
                         if not logged_system_audio_ok[0]:
                             logger.info(
                                 "System audio (Core Audio Taps) + mic: mixing and recording"
                             )
                             logged_system_audio_ok[0] = True
 
-                        # Convertir a numpy arrays para mezclar
                         system_array = np.frombuffer(system_chunk, dtype=np.int16)
                         mic_array = np.frombuffer(mic_chunk, dtype=np.int16)
 
-                        # Reconciliar rates: llevar el sistema al conteo de
-                        # muestras del micrófono (su rate) para mezclar duraciones
-                        # alineadas en lugar de bytes desalineados.
                         if len(system_array) != len(mic_array):
                             system_array = _resample_int16(
                                 system_array, len(mic_array)
                             )
 
-                        # Diagnóstico: si el sistema es todo ceros, el WAV suena solo a mic
                         if system_amplitude_log_count[0] < 5:
                             sys_max = int(np.abs(system_array).max())
                             logger.info(
@@ -1004,14 +1106,12 @@ def run_streaming_capture(
                                 )
                             system_amplitude_log_count[0] += 1
 
-                        # Mezclar con normalización dinámica
                         mic_boost = get_float_env(
                             "AUDIO_MIC_BOOST", 1.2, min_value=0.1, max_value=5.0
                         )
                         combined_array = mix_audio(system_array, mic_array, mic_boost)
                         combined_chunk = combined_array.tobytes()
 
-                        # Crear WAV chunk completo con header
                         wav_chunk = _create_wav_chunk(
                             wav_header,
                             combined_chunk,
@@ -1020,11 +1120,13 @@ def run_streaming_capture(
                             bits_per_sample,
                         )
 
-                        # Procesar chunk
                         try:
                             logger.debug(
-                                f"🎵 Processing COMBINED audio: System={len(system_chunk)} bytes, "
-                                f"Mic={len(mic_chunk)} bytes, Combined={len(combined_chunk)} bytes"
+                                "🎵 Processing COMBINED audio: System=%d bytes, "
+                                "Mic=%d bytes, Combined=%d bytes",
+                                len(system_chunk),
+                                len(mic_chunk),
+                                len(combined_chunk),
                             )
                             if session_wav_writer:
                                 session_wav_writer.writeframes(combined_chunk)
@@ -1037,16 +1139,11 @@ def run_streaming_capture(
                                 )
                         except Exception as e:
                             logger.error(
-                                f"Error processing audio chunk: {e}", exc_info=True
+                                "Error processing audio chunk: %s", e, exc_info=True
                             )
                     else:
-                        # Si no tenemos datos suficientes, esperar un poco
-                        # Pero también procesar solo micrófono si el sistema no tiene datos
-                        if (
-                            len(mic_audio_buffer) >= mic_chunk_size
-                            and len(system_audio_buffer) == 0
-                        ):
-                            # Solo micrófono disponible: Core Audio Taps no está enviando audio del sistema
+                        mic_only_chunk = chunk_pump.try_pop_mic_only()
+                        if mic_only_chunk is not None:
                             if not warned_no_system_audio[0]:
                                 logger.warning(
                                     "No system audio from Swift CLI (Core Audio Taps). "
@@ -1056,13 +1153,10 @@ def run_streaming_capture(
                             logger.debug(
                                 "⚠️  No system audio available, processing microphone only"
                             )
-                            mic_chunk = bytes(mic_audio_buffer[:mic_chunk_size])
-                            mic_audio_buffer = mic_audio_buffer[mic_chunk_size:]
 
-                            # Crear WAV chunk solo con micrófono
                             wav_chunk = _create_wav_chunk(
                                 wav_header,
-                                mic_chunk,
+                                mic_only_chunk,
                                 n_channels,
                                 file_sample_rate,
                                 bits_per_sample,
@@ -1070,87 +1164,86 @@ def run_streaming_capture(
 
                             try:
                                 logger.debug(
-                                    f"🎤 Processing microphone-only chunk: {len(mic_chunk)} bytes"
+                                    "🎤 Processing microphone-only chunk: %d bytes",
+                                    len(mic_only_chunk),
                                 )
                                 if session_wav_writer:
-                                    session_wav_writer.writeframes(mic_chunk)
+                                    session_wav_writer.writeframes(mic_only_chunk)
                                 result = transcriber_local.process_wav_chunk(wav_chunk)
                                 if result:
                                     logger.info(
-                                        f"✅ Transcription result (mic only): {result}"
+                                        "✅ Transcription result (mic only): %s", result
                                     )
                             except Exception as e:
                                 logger.error(
-                                    f"Error processing mic-only chunk: {e}",
-                                    exc_info=True,
-                                )
-                        elif (
-                            len(system_audio_buffer) >= system_chunk_size
-                            and len(mic_audio_buffer) == 0
-                        ):
-                            # Solo sistema disponible, procesar solo eso
-                            logger.debug(
-                                "🔊 Processing system audio only (no microphone)"
-                            )
-                            system_chunk = bytes(system_audio_buffer[:system_chunk_size])
-                            system_audio_buffer = system_audio_buffer[system_chunk_size:]
-
-                            # El WAV chunk se declara al file_sample_rate; si el
-                            # sistema fue capturado a otro rate, resamplear para
-                            # que la duración/velocidad sea correcta.
-                            if file_sample_rate != sample_rate:
-                                system_array = np.frombuffer(system_chunk, dtype=np.int16)
-                                target_len = int(
-                                    len(system_array) * file_sample_rate / sample_rate
-                                )
-                                system_chunk = _resample_int16(
-                                    system_array, target_len
-                                ).tobytes()
-
-                            # Crear WAV chunk solo con sistema
-                            wav_chunk = _create_wav_chunk(
-                                wav_header,
-                                system_chunk,
-                                n_channels,
-                                file_sample_rate,
-                                bits_per_sample,
-                            )
-
-                            try:
-                                logger.debug(
-                                    f"🔊 Processing system-only chunk: {len(system_chunk)} bytes"
-                                )
-                                if session_wav_writer:
-                                    session_wav_writer.writeframes(system_chunk)
-                                result = transcriber_local.process_wav_chunk(wav_chunk)
-                                if result:
-                                    logger.info(
-                                        f"✅ Transcription result (system only): {result}"
-                                    )
-                            except Exception as e:
-                                logger.error(
-                                    f"Error processing system-only chunk: {e}",
+                                    "Error processing mic-only chunk: %s",
+                                    e,
                                     exc_info=True,
                                 )
                         else:
-                            time.sleep(0.01)
+                            system_chunk = None
+                            if chunk_pump.mic_buffer_empty():
+                                system_chunk = chunk_pump.try_pop_system_only()
+                            if system_chunk is not None:
+                                logger.debug(
+                                    "🔊 Processing system audio only (no microphone)"
+                                )
+
+                                if file_sample_rate != sample_rate:
+                                    system_array = np.frombuffer(
+                                        system_chunk, dtype=np.int16
+                                    )
+                                    target_len = int(
+                                        len(system_array)
+                                        * file_sample_rate
+                                        / sample_rate
+                                    )
+                                    system_chunk = _resample_int16(
+                                        system_array, target_len
+                                    ).tobytes()
+
+                                wav_chunk = _create_wav_chunk(
+                                    wav_header,
+                                    system_chunk,
+                                    n_channels,
+                                    file_sample_rate,
+                                    bits_per_sample,
+                                )
+
+                                try:
+                                    logger.debug(
+                                        "🔊 Processing system-only chunk: %d bytes",
+                                        len(system_chunk),
+                                    )
+                                    if session_wav_writer:
+                                        session_wav_writer.writeframes(system_chunk)
+                                    result = transcriber_local.process_wav_chunk(
+                                        wav_chunk
+                                    )
+                                    if result:
+                                        logger.info(
+                                            "✅ Transcription result (system only): %s",
+                                            result,
+                                        )
+                                except Exception as e:
+                                    logger.error(
+                                        "Error processing system-only chunk: %s",
+                                        e,
+                                        exc_info=True,
+                                    )
+                            else:
+                                time.sleep(0.01)
                 else:
-                    # Solo micrófono (modo fallback)
                     if not chunk:
                         if stop_event.is_set():
                             break
                         time.sleep(0.05)
                         continue
 
-                    pcm_buffer.extend(chunk)
+                    chunk_pump.append_pcm(chunk)
 
-                    # Procesar chunks completos
-                    while len(pcm_buffer) >= chunk_audio_bytes:
-                        # Extraer chunk de audio PCM
-                        pcm_chunk = bytes(pcm_buffer[:chunk_audio_bytes])
-                        pcm_buffer = pcm_buffer[chunk_audio_bytes:]
-
-                        # Crear WAV chunk completo con header
+                    pcm_chunk = chunk_pump.try_pop_pcm_chunk()
+                    while pcm_chunk is not None:
                         wav_chunk = _create_wav_chunk(
                             wav_header,
                             pcm_chunk,
@@ -1159,7 +1252,6 @@ def run_streaming_capture(
                             bits_per_sample,
                         )
 
-                        # Procesar chunk
                         try:
                             if session_wav_writer:
                                 session_wav_writer.writeframes(pcm_chunk)
@@ -1172,16 +1264,17 @@ def run_streaming_capture(
                                 )
                         except Exception as e:
                             logger.error(
-                                f"Error processing audio chunk: {e}", exc_info=True
+                                "Error processing audio chunk: %s", e, exc_info=True
                             )
+                        pcm_chunk = chunk_pump.try_pop_pcm_chunk()
 
-            # Log why the thread is ending
             if stop_event.is_set():
                 logger.info("process_audio_stream ending: stop_event was set")
             else:
                 logger.warning(
-                    f"process_audio_stream ending after {iteration} iterations "
-                    "(ffmpeg died or no more data)"
+                    "process_audio_stream ending after %d iterations "
+                    "(ffmpeg died or no more data)",
+                    iteration,
                 )
 
         # Iniciar thread de procesamiento
@@ -1266,8 +1359,8 @@ def run_streaming_capture(
 
         # Asegurar que el thread de stderr termine (no bloqueante)
         try:
-            if "stderr_thread" in locals() and stderr_thread is not None:
-                stderr_thread.join(timeout=2.0)
+            if "supervisor" in locals():
+                supervisor.join_stderr(timeout=2.0)
         except Exception:
             logger.debug("Failed to join ffmpeg stderr thread", exc_info=True)
 

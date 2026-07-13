@@ -540,6 +540,63 @@ def test_t6_post_user_notes_malformed_path_returns_404(live_server) -> None:
     assert body["ok"] is False
 
 
+def test_recording_user_notes_rejects_stale_session_id(app_state: AppState) -> None:
+    """POST /api/recording/user-notes must 409 when session_id != active session."""
+    handler = _make_handler(app_state)
+
+    class ActiveSession:
+        is_active = True
+        db_session_id = "current-sess"
+
+    app_state.session = ActiveSession()  # type: ignore[assignment]
+
+    payload, status = handler._save_recording_user_notes({
+        "session_id": "old-sess",
+        "user_notes": "stale notes",
+    })
+    assert status == 409
+    assert payload["ok"] is False
+    assert payload["error"] == "Session mismatch"
+
+
+def test_recording_user_notes_requires_session_id(app_state: AppState) -> None:
+    """POST /api/recording/user-notes without session_id returns 400."""
+    handler = _make_handler(app_state)
+
+    class ActiveSession:
+        is_active = True
+        db_session_id = "current-sess"
+
+    app_state.session = ActiveSession()  # type: ignore[assignment]
+
+    with pytest.raises(ApiError, match="session_id is required"):
+        handler._save_recording_user_notes({"user_notes": "notes"})
+
+
+def test_recording_user_notes_persists_for_matching_session_id(
+    app_state: AppState,
+) -> None:
+    """POST /api/recording/user-notes saves when session_id matches active session."""
+    handler = _make_handler(app_state)
+    session_id = app_state.db.create_session(name="Live")
+
+    class ActiveSession:
+        is_active = True
+        db_session_id = session_id
+
+    app_state.session = ActiveSession()  # type: ignore[assignment]
+
+    payload, status = handler._save_recording_user_notes({
+        "session_id": session_id,
+        "user_notes": "live jots",
+    })
+    assert status == 200
+    assert payload["ok"] is True
+    row = app_state.db.get_session(session_id)
+    assert row is not None
+    assert row["user_notes"] == "live jots"
+
+
 # ---------------------------------------------------------------------------
 # v1.0.0 T4 — /api/version no longer leaks the absolute project_dir path
 # ---------------------------------------------------------------------------

@@ -1033,6 +1033,11 @@ class _Handler(BaseHTTPRequestHandler):
             db_session_id = session.db_session_id
         if not db_session_id:
             return {"ok": False, "error": "Session not yet created"}, 409
+        client_session_id = body.get("session_id")
+        if not client_session_id or not isinstance(client_session_id, str):
+            raise ApiError("session_id is required", 400)
+        if client_session_id != db_session_id:
+            return {"ok": False, "error": "Session mismatch"}, 409
         db = self._require_db()
         user_notes = body.get("user_notes", "")
         if user_notes is not None and not isinstance(user_notes, str):
