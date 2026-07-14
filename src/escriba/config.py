@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from escriba.knowledge.constants import EXPORT_TIMEOUT_CAP_SECONDS
 from escriba.transcribe.config import HallucinationConfig, VADConfig
 from escriba.utils.env import (
     get_bool_env,
@@ -24,7 +25,9 @@ VALID_BACKENDS: frozenset[str] = frozenset(
     {"mlx-whisper", "faster-whisper", "openai-whisper"}
 )
 VALID_AUDIO_SOURCES: frozenset[str] = frozenset({"system", "mic", "both"})
-VALID_KNOWLEDGE_PROVIDERS: frozenset[str] = frozenset({"local-markdown"})
+VALID_KNOWLEDGE_PROVIDERS: frozenset[str] = frozenset(
+    {"local-markdown", "webhook", "custom-script"}
+)
 
 
 class ConfigValidationError(ValueError):
@@ -307,9 +310,29 @@ class KnowledgeStoreMdConfig:
 
 
 @dataclass(frozen=True)
+class KnowledgeStoreWebhookConfig:
+    url: str = ""
+    auth_env: str = "ESCRIBA_WEBHOOK_TOKEN"
+    timeout_seconds: float = 10.0
+
+
+@dataclass(frozen=True)
+class KnowledgeStoreScriptConfig:
+    path: str = ""
+    scripts_dir: str = "~/Library/Application Support/Escriba/scripts"
+    timeout_seconds: float = 10.0
+
+
+@dataclass(frozen=True)
 class KnowledgeStoreConfig:
     provider: str = "local-markdown"
     local_markdown: KnowledgeStoreMdConfig = field(default_factory=KnowledgeStoreMdConfig)
+    webhook: KnowledgeStoreWebhookConfig = field(
+        default_factory=KnowledgeStoreWebhookConfig
+    )
+    custom_script: KnowledgeStoreScriptConfig = field(
+        default_factory=KnowledgeStoreScriptConfig
+    )
 
 
 @dataclass(frozen=True)
@@ -470,6 +493,59 @@ class AppConfig:
             )
         # Validate the output_dir is at least parseable (expanduser should not fail).
         Path(ks.local_markdown.output_dir).expanduser()
+        if ks.provider == "custom-script" and not ks.custom_script.path.strip():
+            raise ConfigValidationError(
+                "knowledge_store.custom-script.path is required when provider is 'custom-script'"
+            )
+        from escriba.knowledge.custom_script import (  # noqa: PLC0415
+            CustomScriptPathError,
+            validate_script_path_config,
+        )
+        from escriba.knowledge.url_safety import (  # noqa: PLC0415
+            WebhookUrlError,
+            validate_webhook_auth_env,
+            validate_webhook_url,
+        )
+
+        try:
+            validate_webhook_auth_env(ks.webhook.auth_env)
+        except WebhookUrlError as exc:
+            raise ConfigValidationError(str(exc)) from exc
+        if ks.webhook.url.strip():
+            try:
+                validate_webhook_url(ks.webhook.url)
+            except WebhookUrlError as exc:
+                raise ConfigValidationError(str(exc)) from exc
+        if ks.provider == "webhook" and not ks.webhook.url.strip():
+            raise ConfigValidationError(
+                "knowledge_store.webhook.url is required when provider is 'webhook'"
+            )
+        if ks.custom_script.path.strip():
+            try:
+                validate_script_path_config(
+                    ks.custom_script.path,
+                    ks.custom_script.scripts_dir,
+                )
+            except CustomScriptPathError as exc:
+                raise ConfigValidationError(str(exc)) from exc
+        if ks.webhook.timeout_seconds <= 0:
+            raise ConfigValidationError(
+                "knowledge_store.webhook.timeout_seconds must be > 0"
+            )
+        if ks.webhook.timeout_seconds > EXPORT_TIMEOUT_CAP_SECONDS:
+            raise ConfigValidationError(
+                "knowledge_store.webhook.timeout_seconds must be "
+                f"<= {EXPORT_TIMEOUT_CAP_SECONDS:g}"
+            )
+        if ks.custom_script.timeout_seconds <= 0:
+            raise ConfigValidationError(
+                "knowledge_store.custom-script.timeout_seconds must be > 0"
+            )
+        if ks.custom_script.timeout_seconds > EXPORT_TIMEOUT_CAP_SECONDS:
+            raise ConfigValidationError(
+                "knowledge_store.custom-script.timeout_seconds must be "
+                f"<= {EXPORT_TIMEOUT_CAP_SECONDS:g}"
+            )
 
     @classmethod
     def load(
@@ -690,9 +766,29 @@ class AppConfig:
             output_dir=ks_md_output_dir if ks_md_output_dir is not None else "~/Documents/Escriba",
             template=ks_md_template if ks_md_template is not None else "default",
         )
+        ks_webhook_section = _get_section(ks_section, "webhook")
+        ks_webhook_url = _get_toml_str(ks_webhook_section, "url")
+        ks_webhook_auth = _get_toml_str(ks_webhook_section, "auth_env")
+        ks_webhook_timeout = _get_toml_float(ks_webhook_section, "timeout_seconds")
+        ks_webhook_cfg = KnowledgeStoreWebhookConfig(
+            url=ks_webhook_url or "",
+            auth_env=ks_webhook_auth or "ESCRIBA_WEBHOOK_TOKEN",
+            timeout_seconds=ks_webhook_timeout if ks_webhook_timeout is not None else 10.0,
+        )
+        ks_script_section = _get_section(ks_section, "custom-script")
+        ks_script_path = _get_toml_str(ks_script_section, "path")
+        ks_script_dir = _get_toml_str(ks_script_section, "scripts_dir")
+        ks_script_timeout = _get_toml_float(ks_script_section, "timeout_seconds")
+        ks_script_cfg = KnowledgeStoreScriptConfig(
+            path=ks_script_path or "",
+            scripts_dir=ks_script_dir or "~/Library/Application Support/Escriba/scripts",
+            timeout_seconds=ks_script_timeout if ks_script_timeout is not None else 10.0,
+        )
         ks_cfg = KnowledgeStoreConfig(
             provider=ks_provider if ks_provider is not None else "local-markdown",
             local_markdown=ks_md_cfg,
+            webhook=ks_webhook_cfg,
+            custom_script=ks_script_cfg,
         )
 
         cfg = cls(
@@ -841,6 +937,16 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
             "local-markdown": {
                 "output_dir": cfg.knowledge_store.local_markdown.output_dir,
                 "template": cfg.knowledge_store.local_markdown.template,
+            },
+            "webhook": {
+                "url": cfg.knowledge_store.webhook.url,
+                "auth_env": cfg.knowledge_store.webhook.auth_env,
+                "timeout_seconds": cfg.knowledge_store.webhook.timeout_seconds,
+            },
+            "custom-script": {
+                "path": cfg.knowledge_store.custom_script.path,
+                "scripts_dir": cfg.knowledge_store.custom_script.scripts_dir,
+                "timeout_seconds": cfg.knowledge_store.custom_script.timeout_seconds,
             },
         },
     }
