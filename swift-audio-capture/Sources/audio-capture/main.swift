@@ -10,14 +10,9 @@ var shouldStop = false
 
 // Signal handler (wrapper so we can register at top level)
 func signalHandler(signal: Int32) {
+    // Set the flag and let the main run loop exit cleanly — do not call exit() here
+    // or we skip the shared cleanup path below (double-stop is safe).
     shouldStop = true
-    if #available(macOS 14.2, *) {
-        (audioCapture as? CoreAudioTapCapture)?.stop()
-    }
-    if #available(macOS 13.0, *) {
-        (audioCapture as? AudioCapture)?.stop()
-    }
-    exit(0)
 }
 
 // Setup signal handlers
@@ -150,6 +145,9 @@ if useScreenCapture {
             }
         }
         audioCapture = capture
+        if shouldStop {
+            exit(0)
+        }
         do {
             try capture.start()
             try? stderr.write(contentsOf: "Started audio capture (ScreenCaptureKit). Sample rate: \(sampleRate) Hz, Channels: \(channelCount)\n".data(using: .utf8)!)
@@ -179,9 +177,13 @@ if useScreenCapture {
         try? stderr.write(contentsOf: errorMsg.data(using: .utf8)!)
         
         CoreAudioTapCapture.requestPermission()
-        
+
         Thread.sleep(forTimeInterval: 2.0)
-        
+
+        if shouldStop {
+            exit(0)
+        }
+
         if !CoreAudioTapCapture.checkPermission() {
             try? stderr.write(contentsOf: "Error: Audio Capture permission not granted. Please grant permission and try again.\n".data(using: .utf8)!)
             exit(1)
@@ -199,7 +201,11 @@ if useScreenCapture {
         }
     }
     audioCapture = capture
-    
+
+    if shouldStop {
+        exit(0)
+    }
+
     do {
         try capture.start()
         try? stderr.write(contentsOf: "Started audio capture (Core Audio Taps). Sample rate: \(sampleRate) Hz, Channels: \(channelCount)\n".data(using: .utf8)!)
