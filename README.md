@@ -16,7 +16,7 @@ Local audio transcription app for macOS. Captures system audio + microphone, tra
 - **AI notes** — generate summaries, action items, meeting minutes on-device (local `mlx-lm`) or via Gemini/Claude; local generation runs in a subprocess so the dashboard stays responsive while notes are produced
 - **Live notepad (jot & enhance)** — jot key points during a meeting on the primary notepad (scoped to the active session across view switches and auto-record starts); one **Enhance** turns your shorthand into a finished note in place, combined with the transcript — your words are kept and AI additions are clearly marked. Enhanced notes persist with the session, and you can later edit **both** your own notes and the AI output on a saved session
 - **Markdown export** — auto-save each session's notes + transcript via a configurable knowledge adapter (`[knowledge_store]` in `escriba.toml`); default `local-markdown`, optional `webhook` / `custom-script`
-- **Up next (calendar spike)** — home shows the soonest Apple Calendar event with one-tap Record (pre-titles the session); calendar auto-start is not enabled yet
+- **Up next (calendar spike)** — home shows the soonest Apple Calendar event with one-tap Record (pre-titles the session); choose which calendars to read in Settings; calendar auto-start is not enabled yet
 - **Speaker detection** — simple energy-based or pyannote diarization
 - **Keyboard navigation** — arrow keys move through the session list and seek the player, Space plays/pauses, with focus rings and screen-reader labels
 - **Settings UI** — configure everything from the dashboard
@@ -192,9 +192,8 @@ uv run escriba download-model
 uv run escriba live-stream --output-dir transcripts
 uv run escriba live --output-dir transcripts          # non-streaming live capture
 
-# Batch: watch a folder or the calendar for meetings
+# Batch: watch a folder for new audio files
 uv run escriba watch --dir audios --output-dir transcripts
-uv run escriba watch-calendar                       # --auto-start is not implemented yet
 
 # Background transcription daemon
 uv run escriba daemon start

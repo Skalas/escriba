@@ -102,11 +102,10 @@ mic_boost = 1.2
 - **Nota:** Implementación básica. Para diarización completa ver #15 (Pyannote).
 
 ### 8. ✅ Integración con Calendario [COMPLETADO]
-*Implementado en Enero 2026.*
-- Observa Apple Calendar para detectar reuniones próximas
-- Detecta eventos con links de Zoom/Meet/Teams
-- Auto-start opcional para transcripciones
-- Uso: `watch-calendar --auto-start`
+*Implementado en Enero 2026; ampliado 2026-07.*
+- Lee eventos de Apple Calendar para **Up next** en el dashboard
+- Settings → Calendar: elige qué calendarios consultar (`[calendar].calendars` en `escriba.toml`)
+- Auto-start desde calendario **no** está habilitado (usar Auto-record on call para mic-activation)
 - Archivos: `src/escriba/calendar/` (apple_calendar.py)
 
 ### 9. ✅ Enviar Resumen por Mensaje [COMPLETADO]
@@ -252,7 +251,6 @@ escriba live-stream --metrics
 escriba live-stream --backend mlx-whisper
 
 # Integraciones
-escriba watch-calendar --auto-start
 escriba create-issues --transcript file.txt --repo owner/repo
 ```
 

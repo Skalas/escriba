@@ -9,12 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Calendar picker (#181).** Settings multi-select for which Apple Calendar calendars Escriba reads; `[calendar].calendars` in `escriba.toml`. Empty allowlist = all non-skipped calendars; saving an explicit set (including “all currently listed”) persists those names so new calendars are not auto-included. `GET /api/calendar/calendars` feeds the UI; Up next honors the allowlist.
 - **Atomic append-notes.** `POST /api/sessions/:id/append-notes` merges note fragments in one DB transaction; live Enhance and session generate use the append path so concurrent writes cannot drop text.
 - **Knowledge adapters — `webhook` + `custom-script`.** Opt-in export transports (HTTPS webhook with allowlisted token env; argv-not-shell script jailed under `scripts_dir`). Default remains `local-markdown`. Failures are fail-soft; export runs off the recording stop path.
 - **Thin calendar Up next (#64).** Home shows the soonest upcoming event; one-tap Record pre-titles the session. `--auto-start` stays blocked. Full calendar auto-start parked pending product decision.
 
 ### Fixed
+- **Calendar Up next reliability.** Per-calendar queries + short cache; safer name parsing (commas, C0 rejection); invalid `calendar.calendars` shapes rejected on config save instead of silently widening to all.
 - **P2 polish.** Named `SEEK_STEP_SECONDS`; removed duplicate session “Your notes” label; narrower calendar subprocess exceptions.
+
+### Removed
+- **`escriba watch-calendar` CLI** (orphan path unused by Up next). Calendar auto-start remains intentionally unavailable.
 
 ## [1.3.1] - 2026-07-13
 
