@@ -216,6 +216,25 @@ def _get_toml_str_list(section: dict[str, Any], key: str) -> list[str] | None:
     return None
 
 
+def _get_toml_calendar_names(section: dict[str, Any]) -> tuple[str, ...]:
+    """Load ``calendar.calendars``; reject invalid shapes instead of widening to all."""
+    if not _toml_has(section, "calendars"):
+        return ()
+    value = section["calendars"]
+    if not isinstance(value, list):
+        raise ConfigValidationError("calendar.calendars must be a list of strings")
+    names: list[str] = []
+    for idx, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ConfigValidationError(
+                f"calendar.calendars[{idx}] must be a string, got {type(item).__name__}"
+            )
+        stripped = item.strip()
+        if stripped:
+            names.append(stripped)
+    return tuple(names)
+
+
 @dataclass(frozen=True)
 class DictionaryConfig:
     """Custom vocabulary for improving transcription accuracy.
@@ -289,6 +308,18 @@ def _normalize_auto_record_start_mode(value: str | None) -> str:
     if value is not None:
         logger.warning("Invalid auto_record.start_mode %r, using 'prompt'", value)
     return "prompt"
+
+
+@dataclass(frozen=True)
+class CalendarConfig:
+    """Apple Calendar allowlist for Up next and related reads.
+
+    An empty ``calendars`` tuple means all non-skipped calendars (default when
+    the key is omitted or never customized). Settings saves an explicit list so
+    newly added calendars are not auto-included.
+    """
+
+    calendars: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -444,6 +475,7 @@ class AppConfig:
     vad: VADConfig = field(default_factory=VADConfig)
     hallucination: HallucinationConfig = field(default_factory=HallucinationConfig)
     dictionary: DictionaryConfig = field(default_factory=DictionaryConfig)
+    calendar: CalendarConfig = field(default_factory=CalendarConfig)
     auto_record: AutoRecordConfig = field(default_factory=AutoRecordConfig)
     auto_name: AutoNameConfig = field(default_factory=AutoNameConfig)
     local_llm: LocalLLMConfig = field(default_factory=LocalLLMConfig)
@@ -546,6 +578,13 @@ class AppConfig:
                 "knowledge_store.custom-script.timeout_seconds must be "
                 f"<= {EXPORT_TIMEOUT_CAP_SECONDS:g}"
             )
+        from escriba.calendar.apple_calendar import is_safe_calendar_name  # noqa: PLC0415
+
+        for name in self.calendar.calendars:
+            if not is_safe_calendar_name(name):
+                raise ConfigValidationError(
+                    f"calendar.calendars contains an invalid name: {name!r}"
+                )
 
     @classmethod
     def load(
@@ -682,6 +721,10 @@ class AppConfig:
             logprob_threshold=_resolve(logprob_thresh, lambda: get_float_env("WHISPER_LOGPROB_THRESHOLD", -1.0, max_value=0.0)),
         )
 
+        # Calendar (Up next allowlist)
+        cal_section = _get_section(toml_data, "calendar")
+        calendar_cfg = CalendarConfig(calendars=_get_toml_calendar_names(cal_section))
+
         # Auto-record (mic activation detection)
         ar_section = _get_section(toml_data, "auto_record")
         ar_enabled = _get_toml_bool(ar_section, "enabled")
@@ -797,6 +840,7 @@ class AppConfig:
             vad=vad_cfg,
             hallucination=hallucination_cfg,
             dictionary=dict_cfg,
+            calendar=calendar_cfg,
             auto_record=auto_record_cfg,
             auto_name=auto_name_cfg,
             local_llm=local_llm_cfg,
@@ -908,6 +952,9 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
         "dictionary": {
             "terms": list(cfg.dictionary.terms),
             "replacements": dict(cfg.dictionary.replacements),
+        },
+        "calendar": {
+            "calendars": list(cfg.calendar.calendars),
         },
         "auto_record": {
             "enabled": cfg.auto_record.enabled,
