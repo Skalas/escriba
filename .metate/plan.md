@@ -1,96 +1,83 @@
-# Sprint plan — post-split auto-rename + soak gates + download extraction + v1.3.0 tag
+# Sprint plan — in-app updates + docs sync + P2 cleanups + sidebar clip
 
-> Entry doc for `metate-prep`. Selected from the discover slate: candidates **1 + 2 + 4 + 5**
-> merged into one sprint.
-> Mode hint: **HOLD** overall (REDUCE for model-download extraction; release chore for the tag).
-> Do not expand calendar (#64) this cycle.
+> Entry doc for `metate-prep`. Selected from the discover slate: candidates **1 + 3 + 5 + 4**.
+> Mode hint: **EXPAND** for updates (#152); **HOLD** for docs sync and sidebar (#87);
+> **REDUCE**/opportunistic for P2 checklist (#105). No calendar (#64) this cycle.
 
 ## Goal
 
-Make post-split session titles auto-rename reliably (the real #137 failure), close the
-remaining human release gates (soak + clean install), extract model-download orchestration
-out of the HTTP presentation layer (#109), and cut/tag `v1.3.0` so the shipped code matches
-the docs.
-
-## Clarification on #137 (candidate 1)
-
-The reporter does **not** mind `(part 1)` / `(part 2)` as interim labels. The failure is that
-halves **did not automatically rename themselves** after split (post-split
-`_regenerate_title` / auto-name path). Nested `(part N)` stacking may still be cleaned as a
-small defensive side fix if cheap, but it is **not** the DoD of this strand.
+Ship an in-app update check with a one-click install path so users on `/Applications`
+learn about new releases; sync post-soak docs and push local `main`; clear a scoped
+slice of the P2 review checklist (#105); and fix the sidebar session-title clip (#87).
 
 ## Why now
 
-- **#137** (filed 2026-07-13): live sidebar left with stacked/default part names after split;
-  user expectation is LLM (or other) auto-rename of both halves.
-- **Aftercare / roadmap**: real-meeting soak + clean-install are still the open 1.0.x human
-  gates after the 1.3.0 code merge.
-- **#109**: download lifecycle still lives in `server.py` handlers — structural debt that
-  blocks CLI/daemon reuse and testability.
-- **v1.3.0 tag**: code for notes/timeouts/capture is on `main` but version metadata still
-  reads `1.2.0`; Unreleased changelog entries need a dated release.
+- **#152** — filed after `v1.3.0`; installers have no in-app upgrade path beyond re-running
+  `install.sh`.
+- **Docs/push** — human soak signed off but ROADMAP still says soak is open; `main` is
+  ahead of origin by the metate gitignore commit.
+- **#105** — opportunistic P2 bundle; pull only items adjacent to this sprint’s surface.
+- **#87** — open UX bug on the session list; ships next to the update banner (same SPA).
 
 ## Scope note
 
-Link existing issues where they match: **#137** (reframed), **#109**. Soak/clean-install and
-the release cut may need new ledger rows from prep. Out of scope: calendar spike (#64),
-sidebar clip (#87), P2 checklist (#105), CaptureSupervisor further split, server
-`append-notes`.
+Link **#152**, **#105**, **#87**. Docs/push may be ledger rows without new GitHub issues.
+Out of scope: calendar spike (#64), Swift XCTest, CaptureSupervisor further split,
+server `append-notes`.
 
 ## Definition of Done
 
-Done when: after a split, both halves receive auto-generated titles when auto-name is enabled
-(and failures are visible/logged, not silent forever-stuck part labels); soak + clean-install
-are executed and documented; model download is owned by an application-layer service shared
-by HTTP + CLI; `v1.3.0` is bumped, changelog-dated, tagged, and pushed. Ship gate green.
+Done when: a running older build can detect a newer GitHub release and offer a one-click
+update that reuses the installer path; ROADMAP reflects soak complete and `main` is pushed;
+selected #105 items are fixed with tests where core-loop adjacent; session titles no longer
+clip mid-line under sticky date headers. Ship gate green.
 
 ## Seed test matrix
 
-### Strand A — Post-split auto-rename (#137) · HOLD
+### Strand A — In-app updates (#152) · EXPAND
 
 | ID | Criterion |
 |----|-----------|
-| T1 | With auto-name enabled, splitting a session regenerates titles for **both** halves (not left on `(part N)` forever when generation succeeds) |
-| T2 | Auto-rename failure is observable (log + optional UI signal) without blocking the split response forever; fallback part names remain valid |
-| T3 | Manual rename still persists and refreshes the sidebar immediately |
-| T4 | Tests cover success path + failure/degraded path for post-split title regeneration |
+| T1 | `GET` update-check (or extended `/api/version`) compares `__version__` to GitHub `releases/latest`; returns current/latest/update_available/urls |
+| T2 | Dashboard (About and/or banner) notifies when update available; dismiss/snooze until next version |
+| T3 | One-click Update runs guarded upgrade (pull/ff, `uv sync`, rebuild `.app` / refresh capture asset as needed); progress + success/fail visible; prompts relaunch |
+| T4 | Offline / GitHub down → fail-soft (no error spam); mutating install respects CSRF |
+| T5 | CLI `escriba check-update` and/or `escriba update` for headless parity |
 
-Optional (non-blocking): strip/avoid nested `(part N)` when re-splitting an already-named half.
-
-### Strand B — Human release gates · HOLD
-
-| ID | Criterion |
-|----|-----------|
-| T5 | Real-meeting soak: record → transcribe → summarize without manual rescue; results documented |
-| T6 | Clean install-from-scratch (one-liner → `/Applications`) verified; results documented |
-| T7 | Any soak/install blockers filed as issues (or confirmed none) |
-
-### Strand C — Model-download extraction (#109) · REDUCE
+### Strand B — Post-soak docs + push · HOLD
 
 | ID | Criterion |
 |----|-----------|
-| T8 | `ModelDownloadService` (or equivalent) owns claim/cancel/progress/completion; HTTP handler is thin |
-| T9 | CLI `download-model` (and any daemon path) reuses the same service |
-| T10 | Unit tests cover the service without spinning the full HTTP server |
+| T6 | ROADMAP (and any stale “Where we are”) state soak + clean-install as done; next pointer → updates and/or calendar |
+| T7 | Push local `main` commits (incl. metate gitignore) to origin |
 
-### Strand D — Cut `v1.3.0` · HOLD (release)
+### Strand C — P2 checklist slice (#105) · REDUCE
 
 | ID | Criterion |
 |----|-----------|
-| T11 | Version unified at `1.3.0` across `pyproject.toml`, `src/escriba/__init__.py`, `uv.lock` |
-| T12 | CHANGELOG `[1.3.0]` dated; Unreleased cleared appropriately; ROADMAP marks 1.3.0 shipped |
-| T13 | Tag `v1.3.0` created and pushed (prep/ship timing: tag at ship after gate green) |
+| T8 | Triage #105; implement a bounded subset that is cheap adjacent to this sprint (document which items deferred) |
+| T9 | Each pulled item has a focused test or documented no-test rationale |
+
+### Strand D — Sidebar title clip (#87) · HOLD
+
+| ID | Criterion |
+|----|-----------|
+| T10 | Session titles in the sidebar do not clip mid-line above/under sticky date headers |
+| T11 | Visual check light + dark (SPA or manual); no regression to rename/select affordances |
 
 ## Suggested issue mapping for prep
 
-- Strand A → [#137](https://github.com/Skalas/escriba/issues/137) (update body/title if needed to match auto-rename focus)
-- Strand B → new issues or a single soak/install checklist issue (prep decides granularity)
-- Strand C → [#109](https://github.com/Skalas/escriba/issues/109)
-- Strand D → new release chore issue(s) or fold into ship without separate GitHub issues if prep prefers
+- Strand A → [#152](https://github.com/Skalas/escriba/issues/152) (split T1–T5 if granularity requires)
+- Strand B → optional chore issues or ship-only
+- Strand C → [#105](https://github.com/Skalas/escriba/issues/105)
+- Strand D → [#87](https://github.com/Skalas/escriba/issues/87)
 
 ## Explicit non-goals
 
 - Calendar-driven recording / Up-next (#64)
-- Making `(part N)` stacking the primary bug (reporter OK with part labels as interim)
-- Sidebar title clipping (#87)
-- P2 review checklist (#105)
+- Forced/silent auto-update without confirmation
+- Sparkle / notarized delta packages (reuse installer path first)
+
+## Appendix — #105 deferred (2026-07-13)
+
+Implemented this sprint: Range-416, config `mkstemp`, raw `system_prompt` / no default persist, `unique_export_path` TOCTOU via exclusive create, meeting-app `process_names` (pre-existing #112). Still open from #105: persistence indexes + `schema_version` runner, denormalized `segment_count`, batched writes, config hot-reload, structlog migration, typed handler responses, streaming summaries, server `append-notes`, CaptureSupervisor stderr split, Swift XCTest.

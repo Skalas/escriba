@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **In-app updates (#152).** `GET /api/update-check` compares the running build to GitHub `releases/latest`; dashboard banner + About card with dismiss/snooze; `POST /api/update/install` runs a guarded upgrade (git fetch/ff or release tag checkout, `uv sync`, Swift binary refresh, `setup_app.py`, copy to `/Applications`) with progress polling. CLI: `escriba check-update` and `escriba update`.
+
+### Fixed
+- **Sidebar session titles** no longer clip mid-line under sticky date headers (#87).
+- **Audio Range requests** with `start > end` return `416` instead of silently clamping (#105).
+- **Config save** uses atomic `mkstemp` instead of `mktemp` (#105).
+- **System prompt editor** exposes the raw `system_prompt` value; saving without customization no longer persists `DEFAULT_SYSTEM_PROMPT` (#105).
+- **Export Downloads path** reserves filenames with `O_CREAT|O_EXCL` to avoid TOCTOU races (#105).
+
 ## [1.3.0] - 2026-07-13
 
 Post-split auto-rename, model-download service extraction, and release metadata for the session-scoped notes + local-LLM timeout + capture decomposition sprint. Closes #137, #109, and ledger T1–T12 (tag T13 deferred to ship).

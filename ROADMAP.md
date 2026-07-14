@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-07-13 · Current version: `1.3.0` (post-split auto-rename + model-download extraction; human soak + clean-install still open) · next up: real-meeting soak + clean-install verification, then calendar-driven recording product decision (#64)._
+_Last updated: 2026-07-13 · Current version: `1.3.0` · in-app updates + P2/sidebar slice landed (this PR); next up: calendar-driven recording (#64) and publishing a GitHub Release so `releases/latest` ≥ app version._
 
 ---
 
@@ -35,7 +35,9 @@ The app is feature-rich. Since `v0.2.0` we shipped (unreleased):
 
 As of **`1.2.0`** (2026-07-08) the stop/finalization path is exception-safe, live capture buffer handling and faster-whisper resampling are hardened, dashboard note writes are guarded against stale async responses, daemon IPC is single-writer with owner-only socket permissions, and the previously silent automation paths now either work or fail honestly.
 
-As of the **`1.3.0` sprint** (2026-07-13, unreleased until tagged) live notepad/notes-output are session-scoped across every start route and view transition (#125 / T1–T4); local inference separates model-load vs generation deadlines atomically (#108 / T5–T7); and `run_streaming_capture` is decomposed into `CaptureSupervisor` + `ChunkPump` with unit coverage (#103 / T8–T10). The remaining release-quality proof is still human-run: a real-meeting soak and a clean install-from-scratch.
+As of the **`1.3.0` sprint** (2026-07-13) live notepad/notes-output are session-scoped across every start route and view transition (#125 / T1–T4); local inference separates model-load vs generation deadlines atomically (#108 / T5–T7); and `run_streaming_capture` is decomposed into `CaptureSupervisor` + `ChunkPump` with unit coverage (#103 / T8–T10). Human soak and clean-install verification are complete.
+
+As of the **in-app updates sprint** (2026-07-13, #152 / #153–#158) the dashboard and CLI can check GitHub releases and run a guarded one-click upgrade (ff to release tag, `uv sync`, Swift binary refresh, atomic `/Applications` replace) with recording↔upgrade mutual exclusion, CSRF on install, and fail-soft networking. Local-first: automatic update checks are opt-in (default off). Also shipped: sidebar title clip fix (#87) and a #105 P2 slice (Range 416, config `mkstemp`, prompt-reset clear, atomic export paths). **Ops note:** publish a GitHub Release for `v1.3.0+` — `releases/latest` still points at `v1.1.0`. Next product slice: calendar spike (#64).
 
 ---
 
@@ -208,8 +210,8 @@ No new features — release-readiness only. This sprint shipped the code-side ha
 - [x] **Notes single-writer (T5).** Saved-session generate no longer double-persists (the SPA is the sole writer there, preserving existing notes); a duplication/clobber race is gone.
 - [x] **CI-safe tests (T6).** The swift `audio-capture` integration tests skip gracefully with no input device / no built executable — `uv run pytest` no longer hangs headless.
 - [x] **Version + lock audit (T7/T9).** `1.0.0` unified across `pyproject.toml`, `__init__.py`, `uv.lock`; install docs verified against `install.sh` / Makefile / `setup_app.py` (T8).
-- [ ] Real-meeting soak across the record → transcribe → summarize loop. _(manual; 1.0.x gate)_
-- [ ] Clean install-from-scratch verification (one-liner installer → `/Applications`). _(manual; 1.0.x gate)_
+- [x] Real-meeting soak across the record → transcribe → summarize loop. _(manual; completed 2026-07-13)_
+- [x] Clean install-from-scratch verification (one-liner installer → `/Applications`). _(manual; completed 2026-07-13)_
 - [ ] Triage the remaining P2 backlog (persistence indexes, schema versioning, typing) — pull in only what release quality demands.
 
 **Done when:** a clean install runs a real meeting end-to-end without manual intervention; docs match behavior; version metadata is consistent. ✅ for the code/metadata half (283 tests; review caught & rejected a false-positive "live-path duplication" blocker after confirming the live path is single-writer, and folded in five extra path-disclosure fixes); the soak + clean-install proofs remain a human-run 1.0.x gate.
@@ -275,9 +277,31 @@ HOLD sprint (REDUCE on model-download extraction). No product-surface expansion.
 
 ---
 
+### In-app updates + P2/sidebar  ·  _2026-07-13 (#153–#158; parents #152/#105/#87)_
+
+EXPAND on updates; HOLD on sidebar; REDUCE slice of #105.
+
+- [x] **Update check + dashboard notify (#153 / T1–T2).** `GET /api/update-check` (+ `/api/update/check`); banner/About with dismiss; auto-check opt-in (default off).
+- [x] **One-click install (#154 / T3–T4).** Guarded upgrade with CSRF, recording↔upgrade mutex, allowlisted GitHub assets, atomic `/Applications` replace, fail-soft status.
+- [x] **CLI parity (#155 / T5).** `escriba check-update` / `escriba update`.
+- [x] **Docs sync (#156 / T6–T7).** ROADMAP soak closed; `main` pushed in prep.
+- [x] **#105 P2 slice (#157 / T8–T9).** Range 416, config `mkstemp`, prompt-reset clear sentinel, atomic export reserve.
+- [x] **Sidebar title clip (#158 / T10–T11).** Date-group sticky headers; no mid-line clip.
+
+**Done when:** T1–T11 green; review 0 blockers; ship gate green.
+
+**Deferred (with triggers):**
+- **Share upgrade path with `install.sh` / Makefile.** Python path mirrors steps but is not single-sourced. _Trigger:_ install.sh and in-app upgrade drift (missing step or divergent Swift asset handling).
+- **GitHub Release ≥ app version.** `releases/latest` is still `v1.1.0` while the app is `1.3.0`. _Trigger:_ next discover / release cut — publish `v1.3.0` (or newer) on GitHub Releases so in-app checks see an update.
+- **Remaining #105 items.** See Backlog below. _Trigger:_ adjacent core-loop work.
+
+---
+
 ## Backlog (P2 — ride along opportunistically)
 
 Not a milestone of its own; pull these in when adjacent work makes them cheap.
+
+**Deferred from #105 (sprint `in-app-updates-p2-sidebar`, 2026-07-13):** persistence indexes (`idx_sessions_folder`, `idx_sessions_status`), `schema_version` migration runner, denormalized `segment_count`, batched segment writes; config hot-reload coordination; structured logging (`structlog`) + latency metrics beyond current observability; complete handler return types / typed response models; narrow broad `except Exception`; streaming summaries for long transcripts; server-side atomic `append-notes`; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target. **Done this sprint:** audio Range `start > end` → 416, `mktemp` → `mkstemp` in config save, raw `system_prompt` API/UI (no default persist), export path TOCTOU guard, meeting-app alias scan (already landed in v1.2.0 / #112).
 
 - **Persistence:** indexes (`idx_sessions_folder`, `idx_sessions_status`), `schema_version` table + migration runner, denormalized `segment_count`, batched segment writes
 - **Config:** bounds checking (`__post_init__`/`validate()`), hot-reload coordination, `prompts.templates` tuple/list consistency
