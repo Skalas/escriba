@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-07-13 · Current version: `1.3.0` · in-app updates + P2/sidebar slice landed (this PR); next up: calendar-driven recording (#64) and publishing a GitHub Release so `releases/latest` ≥ app version._
+_Last updated: 2026-07-13 · Current version: `1.3.1` · update verification + install-path inventory + #105 slice complete; ship should publish `v1.3.1` on GitHub Releases; next product spike: calendar-driven recording (#64)._
 
 ---
 
@@ -37,7 +37,9 @@ As of **`1.2.0`** (2026-07-08) the stop/finalization path is exception-safe, liv
 
 As of the **`1.3.0` sprint** (2026-07-13) live notepad/notes-output are session-scoped across every start route and view transition (#125 / T1–T4); local inference separates model-load vs generation deadlines atomically (#108 / T5–T7); and `run_streaming_capture` is decomposed into `CaptureSupervisor` + `ChunkPump` with unit coverage (#103 / T8–T10). Human soak and clean-install verification are complete.
 
-As of the **in-app updates sprint** (2026-07-13, #152 / #153–#158) the dashboard and CLI can check GitHub releases and run a guarded one-click upgrade (ff to release tag, `uv sync`, Swift binary refresh, atomic `/Applications` replace) with recording↔upgrade mutual exclusion, CSRF on install, and fail-soft networking. Local-first: automatic update checks are opt-in (default off). Also shipped: sidebar title clip fix (#87) and a #105 P2 slice (Range 416, config `mkstemp`, prompt-reset clear, atomic export paths). **Ops note:** publish a GitHub Release for `v1.3.0+` — `releases/latest` still points at `v1.1.0`. Next product slice: calendar spike (#64).
+As of the **in-app updates sprint** (2026-07-13, #152 / #153–#158) the dashboard and CLI can check GitHub releases and run a guarded one-click upgrade (ff to release tag, `uv sync`, Swift binary refresh, atomic `/Applications` replace) with recording↔upgrade mutual exclusion, CSRF on install, and fail-soft networking. Local-first: automatic update checks are opt-in (default off). Also shipped: sidebar title clip fix (#87) and a #105 P2 slice (Range 416, config `mkstemp`, prompt-reset clear, atomic export paths).
+
+As of the **update verification sprint** (2026-07-13, #161–#164) automated tests assert `current` vs GitHub `tag_name` on CLI and API paths; `ESCRIBA_VERSION_OVERRIDE` / `check-update --current` enable live soak without rebuilding; install-path drift is inventoried in `escriba.app.install_paths` (intentional diffs vs `install.sh` / Makefile documented); and another #105 slice landed (bounded watch-folder processed set, `mix_audio` length assert, `TranscriptionError`, `_extract_response` cleanup). **Ops:** publish GitHub Release `v1.3.1` at ship so `releases/latest` ≥ app version. **Next product slice:** calendar spike (#64).
 
 ---
 
@@ -291,9 +293,24 @@ EXPAND on updates; HOLD on sidebar; REDUCE slice of #105.
 **Done when:** T1–T11 green; review 0 blockers; ship gate green.
 
 **Deferred (with triggers):**
-- **Share upgrade path with `install.sh` / Makefile.** Python path mirrors steps but is not single-sourced. _Trigger:_ install.sh and in-app upgrade drift (missing step or divergent Swift asset handling).
-- **GitHub Release ≥ app version.** `releases/latest` is still `v1.1.0` while the app is `1.3.0`. _Trigger:_ next discover / release cut — publish `v1.3.0` (or newer) on GitHub Releases so in-app checks see an update.
+- **Bash install single-sourcing.** `install.sh` still owns fresh-machine bootstrap (uv install, clone, `.env` template); Python upgrade path is inventoried in `install_paths.py` — not mechanically shared. _Trigger:_ step drift between paths (missing step or divergent Swift handling).
+- **GitHub Release ≥ app version.** Publish `v1.3.1` at ship. _Trigger:_ next discover if `releases/latest` lags again.
 - **Remaining #105 items.** See Backlog below. _Trigger:_ adjacent core-loop work.
+
+---
+
+### Update verification + install parity + P2/docs  ·  _2026-07-13 (#161–#164)_
+
+HOLD on verification and docs; REDUCE on #105.
+
+- [x] **Tag comparison tests (#161 / T1–T5).** CLI/API assert `current` vs `tag_name`; `ESCRIBA_VERSION_OVERRIDE` + `--current`; smoke recipe in `.metate/smoke-report.md`.
+- [x] **Install path inventory (#162 / T6–T8).** `install_paths.py` documents `install.sh` vs Makefile vs `_execute_upgrade` gaps; dirty-tree refuse unchanged.
+- [x] **#105 slice (#163 / T9–T10).** Bounded watch processed set, `_extract_response` cleanup, `mix_audio` length assert, `TranscriptionError`.
+- [x] **Release docs (#164 / T11–T12).** CHANGELOG `1.3.1`; ROADMAP points to calendar #64 next.
+
+**Done when:** `uv run ruff check .` + `uv run pytest` green; human soak per smoke-report after ship cuts `v1.3.1`.
+
+**Deferred from #163 (#105):** MLX ndarray resample parity, Swift CLI signal-handler hardening, triple-flush on config save. _Trigger:_ adjacent MLX/Swift/config work or user report.
 
 ---
 
@@ -301,7 +318,9 @@ EXPAND on updates; HOLD on sidebar; REDUCE slice of #105.
 
 Not a milestone of its own; pull these in when adjacent work makes them cheap.
 
-**Deferred from #105 (sprint `in-app-updates-p2-sidebar`, 2026-07-13):** persistence indexes (`idx_sessions_folder`, `idx_sessions_status`), `schema_version` migration runner, denormalized `segment_count`, batched segment writes; config hot-reload coordination; structured logging (`structlog`) + latency metrics beyond current observability; complete handler return types / typed response models; narrow broad `except Exception`; streaming summaries for long transcripts; server-side atomic `append-notes`; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target. **Done this sprint:** audio Range `start > end` → 416, `mktemp` → `mkstemp` in config save, raw `system_prompt` API/UI (no default persist), export path TOCTOU guard, meeting-app alias scan (already landed in v1.2.0 / #112).
+**Deferred from #105 (sprint `in-app-updates-p2-sidebar`, 2026-07-13):** persistence indexes (`idx_sessions_folder`, `idx_sessions_status`), `schema_version` migration runner, denormalized `segment_count`, batched segment writes; config hot-reload coordination; structured logging (`structlog`) + latency metrics beyond current observability; complete handler return types / typed response models; narrow broad `except Exception`; streaming summaries for long transcripts; server-side atomic `append-notes`; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target. **Done that sprint:** audio Range `start > end` → 416, `mktemp` → `mkstemp` in config save, raw `system_prompt` API/UI (no default persist), export path TOCTOU guard, meeting-app alias scan (already landed in v1.2.0 / #112).
+
+**Deferred from #105 (sprint `verify-updates-parity-p2-docs`, 2026-07-13):** MLX ndarray resample parity with faster-whisper path, Swift CLI signal-handler hardening, triple-flush on config save. **Done this sprint:** bounded `watch_folder` processed set (`WATCH_PROCESSED_MAX`), dead `<channel|>` delimiter removal in `_extract_response`, `mix_audio` equal-length assert, `transcribe_file` → `TranscriptionError`.
 
 - **Persistence:** indexes (`idx_sessions_folder`, `idx_sessions_status`), `schema_version` table + migration runner, denormalized `segment_count`, batched segment writes
 - **Config:** bounds checking (`__post_init__`/`validate()`), hot-reload coordination, `prompts.templates` tuple/list consistency

@@ -883,12 +883,6 @@ def _extract_response(text: str) -> str:
     if match:
         return match.group(1).strip()
 
-    # If no channel markers found, check for <channel|> end markers
-    # and return everything after the last one
-    if "<channel|>" in text:
-        parts = text.split("<channel|>")
-        return parts[-1].strip()
-
     # If only thinking channel is present (model ran out of tokens before
     # emitting the response channel), strip the thinking block entirely.
     thought_match = re.search(r"<\|channel\>thought\s*\n?(.*)", text, re.DOTALL)

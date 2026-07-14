@@ -8,8 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-07-13
+
+Update verification, install-path inventory, and a bounded #105 P2 slice. Ship should cut `v1.3.1` on GitHub Releases so `releases/latest` ≥ app version.
+
 ### Added
 - **In-app updates (#152).** `GET /api/update-check` compares the running build to GitHub `releases/latest`; dashboard banner + About card with dismiss/snooze; `POST /api/update/install` runs a guarded upgrade (git fetch/ff or release tag checkout, `uv sync`, Swift binary refresh, `setup_app.py`, copy to `/Applications`) with progress polling. CLI: `escriba check-update` and `escriba update`.
+- **Update soak helpers.** `escriba check-update --current` and `ESCRIBA_VERSION_OVERRIDE` let a live install pretend to be an older version without rebuilding.
+- **Install path inventory.** `escriba.app.install_paths` documents intentional differences between `install.sh`, `make install`, and in-app upgrade.
 
 ### Fixed
 - **Sidebar session titles** no longer clip mid-line under sticky date headers (#87).
@@ -17,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config save** uses atomic `mkstemp` instead of `mktemp` (#105).
 - **System prompt editor** exposes the raw `system_prompt` value; saving without customization no longer persists `DEFAULT_SYSTEM_PROMPT` (#105).
 - **Export Downloads path** reserves filenames with `O_CREAT|O_EXCL` to avoid TOCTOU races (#105).
+- **Watch-folder processed set** is bounded (`WATCH_PROCESSED_MAX`, default 10k) with FIFO eviction (#105).
+- **`mix_audio`** requires equal-length system/mic arrays instead of silent numpy broadcast (#105).
+- **`transcribe_file`** raises `TranscriptionError` on whisper failure or missing output (#105).
+- **`_extract_response`** drops dead `<channel|>` delimiter handling; Gemma 4 `<|channel|>` markers only (#105).
 
 ## [1.3.0] - 2026-07-13
 

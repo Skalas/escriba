@@ -12,6 +12,10 @@ from typing import Optional
 LOGGER = logging.getLogger("escriba.whisper")
 
 
+class TranscriptionError(Exception):
+    """Raised when batch file transcription fails."""
+
+
 def _build_command(input_path: Path, output_dir: Path) -> list[str]:
     """
     Construye el comando Whisper CLI a partir de una plantilla.
@@ -57,7 +61,12 @@ def transcribe_file(
         combined_transcript: Archivo opcional para transcripción combinada
     
     Returns:
-        Ruta del archivo de transcripción creado, o None si falla
+        Ruta del archivo de transcripción creado, o None si el archivo de entrada
+        no es un fichero regular.
+
+    Raises:
+        TranscriptionError: When the whisper subprocess fails or no transcript file
+            is produced after a successful run.
     """
     if not input_path.is_file():
         LOGGER.warning("Skipping non-regular input path: %s", input_path)
@@ -65,8 +74,13 @@ def transcribe_file(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     command = _build_command(input_path, output_dir)
-    LOGGER.info("Whisper command: %s", " ".join(command))
-    subprocess.run(command, check=True)
+    LOGGER.debug("Whisper argv length: %d", len(command))
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise TranscriptionError(
+            f"Whisper failed for {input_path.name} (exit {exc.returncode})"
+        ) from exc
 
     candidates = [
         output_dir / f"{input_path.stem}.txt",
@@ -79,8 +93,7 @@ def transcribe_file(
             _append_to_combined(expected_txt, combined_transcript, input_path)
             LOGGER.info("Combined updated: %s", combined_transcript)
         return expected_txt
-    LOGGER.warning("Transcript not found for: %s", input_path)
-    return None
+    raise TranscriptionError(f"Transcript not found for {input_path.name}")
 
 
 def _append_to_combined(

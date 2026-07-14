@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol, cast
 
 from escriba import __version__
+from escriba.app.install_paths import upgrade_progress_message
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,34 @@ def compare_versions(left: str, right: str) -> int:
     if left_padded > right_padded:
         return 1
     return 0
+
+
+def resolve_installed_version() -> str:
+    """Return the real installed package version (never soak-overridden)."""
+    return __version__
+
+
+def version_override_active() -> bool:
+    """True when ``ESCRIBA_VERSION_OVERRIDE`` is set for check-only soak tests."""
+    return bool(os.getenv("ESCRIBA_VERSION_OVERRIDE", "").strip())
+
+
+def resolve_check_version(*, override: str | None = None) -> str:
+    """Return the version used for update-check / About display.
+
+    Precedence: explicit ``override`` (CLI ``--current`` / tests) →
+    ``ESCRIBA_VERSION_OVERRIDE`` env → installed ``__version__``.
+
+    Blank ``override`` is treated as absent. Mutating upgrade paths must use
+    ``resolve_installed_version()`` instead.
+    """
+    if override is not None:
+        value = override.strip()
+        if value:
+            return value
+    if version_override_active():
+        return os.getenv("ESCRIBA_VERSION_OVERRIDE", "").strip()
+    return __version__
 
 
 def _validate_asset_url(
@@ -294,17 +323,24 @@ def _fetch_latest_release(
 
 def check_for_updates(
     *,
-    current_version: str | None = None,
+    override: str | None = None,
+    soak: bool = True,
     owner: str | None = None,
     repo: str | None = None,
     opener: UrlOpener | None = None,
 ) -> UpdateCheckResult:
     """Compare the running version to GitHub ``releases/latest``.
 
+    ``soak=False`` ignores ``ESCRIBA_VERSION_OVERRIDE`` and uses the installed
+    version (unless ``override`` is set). Use that for mutating upgrade paths.
+
     Fail-soft: network and parse errors return ``ok=True`` with
     ``update_available=False`` and an ``error`` hint instead of raising.
     """
-    current = (current_version or __version__).strip()
+    if soak:
+        current = resolve_check_version(override=override)
+    else:
+        current = override.strip() if override and override.strip() else resolve_installed_version()
     try:
         owner_name = owner or github_owner()
         repo_name = repo or github_repo()
@@ -537,19 +573,19 @@ def _execute_upgrade(
 ) -> dict[str, Any]:
     """Shared upgrade steps for background and blocking callers."""
 
-    def progress(step: str, message: str) -> None:
+    def progress(step: str, message: str | None = None) -> None:
         if on_progress:
-            on_progress(step, message)
+            on_progress(step, message or upgrade_progress_message(step))
 
-    progress("git_fetch", "Fetching latest changes…")
+    progress("git_fetch")
     fetch = _run_git(project_dir, "fetch", "--tags", "origin")
     if fetch.returncode != 0:
         raise RuntimeError(fetch.stderr.strip() or "git fetch failed")
 
-    progress("git_pull", "Updating source…")
+    progress("git_pull")
     _fast_forward_to_release(project_dir, release_tag)
 
-    progress("uv_sync", "Installing dependencies…")
+    progress("uv_sync")
     sync = subprocess.run(
         ["uv", "sync"],
         cwd=project_dir,
@@ -561,10 +597,10 @@ def _execute_upgrade(
     if sync.returncode != 0:
         raise RuntimeError(sync.stderr.strip() or "uv sync failed")
 
-    progress("swift_binary", "Refreshing audio-capture binary…")
+    progress("swift_binary")
     _ensure_swift_binary(project_dir, assets, opener=opener)
 
-    progress("build_app", "Building Escriba.app…")
+    progress("build_app")
     build = subprocess.run(
         ["uv", "run", "python", "setup_app.py"],
         cwd=project_dir,
@@ -576,7 +612,7 @@ def _execute_upgrade(
     if build.returncode != 0:
         raise RuntimeError(build.stderr.strip() or "setup_app.py failed")
 
-    progress("install_app", "Installing to /Applications…")
+    progress("install_app")
     app_src = project_dir / "dist" / f"{APP_NAME}.app"
     app_dst = Path("/Applications") / f"{APP_NAME}.app"
     if not app_src.is_dir():

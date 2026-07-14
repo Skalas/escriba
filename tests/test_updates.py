@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +23,8 @@ from escriba.app.updates import (
     _validate_asset_url,
     check_for_updates,
     compare_versions,
+    resolve_check_version,
+    resolve_installed_version,
     run_upgrade_blocking,
 )
 from escriba.config import AppConfig
@@ -84,12 +87,83 @@ def test_check_for_updates_detects_newer_release() -> None:
     def opener(request, timeout=15):  # noqa: ARG001
         return io.BytesIO(_release_payload())
 
-    result = check_for_updates(current_version="1.3.0", opener=opener)
+    result = check_for_updates(override="1.3.0", opener=opener)
     assert result.ok is True
-    assert result.update_available is True
+    assert result.current == "1.3.0"
     assert result.latest == "v1.4.0"
+    assert compare_versions(result.current, result.latest) < 0
+    assert result.update_available is True
     assert result.release_url is not None
     assert result.assets
+
+
+def test_check_for_updates_up_to_date_when_current_matches_tag() -> None:
+    def opener(request, timeout=15):  # noqa: ARG001
+        return io.BytesIO(_release_payload(tag="v1.3.0"))
+
+    result = check_for_updates(override="1.3.0", opener=opener)
+    assert result.ok is True
+    assert result.current == "1.3.0"
+    assert result.latest == "v1.3.0"
+    assert compare_versions(result.current, result.latest) == 0
+    assert result.update_available is False
+    assert result.error is None
+
+
+def test_check_for_updates_uses_tag_name_not_release_name() -> None:
+    payload = json.dumps(
+        {
+            "tag_name": "v1.5.0",
+            "name": "1.4.0",
+            "html_url": "https://github.com/Skalas/escriba/releases/tag/v1.5.0",
+            "body": "",
+            "assets": [],
+        }
+    ).encode()
+
+    def opener(request, timeout=15):  # noqa: ARG001
+        return io.BytesIO(payload)
+
+    result = check_for_updates(override="1.3.0", opener=opener)
+    assert result.latest == "v1.5.0"
+    assert result.update_available is True
+
+
+def test_resolve_check_version_precedence() -> None:
+    with patch.dict("os.environ", {"ESCRIBA_VERSION_OVERRIDE": "2.0.0"}):
+        assert resolve_check_version() == "2.0.0"
+        assert resolve_check_version(override="1.0.0") == "1.0.0"
+        assert resolve_check_version(override="") == "2.0.0"
+        assert resolve_check_version(override="   ") == "2.0.0"
+    with patch.dict("os.environ", {}, clear=False):
+        os.environ.pop("ESCRIBA_VERSION_OVERRIDE", None)
+        assert resolve_check_version(override="9.9.9") == "9.9.9"
+
+
+def test_resolve_installed_version_ignores_env_override() -> None:
+    with patch.dict("os.environ", {"ESCRIBA_VERSION_OVERRIDE": "0.0.1"}):
+        assert resolve_installed_version() != "0.0.1"
+
+
+def test_check_for_updates_soak_false_ignores_env_override() -> None:
+    def opener(request, timeout=15):  # noqa: ARG001
+        return io.BytesIO(_release_payload(tag="v9.9.9"))
+
+    with patch.dict("os.environ", {"ESCRIBA_VERSION_OVERRIDE": "1.0.0"}):
+        result = check_for_updates(soak=False, opener=opener)
+    assert result.current == resolve_installed_version()
+    assert result.update_available is (compare_versions(result.current, "v9.9.9") < 0)
+
+
+def test_check_for_updates_respects_env_override() -> None:
+    def opener(request, timeout=15):  # noqa: ARG001
+        return io.BytesIO(_release_payload(tag="v1.3.1"))
+
+    with patch.dict("os.environ", {"ESCRIBA_VERSION_OVERRIDE": "1.3.0"}):
+        result = check_for_updates(opener=opener)
+    assert result.current == "1.3.0"
+    assert result.latest == "v1.3.1"
+    assert result.update_available is True
 
 
 def test_check_for_updates_skips_disallowed_asset_urls() -> None:
@@ -110,7 +184,7 @@ def test_check_for_updates_skips_disallowed_asset_urls() -> None:
     def opener(request, timeout=15):  # noqa: ARG001
         return io.BytesIO(payload)
 
-    result = check_for_updates(current_version="1.0.0", opener=opener)
+    result = check_for_updates(override="1.0.0", opener=opener)
     assert result.assets == ()
 
 
@@ -120,7 +194,7 @@ def test_check_for_updates_fail_soft_on_network_error() -> None:
     def opener(request, timeout=15):  # noqa: ARG001
         raise urllib.error.URLError("offline")
 
-    result = check_for_updates(current_version="1.3.0", opener=opener)
+    result = check_for_updates(override="1.3.0", opener=opener)
     assert result.ok is True
     assert result.update_available is False
     assert result.error == "Could not reach GitHub"
@@ -161,20 +235,46 @@ def test_upgrade_status_idle_serializes_ok_null() -> None:
 
 def test_get_update_check_handler_caches_result(app_state: AppState) -> None:
     handler = make_handler(app_state)
-    fake = check_for_updates(current_version="1.3.0", opener=lambda *_a, **_k: io.BytesIO(_release_payload()))
+    fake = check_for_updates(override="1.3.0", opener=lambda *_a, **_k: io.BytesIO(_release_payload()))
     with patch("escriba.app.server.check_for_updates", return_value=fake) as mocked:
         payload, status = handler._get_update_check()
     assert status == 200
+    assert payload["current"] == "1.3.0"
+    assert payload["latest"] == "v1.4.0"
     assert payload["update_available"] is True
+    assert compare_versions(payload["current"], payload["latest"]) < 0
     assert app_state.last_update_check is not None
     mocked.assert_called_once()
+
+
+def test_start_update_install_always_uses_real_version(app_state: AppState) -> None:
+    handler = make_handler(app_state)
+    soak_result = check_for_updates(
+        opener=lambda *_a, **_k: io.BytesIO(_release_payload(tag="v9.9.0")),
+    )
+    assert soak_result.update_available is True
+    app_state.last_update_check = soak_result
+    real_result = check_for_updates(
+        soak=False,
+        opener=lambda *_a, **_k: io.BytesIO(_release_payload(tag="v1.3.0")),
+    )
+    with (
+        patch.dict("os.environ", {"ESCRIBA_VERSION_OVERRIDE": "1.0.0"}),
+        patch("escriba.app.server.check_for_updates", return_value=real_result) as mocked,
+        patch.object(app_state, "try_begin_upgrade") as begin,
+    ):
+        payload, status = handler._start_update_install()
+    assert status == 409
+    assert payload["ok"] is False
+    mocked.assert_called_once_with(soak=False)
+    begin.assert_not_called()
 
 
 def test_start_update_install_rejects_when_no_update(app_state: AppState) -> None:
     handler = make_handler(app_state)
     with patch(
         "escriba.app.server.check_for_updates",
-        return_value=check_for_updates(current_version="9.9.9", opener=lambda *_a, **_k: io.BytesIO(_release_payload("v1.3.0"))),
+        return_value=check_for_updates(override="9.9.9", opener=lambda *_a, **_k: io.BytesIO(_release_payload("v1.3.0"))),
     ):
         payload, status = handler._start_update_install()
     assert status == 409

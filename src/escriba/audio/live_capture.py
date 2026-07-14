@@ -438,6 +438,11 @@ def mix_audio(
         # Si alguno está vacío, retornar array vacío del mismo tipo
         return np.array([], dtype=np.int16)
 
+    if len(system) != len(mic):
+        raise ValueError(
+            f"system and mic arrays must have equal length, got {len(system)} and {len(mic)}"
+        )
+
     # Boost del micrófono (usualmente más bajo que sistema)
     mic_boosted = mic.astype(np.float32) * mic_boost
 

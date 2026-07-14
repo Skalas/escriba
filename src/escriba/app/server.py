@@ -877,7 +877,11 @@ class _Handler(BaseHTTPRequestHandler):
     def _get_version(self) -> dict:
         import platform
 
-        from escriba import __version__
+        from escriba.app.updates import (
+            resolve_check_version,
+            resolve_installed_version,
+            version_override_active,
+        )
 
         with self.app_state._lock:
             config = self.app_state.config
@@ -890,7 +894,9 @@ class _Handler(BaseHTTPRequestHandler):
 
         return {
             "ok": True,
-            "version": __version__,
+            "version": resolve_check_version(),
+            "installed_version": resolve_installed_version(),
+            "version_override": version_override_active(),
             "git": _git_info(),
             "python_version": platform.python_version(),
             "platform": f"{platform.system()} {platform.release()}",
@@ -912,17 +918,14 @@ class _Handler(BaseHTTPRequestHandler):
         return status.to_dict(), 200
 
     def _start_update_install(self) -> tuple[dict, int]:
+        # Mutating upgrade must compare the real installed version, not soak override.
+        fresh = check_for_updates(soak=False)
         with self.app_state._lock:
-            cached = self.app_state.last_update_check
-        if cached is None or not cached.update_available:
-            fresh = check_for_updates()
-            with self.app_state._lock:
-                self.app_state.last_update_check = fresh
-            cached = fresh
-        if not cached.update_available:
+            self.app_state.last_update_check = fresh
+        if not fresh.update_available:
             return {"ok": False, "error": "No update available"}, 409
         try:
-            self.app_state.try_begin_upgrade(cached.latest, cached.assets)
+            self.app_state.try_begin_upgrade(fresh.latest, fresh.assets)
         except UpgradeAlreadyInProgress:
             return {"ok": False, "error": "An update is already in progress"}, 409
         except UpgradePreflightError as exc:
@@ -930,7 +933,7 @@ class _Handler(BaseHTTPRequestHandler):
         return {
             "ok": True,
             "message": "Update started",
-            "release": cached.latest,
+            "release": fresh.latest,
         }, 200
 
     def _get_transcript(self, session_id: str | None = None) -> dict:

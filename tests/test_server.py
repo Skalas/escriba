@@ -795,14 +795,15 @@ def test_start_update_install_rejects_while_recording(app_state: AppState) -> No
         is_active = True
 
     app_state.session = ActiveSession()  # type: ignore[assignment]
-    app_state.last_update_check = UpdateCheckResult(
+    fake_check = UpdateCheckResult(
         ok=True,
         current="1.0.0",
         latest="v1.4.0",
         update_available=True,
     )
     handler = _make_handler(app_state)
-    payload, status = handler._start_update_install()
+    with patch("escriba.app.server.check_for_updates", return_value=fake_check):
+        payload, status = handler._start_update_install()
     assert status == 409
     assert payload["ok"] is False
     assert "recording" in payload["error"].lower()
@@ -815,14 +816,15 @@ def test_start_update_install_rejects_during_start_in_progress(
     from escriba.app.updates import UpdateCheckResult
 
     app_state._start_in_progress = True  # noqa: SLF001
-    app_state.last_update_check = UpdateCheckResult(
+    fake_check = UpdateCheckResult(
         ok=True,
         current="1.0.0",
         latest="v1.4.0",
         update_available=True,
     )
     handler = _make_handler(app_state)
-    payload, status = handler._start_update_install()
+    with patch("escriba.app.server.check_for_updates", return_value=fake_check):
+        payload, status = handler._start_update_install()
     assert status == 409
     assert payload["ok"] is False
     assert "recording" in payload["error"].lower()
