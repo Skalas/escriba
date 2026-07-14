@@ -371,7 +371,9 @@ def cmd_watch_calendar(
     if auto_start:
         raise typer.BadParameter(
             "Calendar auto-start is not implemented yet; use opt-in "
-            "Settings -> Auto-record on call for automatic recording."
+            "Settings → Auto-record on call for automatic recording. "
+            "Reading events via watch-calendar or the dashboard Up-next "
+            "surface requires Calendar permission in System Settings."
         )
     from escriba.calendar.apple_calendar import watch_calendar
 

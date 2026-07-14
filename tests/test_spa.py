@@ -10,6 +10,7 @@ All tests skip gracefully when Playwright or Chromium is not installed so that
 from __future__ import annotations
 
 import http.server
+import json
 import socketserver
 import threading
 from pathlib import Path
@@ -82,6 +83,7 @@ _API_STUBS: dict[str, str] = {
     "/api/sessions": '{"ok":true,"sessions":[],"folders":[]}',
     "/api/config": '{"ok":true,"config":{"prompts":{"system_prompt":"","templates":[],"effective_system_prompt":""}},"env_keys":{}}',
     "/api/models": '{"ok":true,"models":{},"ai_available":false,"ai_unavailable_reason":""}',
+    "/api/calendar/upcoming": '{"ok":true,"events":[]}',
 }
 
 
@@ -341,20 +343,24 @@ def test_notes_generating_updates_own_session_when_not_switched(page) -> None:
         )
 
     page.route("**/api/sessions/session-c/generate-notes", hold_route)
-    # saveNotesForSession calls POST /api/sessions/session-c/notes — stub it
-    page.route("**/api/sessions/session-c/notes", lambda r: r.fulfill(
-        status=200, content_type="application/json", body='{"ok":true}'
+    # generateSessionNotes uses atomic POST /api/sessions/session-c/append-notes
+    page.route("**/api/sessions/session-c/append-notes", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body='{"ok":true,"notes_text":"SENTINEL-NOTES-FOR-SESSION-C"}',
     ))
 
     with page.expect_request("**/api/sessions/session-c/generate-notes", timeout=5000):
         page.evaluate("void generateSessionNotes()")
     # Do NOT switch session — stay on session-c
     allow_response.set()
-    page.wait_for_timeout(600)
+    page.wait_for_function(
+        """() => (document.getElementById('session-notes-input').value || '').includes('SENTINEL-NOTES-FOR-SESSION-C')""",
+        timeout=5000,
+    )
 
     notes_value = page.evaluate("document.getElementById('session-notes-input').value")
     page.unroute("**/api/sessions/session-c/generate-notes")
-    page.unroute("**/api/sessions/session-c/notes")
+    page.unroute("**/api/sessions/session-c/append-notes")
 
     assert "SENTINEL-NOTES-FOR-SESSION-C" in notes_value, (
         "Notes did not appear in the textarea when the session was not switched. "
@@ -1815,3 +1821,31 @@ def test_t4_reconcile_preserves_typing_during_slow_fetch(routed_page) -> None:
     notepad_val = pg.evaluate("document.getElementById('live-notepad').value")
     assert notepad_val == "Fresh typing for B"
     assert notepad_val != "Stored notes for B"
+
+
+def test_upnext_record_uses_data_attr_not_inline_handler(page) -> None:
+    """Up-next Record must not embed JSON.stringify in an onclick attribute."""
+    malicious = """Team ' standup " onclick=alert(1)"""
+    page.route("**/api/calendar/upcoming", lambda r: r.fulfill(
+        status=200,
+        content_type="application/json",
+        body=(
+            '{"ok":true,"events":[{"title":'
+            + json.dumps(malicious)
+            + ',"start_time":"2026-07-13T10:00:00","end_time":"","url":""}]}'
+        ),
+    ))
+    page.evaluate("void renderUpNextSection()")
+    page.wait_for_function(
+        "() => document.querySelector('#home-upnext-section .btn-upnext-record')",
+        timeout=5000,
+    )
+    html = page.evaluate("document.getElementById('home-upnext-section').innerHTML")
+    onclick_attr = page.evaluate(
+        "document.querySelector('#home-upnext-section .btn-upnext-record')?.getAttribute('onclick')"
+    )
+    page.unroute("**/api/calendar/upcoming")
+    assert "startRecordingForEvent" not in html
+    assert "JSON.stringify" not in html
+    assert 'data-event-title="' in html
+    assert onclick_attr is None
