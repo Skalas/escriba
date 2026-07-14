@@ -18,6 +18,7 @@ from escriba.app.server import (
     AppState,
     start_server,
 )
+from escriba.app.updates import UpdateCheckResult
 from escriba.config import AppConfig
 from tests.conftest import make_handler as _make_handler
 
@@ -333,6 +334,32 @@ def _http(port: int, method: str, path: str, body: bytes = b"", headers: dict | 
     data = json.loads(resp.read())
     conn.close()
     return status, data
+
+
+def test_tg2_get_update_check_returns_payload(live_server) -> None:
+    """GET /api/update-check returns structured update metadata."""
+    _, port = live_server
+    fake = UpdateCheckResult(ok=True, current="1.3.0", latest="v1.4.0", update_available=True)
+    with patch("escriba.app.server.check_for_updates", return_value=fake):
+        status, body = _http(port, "GET", "/api/update-check")
+    assert status == 200
+    assert body["ok"] is True
+    assert body["current"] == "1.3.0"
+    assert body["update_available"] is True
+
+
+def test_tg2_update_install_post_requires_json_content_type(live_server) -> None:
+    """POST /api/update/install rejects non-JSON bodies (CSRF guard)."""
+    _, port = live_server
+    status, body = _http(
+        port,
+        "POST",
+        "/api/update/install",
+        body=b"{}",
+        headers={"Content-Type": "text/plain"},
+    )
+    assert status == 415
+    assert body["ok"] is False
 
 
 def test_tg2_get_status_returns_200_ok(live_server) -> None:
@@ -659,3 +686,143 @@ def test_t5_generate_notes_failure_does_not_persist(app_state: AppState) -> None
     reloaded = db.get_session(session_id)
     assert reloaded is not None
     assert not reloaded.get("notes_text")
+
+
+def test_serve_audio_invalid_range_start_after_end_returns_416(
+    app_state: AppState, tmp_path: Path
+) -> None:
+    """Range requests with start > end must return 416."""
+    db = app_state.db
+    session_id = db.create_session(name="Audio")
+    db.stop_session(session_id)
+    wav_path = tmp_path / "sample.wav"
+    wav_path.write_bytes(b"RIFF" + b"\x00" * 64)
+    db.update_audio_path(session_id, str(wav_path))
+
+    handler = _make_handler(app_state)
+    handler.headers = {"Range": "bytes=50-10"}
+    with pytest.raises(ApiError) as exc:
+        handler._serve_audio(session_id)
+    assert exc.value.status == 416
+
+
+def test_put_config_uses_mkstemp_for_validation_copy(
+    app_state: AppState, tmp_path: Path
+) -> None:
+    """Config validation reserves temp files atomically via mkstemp."""
+    import os
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text("[audio]\nsample_rate = 16000\n", encoding="utf-8")
+    app_state.config = AppConfig.load(cfg_path)
+
+    handler = _make_handler(app_state)
+    validate_path = tmp_path / "validate.toml"
+    fd = os.open(validate_path, os.O_CREAT | os.O_RDWR)
+    with patch("tempfile.mkstemp", return_value=(fd, str(validate_path))) as mkstemp:
+        payload, status = handler._put_config(
+            {"streaming": {"chunk_duration": app_state.config.streaming.chunk_duration}}
+        )
+    assert status == 200
+    assert payload["ok"] is True
+    mkstemp.assert_called_once()
+
+
+def test_put_config_clears_persisted_custom_system_prompt(
+    app_state: AppState, tmp_path: Path
+) -> None:
+    """Reset-to-default must remove a previously saved custom system prompt."""
+    from escriba.config import _load_toml
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        """
+[audio]
+sample_rate = 16000
+
+[prompts]
+system_prompt = "Custom {transcript} {prompt}"
+""".strip(),
+        encoding="utf-8",
+    )
+    app_state.config = AppConfig.load(cfg_path)
+
+    handler = _make_handler(app_state)
+    payload, status = handler._put_config(
+        {"prompts": {"system_prompt": "", "templates": []}}
+    )
+    assert status == 200
+    assert payload["ok"] is True
+    data = _load_toml(cfg_path)
+    assert "prompts" not in data or "system_prompt" not in data.get("prompts", {})
+    assert app_state.config.prompts.effective_system_prompt
+
+
+def test_put_config_does_not_persist_default_system_prompt(
+    app_state: AppState, tmp_path: Path
+) -> None:
+    from escriba.config import DEFAULT_SYSTEM_PROMPT, _load_toml
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text("[audio]\nsample_rate = 16000\n", encoding="utf-8")
+    app_state.config = AppConfig.load(cfg_path)
+
+    handler = _make_handler(app_state)
+    payload, status = handler._put_config(
+        {"prompts": {"system_prompt": DEFAULT_SYSTEM_PROMPT, "templates": []}}
+    )
+    assert status == 200
+    assert payload["ok"] is True
+    data = _load_toml(cfg_path)
+    assert "prompts" not in data or "system_prompt" not in data.get("prompts", {})
+
+
+def test_try_start_recording_rejects_while_upgrade_running(app_state: AppState) -> None:
+    app_state.upgrade._claim()  # noqa: SLF001
+    try:
+        payload, status = app_state.try_start_recording()
+    finally:
+        app_state.upgrade._abort_claim()  # noqa: SLF001
+    assert status == 409
+    assert payload["ok"] is False
+    assert "Update" in payload["error"]
+
+
+def test_start_update_install_rejects_while_recording(app_state: AppState) -> None:
+    from escriba.app.updates import UpdateCheckResult
+
+    class ActiveSession:
+        is_active = True
+
+    app_state.session = ActiveSession()  # type: ignore[assignment]
+    app_state.last_update_check = UpdateCheckResult(
+        ok=True,
+        current="1.0.0",
+        latest="v1.4.0",
+        update_available=True,
+    )
+    handler = _make_handler(app_state)
+    payload, status = handler._start_update_install()
+    assert status == 409
+    assert payload["ok"] is False
+    assert "recording" in payload["error"].lower()
+
+
+def test_start_update_install_rejects_during_start_in_progress(
+    app_state: AppState,
+) -> None:
+    """Regression: upgrade must not start while session.start() is in flight."""
+    from escriba.app.updates import UpdateCheckResult
+
+    app_state._start_in_progress = True  # noqa: SLF001
+    app_state.last_update_check = UpdateCheckResult(
+        ok=True,
+        current="1.0.0",
+        latest="v1.4.0",
+        update_available=True,
+    )
+    handler = _make_handler(app_state)
+    payload, status = handler._start_update_install()
+    assert status == 409
+    assert payload["ok"] is False
+    assert "recording" in payload["error"].lower()

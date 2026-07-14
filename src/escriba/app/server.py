@@ -34,6 +34,13 @@ from escriba.app.model_download import (
     NoDownloadInProgress,
     USER_DOWNLOAD_FAILED,
 )
+from escriba.app.updates import (
+    UpgradeAlreadyInProgress,
+    UpgradePreflightError,
+    UpgradeService,
+    UpdateCheckResult,
+    check_for_updates,
+)
 from escriba.app.observability import (
     get_correlation_id,
     latency_store,
@@ -113,6 +120,8 @@ class AppState:
         self.session: TranscriptionSession | None = None
         self.reload_config = reload_config
         self.model_download = ModelDownloadService()
+        self.upgrade = UpgradeService()
+        self.last_update_check: UpdateCheckResult | None = None
 
     def get_active_session(self) -> TranscriptionSession | None:
         """Return the current session reference under the state lock."""
@@ -128,6 +137,8 @@ class AppState:
         with self._lock:
             if self._stop_in_progress:
                 return {"ok": False, "error": "Recording stop in progress"}, 409
+            if self.upgrade.is_running():
+                return {"ok": False, "error": "Update in progress"}, 409
             session = self.session
             if session and session.is_active:
                 return {"ok": False, "error": "Already recording"}, 409
@@ -155,6 +166,30 @@ class AppState:
                     response = ({"ok": True}, 200)
 
         return response
+
+    def try_begin_upgrade(
+        self,
+        release_tag: str | None,
+        assets: tuple[dict[str, str], ...],
+    ) -> None:
+        """Atomically reject recording/start races and claim the upgrade slot."""
+        with self._lock:
+            if self._stop_in_progress:
+                raise UpgradePreflightError("Recording stop in progress")
+            if self._start_in_progress:
+                raise UpgradePreflightError("Stop recording before updating")
+            session = self.session
+            if session and session.is_active:
+                raise UpgradePreflightError("Stop recording before updating")
+            try:
+                self.upgrade.claim()
+            except UpgradeAlreadyInProgress:
+                raise
+        try:
+            self.upgrade.start_worker(release_tag, assets)
+        except Exception:
+            self.upgrade.abort_claim()
+            raise
 
     def begin_stop_recording(
         self,
@@ -368,6 +403,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._respond(self._get_status())
             elif path == "/api/version":
                 self._respond(self._get_version())
+            elif path == "/api/update-check" or path == "/api/update/check":
+                self._respond(self._get_update_check())
+            elif path == "/api/update/status":
+                self._respond(self._get_update_status())
             elif path == "/api/transcript":
                 session_id = params.get("session_id", [None])[0]
                 self._respond(self._get_transcript(session_id))
@@ -492,6 +531,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/folders": lambda: self._create_folder(self._parse_json_body()),
             "/api/download-model": lambda: self._download_model(self._parse_json_body()),
             "/api/download-model/cancel": lambda: self._cancel_model_download(),
+            "/api/update/install": lambda: self._start_update_install(),
         }
         if path in _exact:
             return _exact[path]()
@@ -699,7 +739,9 @@ class _Handler(BaseHTTPRequestHandler):
                     end = int(parts[1]) if parts[1] else file_size - 1
                 if start < 0 or start >= file_size:
                     raise ValueError("range start outside file")
-                end = max(start, min(end, file_size - 1))
+                if start > end:
+                    raise ValueError("range start after end")
+                end = min(end, file_size - 1)
             except ValueError as exc:
                 raise ApiError("Invalid Range header", 416) from exc
             length = end - start + 1
@@ -857,6 +899,39 @@ class _Handler(BaseHTTPRequestHandler):
             "model": model,
             "repo_url": "https://github.com/Skalas/escriba",
         }
+
+    def _get_update_check(self) -> tuple[dict, int]:
+        result = check_for_updates()
+        with self.app_state._lock:
+            self.app_state.last_update_check = result
+        payload = result.to_dict()
+        return payload, 200
+
+    def _get_update_status(self) -> tuple[dict, int]:
+        status = self.app_state.upgrade.get_status()
+        return status.to_dict(), 200
+
+    def _start_update_install(self) -> tuple[dict, int]:
+        with self.app_state._lock:
+            cached = self.app_state.last_update_check
+        if cached is None or not cached.update_available:
+            fresh = check_for_updates()
+            with self.app_state._lock:
+                self.app_state.last_update_check = fresh
+            cached = fresh
+        if not cached.update_available:
+            return {"ok": False, "error": "No update available"}, 409
+        try:
+            self.app_state.try_begin_upgrade(cached.latest, cached.assets)
+        except UpgradeAlreadyInProgress:
+            return {"ok": False, "error": "An update is already in progress"}, 409
+        except UpgradePreflightError as exc:
+            return {"ok": False, "error": exc.message}, 409
+        return {
+            "ok": True,
+            "message": "Update started",
+            "release": cached.latest,
+        }, 200
 
     def _get_transcript(self, session_id: str | None = None) -> dict:
         if session_id:
@@ -1455,10 +1530,12 @@ class _Handler(BaseHTTPRequestHandler):
             if session and session.is_active:
                 return {"ok": False, "error": "Stop recording before changing settings"}, 409
 
+        import os
         import shutil
         import tempfile
 
         from escriba.config import (
+            DEFAULT_SYSTEM_PROMPT,
             AppConfig,
             ConfigValidationError,
             config_to_dict,
@@ -1493,11 +1570,17 @@ class _Handler(BaseHTTPRequestHandler):
         toml_data = {k: v for k, v in body.items() if k not in env_key_names}
         # Drop read-only fields surfaced by config_to_dict for the UI.
         if isinstance(toml_data.get("prompts"), dict):
-            toml_data["prompts"] = {
+            prompts_patch = {
                 k: v
                 for k, v in toml_data["prompts"].items()
                 if k in ("system_prompt", "templates")
             }
+            system_prompt = prompts_patch.get("system_prompt")
+            if isinstance(system_prompt, str):
+                normalized = system_prompt.strip()
+                if not normalized or normalized == DEFAULT_SYSTEM_PROMPT.strip():
+                    prompts_patch["system_prompt"] = ""
+            toml_data["prompts"] = prompts_patch
         if toml_data:
             with self.app_state._lock:
                 current_config = self.app_state.config
@@ -1510,9 +1593,9 @@ class _Handler(BaseHTTPRequestHandler):
             # Strategy: copy the real TOML to a temp file, apply the update there,
             # then run AppConfig.load() (which calls validate()). Only on success
             # do we write to the real path.
-            tmp_path = Path(
-                tempfile.mktemp(suffix=".toml", dir=config_path.parent)
-            )
+            fd, tmp_name = tempfile.mkstemp(suffix=".toml", dir=config_path.parent)
+            os.close(fd)
+            tmp_path = Path(tmp_name)
             try:
                 if config_path.exists():
                     shutil.copy2(config_path, tmp_path)
