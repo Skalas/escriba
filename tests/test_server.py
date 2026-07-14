@@ -828,3 +828,94 @@ def test_start_update_install_rejects_during_start_in_progress(
     assert status == 409
     assert payload["ok"] is False
     assert "recording" in payload["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Atomic append-notes (#174 / T1–T4)
+# ---------------------------------------------------------------------------
+
+def test_append_notes_endpoint_persists_combined_text(app_state: AppState) -> None:
+    """POST /api/sessions/:id/append-notes atomically merges notes."""
+    db = app_state.db
+    session_id = db.create_session(name="meeting")
+    db.save_notes(session_id, "existing")
+
+    handler = _make_handler(app_state)
+    payload, status = handler._append_notes(
+        session_id, {"append_text": "generated block"}
+    )
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert "existing" in payload["notes_text"]
+    assert "generated block" in payload["notes_text"]
+    row = db.get_session(session_id)
+    assert row is not None
+    assert row["notes_text"] == payload["notes_text"]
+
+
+def test_append_notes_endpoint_404_for_missing_session(app_state: AppState) -> None:
+    handler = _make_handler(app_state)
+    payload, status = handler._append_notes(
+        "missing-session", {"append_text": "nope"}
+    )
+    assert status == 404
+    assert payload["ok"] is False
+
+
+def test_start_recording_accepts_optional_session_name(app_state: AppState) -> None:
+    """POST /api/recording/start may pre-title the session from a calendar event."""
+    handler = _make_handler(app_state)
+    with patch.object(app_state, "try_start_recording", return_value=({"ok": True}, 200)) as mocked:
+        payload, status = handler._start_recording({"name": "Standup with design"})
+    assert status == 200
+    assert payload["ok"] is True
+    mocked.assert_called_once_with(session_name="Standup with design")
+
+
+def test_calendar_upcoming_endpoint_returns_events(app_state: AppState) -> None:
+    handler = _make_handler(app_state)
+    fake_events = [
+        {
+            "title": "Design review",
+            "start_time": "Monday, July 13, 2026 at 3:00:00 PM",
+            "end_time": "Monday, July 13, 2026 at 3:30:00 PM",
+            "url": "",
+        }
+    ]
+    with patch(
+        "escriba.calendar.apple_calendar.get_upcoming_events",
+        return_value=(fake_events, None),
+    ):
+        payload, status = handler._get_calendar_upcoming()
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["events"] == fake_events
+    assert "calendar_error" not in payload
+
+
+def test_calendar_upcoming_surfaces_permission_error(app_state: AppState) -> None:
+    handler = _make_handler(app_state)
+    with patch(
+        "escriba.calendar.apple_calendar.get_upcoming_events",
+        return_value=([], "permission_denied"),
+    ):
+        payload, status = handler._get_calendar_upcoming()
+    assert status == 200
+    assert payload["events"] == []
+    assert payload["calendar_error"] == "permission_denied"
+    assert "permission_hint" in payload
+    assert "Calendar" in payload["permission_hint"]
+
+
+def test_calendar_upcoming_rejects_foreign_host(live_server) -> None:
+    """GET /api/calendar/upcoming applies the localhost Host allowlist."""
+    _, port = live_server
+    status, body = _http(
+        port,
+        "GET",
+        "/api/calendar/upcoming",
+        headers={"Host": "evil.example"},
+    )
+    assert status == 421
+    assert body["ok"] is False

@@ -115,7 +115,7 @@ def test_generate_notes_no_prompt_honors_user_notes(tmp_path: Path) -> None:
 
 # T53.7 — generate_notes persists the result to the DB on the active-session path
 def test_generate_notes_persists_result_to_db(tmp_path: Path) -> None:
-    """generate_notes() must call db.save_notes when it returns a non-empty result."""
+    """generate_notes() must atomically append when it returns a non-empty result."""
     from unittest.mock import MagicMock, patch
 
     import escriba.app.session as session_module
@@ -145,6 +145,37 @@ def test_generate_notes_persists_result_to_db(tmp_path: Path) -> None:
         "generate_notes did not persist the result — "
         "notes will be lost when the session stops"
     )
+
+
+def test_generate_notes_appends_to_existing_notes(tmp_path: Path) -> None:
+    """Re-enhance on the live path must append, not replace prior AI notes."""
+    from unittest.mock import MagicMock, patch
+
+    import escriba.app.session as session_module
+    from escriba.app.database import Database
+    from escriba.config import AppConfig
+
+    db = Database(tmp_path / "test.db")
+    session_id = db.create_session(name="Active Session")
+    db.save_notes(session_id, "Prior AI block")
+
+    cfg = AppConfig()
+    sess = session_module.TranscriptionSession(cfg, database=db)
+    sess.db_session_id = session_id
+    sess.transcriber = MagicMock()
+    sess.transcriber.get_full_transcript.return_value = "Transcript"
+
+    with patch.object(
+        session_module, "_generate_custom_notes", return_value="New AI block"
+    ):
+        sess.generate_notes(prompt="Summarize")
+
+    row = db.get_session(session_id)
+    db.close()
+    assert row is not None
+    notes = row["notes_text"] or ""
+    assert "Prior AI block" in notes
+    assert "New AI block" in notes
 
 
 def test_generate_notes_does_not_persist_when_no_transcript(tmp_path: Path) -> None:

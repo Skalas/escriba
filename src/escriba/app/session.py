@@ -63,6 +63,7 @@ class TranscriptionSession:
         self._audio_file: Path | None = None
         self._audio_writer: wave.Wave_write | None = None
         self.detected_app: str | None = None
+        self.initial_name: str | None = None
         self._title_generated: bool = False
         self._title_refined: bool = False
         self._title_thread: threading.Thread | None = None
@@ -114,7 +115,10 @@ class TranscriptionSession:
             backend = self.config.streaming.backend
             model_size = self.config.streaming.model_size
             language = self.config.streaming.language
-            name = f"Session {self.start_time.strftime('%Y-%m-%d %H:%M')}"
+            name = (
+                (self.initial_name or "").strip()
+                or f"Session {self.start_time.strftime('%Y-%m-%d %H:%M')}"
+            )
             self.db_session_id = self.db.create_session(
                 name=name, model=model_size, language=language, backend=backend,
             )
@@ -282,7 +286,7 @@ class TranscriptionSession:
                 lambda: self.db.stop_session(self.db_session_id, status=status),
             )
             self._run_cleanup_step(
-                "knowledge store export", self._export_to_knowledge_store
+                "knowledge store export", self._schedule_knowledge_store_export
             )
 
         # Wait for the preliminary title thread — running two mlx-lm
@@ -680,29 +684,25 @@ class TranscriptionSession:
             notes = _summary_to_markdown(result) if result else None
 
         if notes and self.db and self.db_session_id:
-            self.db.save_notes(self.db_session_id, notes)
+            self.db.append_notes(self.db_session_id, notes)
         return notes
 
-    def _export_to_knowledge_store(self) -> None:
+    def _schedule_knowledge_store_export(self) -> None:
+        """Fire-and-forget knowledge export so stop() is not blocked on I/O."""
         if not self.db or not self.db_session_id:
             return
-        try:
-            from escriba.knowledge.factory import get_knowledge_store
+        from escriba.knowledge.export_worker import run_knowledge_store_export
 
-            session = self.db.get_session(self.db_session_id)
-            segments = self.db.get_segments(self.db_session_id)
-            if not session:
-                return
-            adapter = get_knowledge_store(self.config.knowledge_store)
-            adapter.export(
-                session=session,
-                summary_json=None,
-                audio_path=self._audio_file,
-                segments=segments,
-            )
-        except Exception as exc:
-            logger.error("Knowledge store export failed: %s", exc, exc_info=True)
-
+        session_id = self.db_session_id
+        db = self.db
+        config = self.config
+        audio_file = self._audio_file
+        threading.Thread(
+            target=run_knowledge_store_export,
+            args=(db, session_id, config, audio_file),
+            daemon=True,
+            name=f"knowledge-export-{session_id[:8]}",
+        ).start()
 
 def _markdown_list_item(value: object) -> str | None:
     """Return stripped text for a bullet item, or None when empty."""

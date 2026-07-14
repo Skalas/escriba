@@ -532,7 +532,7 @@ def test_t1_stop_finalizes_db_even_when_capture_teardown_raises(
         session.screen_capture.stop.side_effect = RuntimeError("teardown boom")
 
         with patch.object(TranscriptionSession, "_refine_title"), patch.object(
-            TranscriptionSession, "_export_to_knowledge_store"
+            TranscriptionSession, "_schedule_knowledge_store_export"
         ):
             session.stop()
 
@@ -572,7 +572,7 @@ def test_t1_stop_runs_every_cleanup_step_independently(
         ), patch.object(
             session, "_export", side_effect=rec("export", raise_it=True)
         ), patch.object(
-            session, "_export_to_knowledge_store", side_effect=rec("knowledge")
+            session, "_schedule_knowledge_store_export", side_effect=rec("knowledge")
         ), patch.object(
             session, "_refine_title", side_effect=rec("refine")
         ):
@@ -604,7 +604,7 @@ def test_t2_slow_process_thread_join_skips_flush_and_close(
         with patch.object(session, "_flush_buffer") as flush, patch.object(
             session, "_close_audio_file"
         ) as close, patch.object(
-            TranscriptionSession, "_export_to_knowledge_store"
+            TranscriptionSession, "_schedule_knowledge_store_export"
         ), patch.object(TranscriptionSession, "_refine_title"), patch.object(
             session, "_export"
         ):
@@ -636,7 +636,7 @@ def test_t3_slow_title_thread_skips_refine(
         session._title_thread = title_thread
 
         with patch.object(session, "_refine_title") as refine, patch.object(
-            TranscriptionSession, "_export_to_knowledge_store"
+            TranscriptionSession, "_schedule_knowledge_store_export"
         ), patch.object(session, "_export"), patch.object(
             session, "_flush_buffer"
         ), patch.object(session, "_close_audio_file"):
@@ -662,7 +662,7 @@ def test_t3_finished_title_thread_allows_refine(
         session._title_thread = title_thread
 
         with patch.object(session, "_refine_title") as refine, patch.object(
-            TranscriptionSession, "_export_to_knowledge_store"
+            TranscriptionSession, "_schedule_knowledge_store_export"
         ), patch.object(session, "_export"), patch.object(
             session, "_flush_buffer"
         ), patch.object(session, "_close_audio_file"):

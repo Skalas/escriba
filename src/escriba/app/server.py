@@ -129,7 +129,9 @@ class AppState:
             return self.session
 
     def try_start_recording(
-        self, detected_app: str | None = None
+        self,
+        detected_app: str | None = None,
+        session_name: str | None = None,
     ) -> tuple[dict[str, Any], int]:
         """Start recording if idle; at most one active session."""
         from escriba.app.session import TranscriptionSession
@@ -148,6 +150,10 @@ class AppState:
             new_session = TranscriptionSession(self.config, database=self.db)
             if detected_app:
                 new_session.detected_app = detected_app
+            if session_name:
+                cleaned = session_name.strip()
+                if cleaned:
+                    new_session.initial_name = cleaned
             self.session = new_session
             self._start_in_progress = True
 
@@ -421,6 +427,9 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/search":
                 q = params.get("q", [""])[0]
                 self._respond(self._search_segments(q))
+            elif path == "/api/calendar/upcoming":
+                self._localhost_host_guard()
+                self._respond(self._get_calendar_upcoming())
             elif path == "/api/download-model/status":
                 downloading, result, total = self.app_state.model_download.get_status()
                 payload: dict[str, Any] = {
@@ -467,6 +476,19 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             self._end_request("GET", cid, t0)
 
+    def _localhost_host_guard(self) -> None:
+        """Reject unexpected Host headers (DNS rebinding) on sensitive read routes."""
+        addr = getattr(self.server, "server_address", None)
+        port = addr[1] if isinstance(addr, tuple) else PORT
+        allowed_hosts = {
+            f"127.0.0.1:{port}",
+            f"localhost:{port}",
+            f"[::1]:{port}",
+        }
+        host = self.headers.get("Host")
+        if host is not None and host not in allowed_hosts:
+            raise ApiError("Invalid Host header", 421)
+
     def _mutation_guard(self) -> None:
         """Reject cross-origin / DNS-rebinding requests on state-changing routes.
 
@@ -496,9 +518,7 @@ class _Handler(BaseHTTPRequestHandler):
         if origin is not None and origin not in allowed_origins:
             raise ApiError("Cross-origin request rejected", 403)
 
-        host = self.headers.get("Host")
-        if host is not None and host not in allowed_hosts:
-            raise ApiError("Invalid Host header", 421)
+        self._localhost_host_guard()
 
     def do_POST(self) -> None:
         cid, t0 = self._begin_request("POST")
@@ -519,7 +539,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Dispatch a POST path to its handler; returns a (payload, status) tuple."""
         _exact: dict[str, Callable[[], tuple]] = {
             "/api/config/reload": self._reload_config,
-            "/api/recording/start": self._start_recording,
+            "/api/recording/start": lambda: self._start_recording(self._parse_json_body()),
             "/api/recording/stop": self._stop_recording,
             "/api/recording/user-notes": lambda: self._save_recording_user_notes(
                 self._parse_json_body()
@@ -560,6 +580,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._generate_session_notes(session_id, self._parse_json_body())
         if action == "notes":
             return self._save_notes(session_id, self._parse_json_body())
+        if action == "append-notes":
+            return self._append_notes(session_id, self._parse_json_body())
         if action == "user-notes":
             return self._save_session_user_notes(session_id, self._parse_json_body())
         return {"ok": False, "error": "Not found"}, 404
@@ -1017,8 +1039,12 @@ class _Handler(BaseHTTPRequestHandler):
         db.set_speaker_label(session_id, speaker_key, display_name)
         return {"ok": True}, 200
 
-    def _start_recording(self) -> tuple[dict, int]:
-        return self.app_state.try_start_recording()
+    def _start_recording(self, body: dict | None = None) -> tuple[dict, int]:
+        payload = body or {}
+        session_name = payload.get("name")
+        if session_name is not None and not isinstance(session_name, str):
+            raise ApiError("name must be a string", 400)
+        return self.app_state.try_start_recording(session_name=session_name)
 
     def _save_recording_user_notes(self, body: dict) -> tuple[dict, int]:
         with self.app_state._lock:
@@ -1686,6 +1712,21 @@ class _Handler(BaseHTTPRequestHandler):
             self.app_state.config = new_config
         return {"ok": True, "config": config_to_dict(new_config)}, 200
 
+    def _get_calendar_upcoming(self) -> tuple[dict, int]:
+        """Return upcoming calendar events for the home Up-next spike."""
+        from escriba.calendar.apple_calendar import (
+            _CALENDAR_PERMISSION_HINT,
+            get_upcoming_events,
+        )
+
+        events, calendar_error = get_upcoming_events(minutes_ahead=8 * 60)
+        payload: dict[str, Any] = {"ok": True, "events": events}
+        if calendar_error:
+            payload["calendar_error"] = calendar_error
+            if calendar_error == "permission_denied":
+                payload["permission_hint"] = _CALENDAR_PERMISSION_HINT
+        return payload, 200
+
     def _save_notes(self, session_id: str, body: dict) -> tuple[dict, int]:
         db = self._require_db()
         if not db.get_session(session_id):
@@ -1697,6 +1738,18 @@ class _Handler(BaseHTTPRequestHandler):
             notes = ""
         db.save_notes(session_id, notes)
         return {"ok": True}, 200
+
+    def _append_notes(self, session_id: str, body: dict) -> tuple[dict, int]:
+        db = self._require_db()
+        new_notes = body.get("append_text", "")
+        if new_notes is not None and not isinstance(new_notes, str):
+            raise ApiError("append_text must be a string", 400)
+        if new_notes is None:
+            new_notes = ""
+        combined = db.append_notes(session_id, new_notes)
+        if combined is None:
+            return {"ok": False, "error": "Session not found"}, 404
+        return {"ok": True, "notes_text": combined}, 200
 
     def _save_session_user_notes(self, session_id: str, body: dict) -> tuple[dict, int]:
         db = self._require_db()
