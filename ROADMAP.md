@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-07-13 · Current version: `1.3.1` · sprint `append-notes-adapters-calendar-thin` (#174–#177) complete; calendar full auto-start still parked._
+_Last updated: 2026-07-14 · Current version: `1.3.1` · sprint `calendar-picker-prune-watch` (#181–#191); calendar picker shipped; full auto-start still parked pending H1–H3._
 
 ---
 
@@ -41,7 +41,9 @@ As of the **in-app updates sprint** (2026-07-13, #152 / #153–#158) the dashboa
 
 As of the **update verification sprint** (2026-07-13, #161–#164) automated tests assert `current` vs GitHub `tag_name` on CLI and API paths; `ESCRIBA_VERSION_OVERRIDE` / `check-update --current` enable live soak without rebuilding; install-path drift is inventoried in `escriba.app.install_paths` (intentional diffs vs `install.sh` / Makefile documented); and another #105 slice landed (bounded watch-folder processed set, `mix_audio` length assert, `TranscriptionError`, `_extract_response` cleanup). **Ops:** publish GitHub Release `v1.3.1` at ship so `releases/latest` ≥ app version.
 
-As of **`append-notes-adapters-calendar-thin`** (2026-07-13, #174–#177) server-side atomic `append-notes` closes the concurrent Enhance race; `webhook` + `custom-script` knowledge adapters ship behind `local-markdown` default; a thin home **Up next** row reads Calendar via `GET /api/calendar/upcoming` with one-tap Record pre-titling; `--auto-start` stays blocked. **Product call (H3):** validate the spike on a real Mac before scheduling a full calendar auto-start sprint — see decision note under #64 below.
+As of **`calendar-picker-prune-watch`** (2026-07-14, #181–#191) Settings lets users pick which Calendar.app calendars Escriba reads for Up next (`[calendar].calendars` in `escriba.toml`; empty = all non-skipped). Orphan `watch-calendar` CLI removed. **Human gates H1–H3 pending** (picker UX approval, live Calendar permission, graduation call). Full calendar auto-start remains **parked** — see #64 decision note below.
+
+As of **`append-notes-adapters-calendar-thin`** (2026-07-13, #174–#177) server-side atomic `append-notes` closes the concurrent Enhance race; `webhook` + `custom-script` knowledge adapters ship behind `local-markdown` default; a thin home **Up next** row reads Calendar via `GET /api/calendar/upcoming` with one-tap Record pre-titling. **Product call (H3):** validate the spike on a real Mac before scheduling a full calendar auto-start sprint — see decision note under #64 below.
 
 ---
 
@@ -345,11 +347,20 @@ HOLD on append-notes; REDUCE on P2; EXPAND on adapters; thin EXPAND on calendar.
 
 **Done when:** `uv run ruff check .` + `uv run pytest` green.
 
-**#64 spike decision (T16 — pending human H1–H3):** Ship stayed **spike-only**. Reading today’s events + one-tap Record is in the dashboard; automatic calendar-driven start remains **parked** until product approves the affordance (H1), confirms Calendar permission on a real Mac (H2), and chooses whether to schedule a full auto-start sprint (H3). _Trigger for full build:_ positive H1–H3 + user demand beyond mic-activation auto-record.
+---
+
+### Calendar picker + prune watch-calendar  ·  _2026-07-14 (#182–#191; parents #181/#64)_
+
+HOLD on picker; REDUCE on orphan CLI.
+
+- [x] **Calendar allowlist (#182–#187 / T1–T6).** `[calendar].calendars` config + Settings multi-select; `GET /api/calendar/calendars`; Up next queries only the selection; empty = all non-skipped; holiday skip ∩ allowlist; invalid shapes rejected.
+- [x] **Prune watch-calendar (#188–#190 / T7–T9).** Removed orphan `watch-calendar` CLI / `watch_calendar` / `has_meeting_link`; docs aligned; auto-start stays parked.
+- [ ] **H1–H3 human gates (#191 / T10).** UX soak of picker + live Calendar permission + graduation call (spike-only vs full auto-start sprint). Auto-start remains **parked**.
+
+**Done when:** ship gate green; picker usable in Settings; H1–H3 recorded when soaked.
 
 **Deferred (with triggers):**
-- **Calendar auto-start / menubar scheduling.** Intentionally not enabled. _Trigger:_ H3 graduation after thin spike soak.
-- **Calendar in-progress events.** Up-next only lists future starts within 8h. _Trigger:_ users want “happening now” rows.
+- **Calendar auto-start / menubar scheduling.** Intentionally not enabled; `watch-calendar` CLI removed. _Trigger:_ positive H1–H3 + demand beyond mic auto-record.
 - **MLX ndarray resample parity; Swift XCTest; streaming summaries; schema_version runner.** Unchanged — see Backlog.
 
 ---

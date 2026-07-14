@@ -159,6 +159,8 @@ class TranscriberMenuBar(rumps.App):
     def _do_reload(self):
         from dotenv import load_dotenv
 
+        from escriba.calendar.apple_calendar import clear_upcoming_events_cache
+
         load_dotenv(override=True)
         new_config = AppConfig.load()
         self.config = new_config
@@ -167,6 +169,7 @@ class TranscriberMenuBar(rumps.App):
         self._call_state = self._make_call_state_machine(new_config)
         if self._mic_poll_timer is not None:
             self._mic_poll_timer.interval = new_config.auto_record.poll_interval
+        clear_upcoming_events_cache()
         logger.info(
             "Config reloaded: backend=%s, model=%s",
             new_config.streaming.backend,

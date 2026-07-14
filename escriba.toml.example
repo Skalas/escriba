@@ -46,3 +46,8 @@ terms = ["API", "SDK", "REST", "OAuth"]
 # Post-processing replacements (case-insensitive find → exact replace)
 [dictionary.replacements]
 "whatsapp" = "WhatsApp"
+
+[calendar]
+# Calendars to read for Up next. Omit or leave empty = all non-skipped calendars.
+# Settings saves an explicit list when you pick calendars (new ones are not auto-added).
+# calendars = ["Work", "Personal"]

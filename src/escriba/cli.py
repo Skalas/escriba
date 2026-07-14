@@ -357,42 +357,6 @@ def cmd_app(ctx: typer.Context) -> None:
     run_menubar_app(config=cfg)
 
 
-@app.command("watch-calendar")
-def cmd_watch_calendar(
-    auto_start: bool = typer.Option(
-        False,
-        "--auto-start",
-        help="Auto-iniciar transcripción cuando detecte una reunión.",
-    ),
-    check_interval: int = typer.Option(
-        60, "--check-interval", help="Intervalo en segundos para verificar calendario."
-    ),
-) -> None:
-    if auto_start:
-        raise typer.BadParameter(
-            "Calendar auto-start is not implemented yet; use opt-in "
-            "Settings → Auto-record on call for automatic recording. "
-            "Reading events via watch-calendar or the dashboard Up-next "
-            "surface requires Calendar permission in System Settings."
-        )
-    from escriba.calendar.apple_calendar import watch_calendar
-
-    def on_meeting_detected(event: dict[str, object]) -> None:
-        print(f"Meeting detected: {event.get('title', 'Unknown')}")
-
-    print("Watching calendar for meetings...")
-    print("Press Ctrl+C to stop")
-    watch_calendar(on_meeting_detected, check_interval=check_interval)
-
-    try:
-        import time
-
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nStopping calendar watch...")
-
-
 @app.command("create-issues")
 def cmd_create_issues(
     transcript: Path = typer.Option(

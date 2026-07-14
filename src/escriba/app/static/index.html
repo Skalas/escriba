@@ -629,6 +629,15 @@
   .settings-banner.success { background: var(--badge-active); color: var(--success); }
   .settings-banner.error { background: var(--badge-error); color: var(--danger); }
   .settings-banner.warning { background: var(--warning-subtle); color: var(--warning); }
+  .calendar-toggle-list { display: flex; flex-direction: column; gap: 4px; }
+  .calendar-toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0; border-bottom: 1px solid var(--border-subtle);
+  }
+  .calendar-toggle-row:last-child { border-bottom: none; }
+  .calendar-toggle-name { font-size: 13px; font-weight: 500; flex: 1; min-width: 0; }
+  .calendar-toggle-name.muted { color: var(--muted); font-weight: 400; }
+  .calendar-toggle-skip { font-size: 11px; color: var(--muted); margin-left: 8px; }
   .env-status { font-size: 11px; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
   .env-set { background: var(--badge-active); color: var(--success); }
   .env-unset { background: var(--badge-error); color: var(--danger); }
@@ -1802,6 +1811,15 @@
       </div>
 
       <div class="card settings-card">
+        <h3>Calendar</h3>
+        <p class="theme-swatch-desc" style="margin-bottom:12px;">Choose which calendars Escriba reads for Up next. Saving stores the calendars you enable explicitly (new calendars are not auto-added). An empty <code>calendars</code> list in config means all non-skipped calendars.</p>
+        <div id="calendar-settings-hint" class="settings-banner warning" style="display:none;"></div>
+        <div id="calendar-toggle-list" class="calendar-toggle-list" role="group" aria-label="Calendar selection">
+          <p class="theme-swatch-desc" style="margin:0;">Loading calendars…</p>
+        </div>
+      </div>
+
+      <div class="card settings-card">
         <h3>Speaker Detection</h3>
         <div class="settings-row">
           <span class="settings-label">Mode</span>
@@ -2253,6 +2271,138 @@ async function enhanceTemplate(i, btn) {
 
 // --- Prompt customization (system prompt + quick templates) ---
 let editingTemplates = [];
+let calendarEntries = [];
+let calendarListLoaded = false;
+let calendarListLoadSeq = 0;
+
+function getSelectableCalendarEntries() {
+  return calendarEntries.filter((e) => !e.skipped);
+}
+
+function renderCalendarToggles() {
+  const list = document.getElementById('calendar-toggle-list');
+  if (!list) return;
+  list.removeAttribute('aria-disabled');
+  if (!calendarEntries.length) {
+    list.innerHTML = '<p class="theme-swatch-desc" style="margin:0;">No calendars found. Grant Calendar access in System Settings if you use Up next.</p>';
+    return;
+  }
+  list.innerHTML = calendarEntries.map((entry, i) => {
+    const skipNote = entry.skipped ? '<span class="calendar-toggle-skip">(skipped — holidays/birthdays)</span>' : '';
+    const disabled = entry.skipped ? 'disabled' : '';
+    const checked = entry.selected && !entry.skipped ? 'checked' : '';
+    const nameClass = entry.skipped ? 'calendar-toggle-name muted' : 'calendar-toggle-name';
+    return `<div class="calendar-toggle-row">
+      <span class="${nameClass}">${escHtml(entry.name)}${skipNote}</span>
+      <label class="settings-toggle"><input type="checkbox" data-calendar-idx="${i}" ${checked} ${disabled} aria-label="Include ${escAttr(entry.name)}"><span class="slider"></span></label>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('input[data-calendar-idx]').forEach((input) => {
+    input.addEventListener('change', (ev) => {
+      const idx = parseInt(ev.target.getAttribute('data-calendar-idx'), 10);
+      if (!Number.isNaN(idx) && calendarEntries[idx]) {
+        calendarEntries[idx].selected = ev.target.checked;
+        updateSettingsSaveState();
+      }
+    });
+  });
+}
+
+function renderCalendarLoadFailure() {
+  calendarEntries = [];
+  const list = document.getElementById('calendar-toggle-list');
+  if (!list) return;
+  list.setAttribute('aria-disabled', 'true');
+  list.innerHTML = '<p class="theme-swatch-desc calendar-load-failure" role="status" style="margin:0;color:var(--muted)">Calendars could not be loaded.</p>';
+}
+
+function failCalendarSettings(message) {
+  calendarListLoaded = false;
+  showCalendarSettingsHint(message);
+  renderCalendarLoadFailure();
+}
+
+function beginCalendarSettingsLoad() {
+  calendarListLoaded = false;
+  calendarEntries = [];
+  const list = document.getElementById('calendar-toggle-list');
+  if (list) {
+    list.setAttribute('aria-disabled', 'true');
+    list.innerHTML = '<p class="theme-swatch-desc" style="margin:0;">Loading calendars…</p>';
+  }
+  showCalendarSettingsHint('');
+}
+
+function showCalendarSettingsHint(message) {
+  const hint = document.getElementById('calendar-settings-hint');
+  if (!hint) return;
+  if (!message) {
+    hint.style.display = 'none';
+    hint.textContent = '';
+    return;
+  }
+  hint.textContent = message;
+  hint.className = 'settings-banner warning';
+  hint.style.display = 'block';
+}
+
+function collectCalendarAllowlist() {
+  const selectable = getSelectableCalendarEntries();
+  if (!selectable.length) return null;
+  const selected = selectable.filter((e) => e.selected).map((e) => e.name);
+  if (!selected.length) return null;
+  return selected;
+}
+
+function validateCalendarSelectionForSave() {
+  if (!calendarListLoaded) {
+    return { ok: true, omit: true };
+  }
+  const selectable = getSelectableCalendarEntries();
+  if (!selectable.length) {
+    return { ok: true, omit: true };
+  }
+  const selected = selectable.filter((e) => e.selected);
+  if (!selected.length) {
+    return {
+      ok: false,
+      message: 'Select at least one calendar for Up next, or reload calendars and try again.',
+    };
+  }
+  return { ok: true, omit: false };
+}
+
+async function loadCalendarSettings() {
+  const loadId = ++calendarListLoadSeq;
+  beginCalendarSettingsLoad();
+  try {
+    const res = await apiCall('/api/calendar/calendars');
+    if (loadId !== calendarListLoadSeq) return;
+    if (!res.ok) {
+      failCalendarSettings('Could not load calendars — calendar selection was not changed');
+      return;
+    }
+    if (res.calendar_error === 'permission_denied') {
+      failCalendarSettings(res.permission_hint || 'Calendar permission needed in System Settings');
+      return;
+    }
+    if (res.calendar_error === 'unavailable') {
+      failCalendarSettings('Calendar is slow or unavailable — try again in a moment');
+      return;
+    }
+    calendarListLoaded = true;
+    if (res.calendar_hint) {
+      showCalendarSettingsHint(res.calendar_hint);
+    } else {
+      showCalendarSettingsHint('');
+    }
+    calendarEntries = Array.isArray(res.calendars) ? res.calendars.map((c) => ({ ...c })) : [];
+    renderCalendarToggles();
+  } catch (e) {
+    if (loadId !== calendarListLoadSeq) return;
+    failCalendarSettings('Could not load calendars — calendar selection was not changed');
+  }
+}
 let promptDefaults = { system_prompt: '', templates: [] };
 
 function setPromptTemplatesFromConfig(cfg) {
@@ -3117,11 +3267,12 @@ async function renderUpNextSection() {
     section.innerHTML = '';
     return;
   }
-  if (res.calendar_error === 'permission_denied' || res.calendar_error === 'unavailable') {
+  if (res.calendar_error) {
     // Soft hint — silent empty hid real Calendar timeouts/permission issues.
-    const hint = res.calendar_error === 'permission_denied'
-      ? (res.permission_hint || 'Calendar permission needed')
-      : 'Calendar is slow or unavailable — try again in a moment';
+    const hint = res.calendar_hint
+      || (res.calendar_error === 'permission_denied'
+        ? (res.permission_hint || 'Calendar permission needed')
+        : 'Calendar is slow or unavailable — try again in a moment');
     section.innerHTML = `<div class="home-upnext" role="status">
       <p class="home-upnext-label">Up next</p>
       <div class="home-upnext-title" style="font-weight:500;color:var(--text-secondary);white-space:normal">${escHtml(hint)}</div>
@@ -4170,6 +4321,7 @@ async function loadSettings() {
     document.getElementById('s-auto-record-cooldown').value = ar.cooldown_seconds ?? 60;
     document.getElementById('s-auto-record-start-debounce').value = ar.start_debounce_seconds ?? 3;
     document.getElementById('s-auto-record-stop-debounce').value = ar.stop_debounce_seconds ?? 5;
+    await loadCalendarSettings();
     document.getElementById('s-speaker-mode').value = c.streaming.speaker.mode;
     document.getElementById('s-speaker-threshold').value = c.streaming.speaker.threshold;
     // Store the configured value, then populate dropdown from /api/models
@@ -4430,6 +4582,11 @@ function updateSettingsSaveState() {
 
 async function saveSettings() {
   hideSettingsBanner();
+  const calendarSave = validateCalendarSelectionForSave();
+  if (!calendarSave.ok) {
+    showSettingsBanner(calendarSave.message, 'error');
+    return;
+  }
   const body = {
     audio: {
       audio_source: document.getElementById('s-audio-source').value,
@@ -4466,6 +4623,9 @@ async function saveSettings() {
       stop_debounce_seconds: parseFloat(document.getElementById('s-auto-record-stop-debounce').value),
     },
   };
+  if (!calendarSave.omit) {
+    body.calendar = { calendars: collectCalendarAllowlist() ?? [] };
+  }
   // Prompts: validate system prompt placeholders, clean up templates
   const systemPromptRaw = document.getElementById('s-system-prompt').value;
   const systemPrompt = systemPromptRaw.trim();

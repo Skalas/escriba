@@ -222,6 +222,11 @@ else:
 
 PORT = 19876
 
+_CALENDAR_ALLOWLIST_MISMATCH_HINT = (
+    "None of your selected calendars were found in Calendar.app. "
+    "Open Settings → Calendar and adjust the selection."
+)
+
 
 def _concat_wav(
     sources: Sequence[tuple[str | Path | None, float, float]], out_path: Path
@@ -430,6 +435,9 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/calendar/upcoming":
                 self._localhost_host_guard()
                 self._respond(self._get_calendar_upcoming())
+            elif path == "/api/calendar/calendars":
+                self._localhost_host_guard()
+                self._respond(self._get_calendar_calendars())
             elif path == "/api/download-model/status":
                 downloading, result, total = self.app_state.model_download.get_status()
                 payload: dict[str, Any] = {
@@ -488,6 +496,33 @@ class _Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host")
         if host is not None and host not in allowed_hosts:
             raise ApiError("Invalid Host header", 421)
+
+    @staticmethod
+    def _apply_calendar_error(payload: dict[str, Any], calendar_error: str | None) -> None:
+        """Attach calendar_error and user-facing hints to an API payload."""
+        if not calendar_error:
+            return
+        from escriba.calendar.apple_calendar import _CALENDAR_PERMISSION_HINT
+
+        payload["calendar_error"] = calendar_error
+        if calendar_error == "permission_denied":
+            payload["permission_hint"] = _CALENDAR_PERMISSION_HINT
+        elif calendar_error == "no_matching_calendars":
+            payload["calendar_hint"] = _CALENDAR_ALLOWLIST_MISMATCH_HINT
+
+    @staticmethod
+    def _apply_allowlist_mismatch_hint(
+        payload: dict[str, Any],
+        *,
+        allowlist: tuple[str, ...],
+        calendars: list[dict[str, Any]],
+    ) -> None:
+        """Surface a soft hint when configured calendars match nothing live."""
+        if not allowlist or not calendars:
+            return
+        if any(c.get("selected") and not c.get("skipped") for c in calendars):
+            return
+        payload["calendar_hint"] = _CALENDAR_ALLOWLIST_MISMATCH_HINT
 
     def _mutation_guard(self) -> None:
         """Reject cross-origin / DNS-rebinding requests on state-changing routes.
@@ -1496,17 +1531,20 @@ class _Handler(BaseHTTPRequestHandler):
     def _reload_live_config(self):
         """Reload escriba.toml + .env into the running config (shared write path)."""
         from escriba.config import AppConfig
+        from escriba.calendar.apple_calendar import clear_upcoming_events_cache
 
         with self.app_state._lock:
             reload_fn = self.app_state.reload_config
         if reload_fn:
-            return reload_fn()
-        from dotenv import load_dotenv
+            new_config = reload_fn()
+        else:
+            from dotenv import load_dotenv
 
-        load_dotenv(override=True)
-        new_config = AppConfig.load()
-        with self.app_state._lock:
-            self.app_state.config = new_config
+            load_dotenv(override=True)
+            new_config = AppConfig.load()
+            with self.app_state._lock:
+                self.app_state.config = new_config
+        clear_upcoming_events_cache()
         return new_config
 
     def _ensure_local_model_ready(self, model: str | None) -> tuple[dict, int] | None:
@@ -1694,37 +1732,49 @@ class _Handler(BaseHTTPRequestHandler):
 
         env_path.write_text("\n".join(new_lines) + "\n")
 
+    def _config_calendar_allowlist(self) -> tuple[str, ...]:
+        """Return the configured calendar allowlist from live app state."""
+        from escriba.config import AppConfig
+
+        with self.app_state._lock:
+            config = self.app_state.config
+        if isinstance(config, AppConfig):
+            return config.calendar.calendars
+        return ()
+
     def _reload_config(self) -> tuple[dict, int]:
         from escriba.config import config_to_dict
 
-        with self.app_state._lock:
-            reload_fn = self.app_state.reload_config
-        if reload_fn:
-            new_config = reload_fn()
-            return {"ok": True, "config": config_to_dict(new_config)}, 200
-
-        from escriba.config import AppConfig
-        from dotenv import load_dotenv
-
-        load_dotenv(override=True)
-        new_config = AppConfig.load()
-        with self.app_state._lock:
-            self.app_state.config = new_config
+        new_config = self._reload_live_config()
         return {"ok": True, "config": config_to_dict(new_config)}, 200
 
     def _get_calendar_upcoming(self) -> tuple[dict, int]:
         """Return upcoming calendar events for the home Up-next spike."""
-        from escriba.calendar.apple_calendar import (
-            _CALENDAR_PERMISSION_HINT,
-            get_upcoming_events,
-        )
+        from escriba.calendar.apple_calendar import get_upcoming_events
 
-        events, calendar_error = get_upcoming_events(minutes_ahead=8 * 60)
+        allowlist = self._config_calendar_allowlist()
+        events, calendar_error = get_upcoming_events(
+            minutes_ahead=8 * 60,
+            calendar_allowlist=list(allowlist) if allowlist else None,
+        )
         payload: dict[str, Any] = {"ok": True, "events": events}
-        if calendar_error:
-            payload["calendar_error"] = calendar_error
-            if calendar_error == "permission_denied":
-                payload["permission_hint"] = _CALENDAR_PERMISSION_HINT
+        self._apply_calendar_error(payload, calendar_error)
+        return payload, 200
+
+    def _get_calendar_calendars(self) -> tuple[dict, int]:
+        """List Calendar.app calendars for Settings multi-select."""
+        from escriba.calendar.apple_calendar import describe_calendars_for_settings
+
+        allowlist = self._config_calendar_allowlist()
+        calendars, calendar_error = describe_calendars_for_settings(allowlist)
+        payload: dict[str, Any] = {"ok": True, "calendars": calendars}
+        self._apply_calendar_error(payload, calendar_error)
+        if not calendar_error:
+            self._apply_allowlist_mismatch_hint(
+                payload,
+                allowlist=allowlist,
+                calendars=calendars,
+            )
         return payload, 200
 
     def _save_notes(self, session_id: str, body: dict) -> tuple[dict, int]:

@@ -728,6 +728,20 @@ def test_put_config_uses_mkstemp_for_validation_copy(
     mkstemp.assert_called_once()
 
 
+def test_put_config_rejects_invalid_calendar_calendars(
+    app_state: AppState, tmp_path: Path
+) -> None:
+    """PUT /api/config rejects non-string calendar.calendars entries."""
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text("[audio]\nsample_rate = 16000\n", encoding="utf-8")
+    app_state.config = AppConfig.load(cfg_path)
+
+    handler = _make_handler(app_state)
+    payload, status = handler._put_config({"calendar": {"calendars": [1, 2]}})
+    assert status == 400
+    assert payload["ok"] is False
+
+
 def test_put_config_clears_persisted_custom_system_prompt(
     app_state: AppState, tmp_path: Path
 ) -> None:
@@ -919,3 +933,91 @@ def test_calendar_upcoming_rejects_foreign_host(live_server) -> None:
     )
     assert status == 421
     assert body["ok"] is False
+
+
+def test_calendar_upcoming_passes_config_allowlist(app_state: AppState) -> None:
+    from escriba.config import AppConfig, CalendarConfig
+
+    handler = _make_handler(app_state)
+    app_state.config = AppConfig(calendar=CalendarConfig(calendars=("Work",)))
+    with patch(
+        "escriba.calendar.apple_calendar.get_upcoming_events",
+        return_value=([], None),
+    ) as mocked:
+        handler._get_calendar_upcoming()
+    mocked.assert_called_once_with(minutes_ahead=8 * 60, calendar_allowlist=["Work"])
+
+
+def test_calendar_calendars_endpoint_returns_entries(app_state: AppState) -> None:
+    from escriba.config import AppConfig, CalendarConfig
+
+    handler = _make_handler(app_state)
+    app_state.config = AppConfig(calendar=CalendarConfig(calendars=("Work",)))
+    fake_entries = [
+        {"name": "Work", "skipped": False, "selected": True},
+        {"name": "Birthdays", "skipped": True, "selected": False},
+    ]
+    with patch(
+        "escriba.calendar.apple_calendar.describe_calendars_for_settings",
+        return_value=(fake_entries, None),
+    ) as mocked:
+        payload, status = handler._get_calendar_calendars()
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["calendars"] == fake_entries
+    mocked.assert_called_once_with(("Work",))
+
+
+def test_calendar_calendars_surfaces_permission_error(app_state: AppState) -> None:
+    handler = _make_handler(app_state)
+    with patch(
+        "escriba.calendar.apple_calendar.describe_calendars_for_settings",
+        return_value=([], "permission_denied"),
+    ):
+        payload, status = handler._get_calendar_calendars()
+    assert status == 200
+    assert payload["calendar_error"] == "permission_denied"
+    assert "permission_hint" in payload
+
+
+def test_calendar_calendars_surfaces_allowlist_mismatch_hint(app_state: AppState) -> None:
+    from escriba.config import AppConfig, CalendarConfig
+
+    handler = _make_handler(app_state)
+    app_state.config = AppConfig(calendar=CalendarConfig(calendars=("Gone",)))
+    fake_entries = [
+        {"name": "Work", "skipped": False, "selected": False},
+    ]
+    with patch(
+        "escriba.calendar.apple_calendar.describe_calendars_for_settings",
+        return_value=(fake_entries, None),
+    ):
+        payload, status = handler._get_calendar_calendars()
+    assert status == 200
+    assert "calendar_hint" in payload
+
+
+def test_calendar_upcoming_surfaces_no_matching_calendars(app_state: AppState) -> None:
+    handler = _make_handler(app_state)
+    with patch(
+        "escriba.calendar.apple_calendar.get_upcoming_events",
+        return_value=([], "no_matching_calendars"),
+    ):
+        payload, status = handler._get_calendar_upcoming()
+    assert status == 200
+    assert payload["calendar_error"] == "no_matching_calendars"
+    assert "calendar_hint" in payload
+
+
+def test_calendar_calendars_rejects_foreign_host(live_server) -> None:
+    """GET /api/calendar/calendars applies the localhost Host allowlist."""
+    _, port = live_server
+    status, body = _http(
+        port,
+        "GET",
+        "/api/calendar/calendars",
+        headers={"Host": "evil.example"},
+    )
+    assert status == 421
+    assert body["ok"] is False
+

@@ -231,3 +231,70 @@ cooldown_seconds = 60
     assert data["auto_record"]["cooldown_seconds"] == 60
     assert data["auto_record"]["start_debounce_seconds"] == 3.0
     assert data["auto_record"]["stop_debounce_seconds"] == 5.0
+
+
+def test_calendar_allowlist_round_trip_from_toml(tmp_path: Path) -> None:
+    """Calendar allowlist loads from TOML and serializes back."""
+    from escriba.config import AppConfig, config_to_dict, update_config_toml
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        """
+[calendar]
+calendars = ["Work", "Personal"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    cfg = AppConfig.load(cfg_path)
+    assert cfg.calendar.calendars == ("Work", "Personal")
+    assert config_to_dict(cfg)["calendar"] == {"calendars": ["Work", "Personal"]}
+
+    update_config_toml({"calendar": {"calendars": ["Work"]}}, cfg_path)
+    reloaded = AppConfig.load(cfg_path)
+    assert reloaded.calendar.calendars == ("Work",)
+
+
+def test_empty_calendar_allowlist_means_all_non_skipped(tmp_path: Path) -> None:
+    from escriba.config import AppConfig
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text("[calendar]\ncalendars = []\n", encoding="utf-8")
+
+    cfg = AppConfig.load(cfg_path)
+    assert cfg.calendar.calendars == ()
+
+
+def test_invalid_calendar_name_rejected_on_load(tmp_path: Path) -> None:
+    from escriba.config import AppConfig, ConfigValidationError
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        '[calendar]\ncalendars = ["Work", "bad\\"name"]\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="invalid name"):
+        AppConfig.load(cfg_path)
+
+
+def test_invalid_calendar_calendars_shape_rejected(tmp_path: Path) -> None:
+    from escriba.config import AppConfig, ConfigValidationError
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text("[calendar]\ncalendars = 1\n", encoding="utf-8")
+
+    with pytest.raises(ConfigValidationError, match="must be a list"):
+        AppConfig.load(cfg_path)
+
+
+def test_invalid_calendar_calendars_element_type_rejected(tmp_path: Path) -> None:
+    from escriba.config import AppConfig, ConfigValidationError
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text("[calendar]\ncalendars = [1, 2]\n", encoding="utf-8")
+
+    with pytest.raises(ConfigValidationError, match="must be a string"):
+        AppConfig.load(cfg_path)
+
+

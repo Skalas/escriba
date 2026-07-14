@@ -25,7 +25,7 @@ uv run escriba app
 - `uv run escriba list-devices` — list audio input devices
 - `uv run escriba download-model` — download local LLM model
 - `uv run escriba daemon start` — start background transcription daemon
-- `uv run escriba watch-calendar` — auto-transcribe on calendar meetings
+- `uv run escriba watch-folder` — auto-transcribe new audio files in a folder
 - `uv run escriba create-issues` — create GitHub issues from transcript
 
 ## Architecture
