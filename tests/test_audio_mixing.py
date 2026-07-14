@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from escriba.audio.live_capture import mix_audio
 
@@ -66,17 +67,9 @@ def test_mix_audio_empty_arrays():
 
 
 def test_mix_audio_different_lengths():
-    """Test mixing with arrays of different lengths."""
+    """Arrays of different lengths must raise before mixing."""
     system = np.array([1000, 2000, 3000], dtype=np.int16)
     mic = np.array([500, 1000], dtype=np.int16)
 
-    # En la práctica, los arrays deberían tener la misma longitud
-    # numpy puede manejar esto con broadcasting, pero puede no ser el comportamiento deseado
-    # Por ahora, solo verificamos que no crashea
-    try:
-        result = mix_audio(system, mic, mic_boost=1.0)
-        # Si no lanza excepción, verificar que funciona
-        assert result.dtype == np.int16
-    except (ValueError, IndexError):
-        # Si lanza excepción, está bien - es comportamiento esperado
-        pass
+    with pytest.raises(ValueError, match="equal length"):
+        mix_audio(system, mic, mic_boost=1.0)

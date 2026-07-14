@@ -5,13 +5,14 @@ import os
 import queue
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Iterable, Optional
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from escriba.transcribe.whisper import transcribe_file
+from escriba.transcribe.whisper import TranscriptionError, transcribe_file
 
 
 SUPPORTED_EXTENSIONS = {
@@ -26,6 +27,69 @@ SUPPORTED_EXTENSIONS = {
 
 LOGGER = logging.getLogger("escriba.watch")
 
+DEFAULT_PROCESSED_MAX = 10_000
+
+
+def _get_watch_processed_max() -> int:
+    """Parse WATCH_PROCESSED_MAX with validation and a safe default."""
+    raw = os.getenv("WATCH_PROCESSED_MAX", str(DEFAULT_PROCESSED_MAX)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        LOGGER.warning(
+            "Invalid WATCH_PROCESSED_MAX=%r, using default %s",
+            raw,
+            DEFAULT_PROCESSED_MAX,
+        )
+        return DEFAULT_PROCESSED_MAX
+    if value < 1:
+        LOGGER.warning(
+            "WATCH_PROCESSED_MAX must be >= 1, got %s; using default %s",
+            value,
+            DEFAULT_PROCESSED_MAX,
+        )
+        return DEFAULT_PROCESSED_MAX
+    return value
+
+
+class _BoundedProcessedSet:
+    """Track successfully processed paths; FIFO-evict only completed entries."""
+
+    def __init__(self, max_size: int) -> None:
+        if max_size < 1:
+            raise ValueError("max_size must be >= 1")
+        self._max_size = max_size
+        self._paths: OrderedDict[Path, None] = OrderedDict()
+
+    def __contains__(self, path: Path) -> bool:
+        return path in self._paths
+
+    def add(self, path: Path) -> bool:
+        """Mark path processed. Returns False if already present."""
+        if path in self._paths:
+            return False
+        while len(self._paths) >= self._max_size:
+            self._paths.popitem(last=False)
+        self._paths[path] = None
+        return True
+
+    def discard(self, path: Path) -> None:
+        self._paths.pop(path, None)
+
+
+def _resolve_under_input_dir(path: Path, input_dir: Path) -> Path | None:
+    """Resolve ``path`` and ensure it stays under ``input_dir`` (symlink-safe)."""
+    try:
+        resolved = path.resolve()
+        root = input_dir.resolve()
+    except OSError:
+        LOGGER.warning("Could not resolve watch path: %s", path)
+        return None
+    if root not in resolved.parents and resolved != root:
+        LOGGER.warning("Rejecting path outside watch directory: %s", path)
+        return None
+    return resolved
+
 
 def watch_folder(
     input_dir: Path,
@@ -38,6 +102,7 @@ def watch_folder(
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     stop_event = stop_event or threading.Event()
+    watch_root = input_dir.resolve()
 
     LOGGER.info("Watching folder: %s", input_dir)
     LOGGER.info("Output dir: %s", output_dir)
@@ -46,18 +111,22 @@ def watch_folder(
 
     normalized_ext = {ext.lower() for ext in (extensions or SUPPORTED_EXTENSIONS)}
     work_queue: queue.Queue[Path] = queue.Queue()
-    processed: set[Path] = set()
+    completed = _BoundedProcessedSet(_get_watch_processed_max())
+    active: set[Path] = set()
     lock = threading.Lock()
 
-    def enqueue_path(path: Path) -> None:
-        if path.suffix.lower() not in normalized_ext:
+    def enqueue_path(raw_path: Path) -> None:
+        resolved = _resolve_under_input_dir(raw_path, watch_root)
+        if resolved is None:
+            return
+        if resolved.suffix.lower() not in normalized_ext:
             return
         with lock:
-            if path in processed:
+            if resolved in completed or resolved in active:
                 return
-            processed.add(path)
-        LOGGER.info("Queued file: %s", path)
-        work_queue.put(path)
+            active.add(resolved)
+        LOGGER.info("Queued file: %s", resolved)
+        work_queue.put(resolved)
 
     def worker() -> None:
         LOGGER.info("Worker started")
@@ -80,9 +149,10 @@ def watch_folder(
                 if not skip_stability_check:
                     _wait_for_stable_file(path)
                 transcribed = _retry_transcribe(path, output_dir, combined_transcript)
-                if not transcribed:
-                    with lock:
-                        processed.discard(path)
+                with lock:
+                    active.discard(path)
+                    if transcribed:
+                        completed.add(path)
             finally:
                 work_queue.task_done()
         LOGGER.info("Worker stopped")
@@ -203,16 +273,25 @@ def _retry_transcribe(
                 continue
             result = transcribe_file(path, output_dir, combined_transcript)
             if result is None:
-                LOGGER.warning("Transcript not created for %s", path)
+                LOGGER.warning("Transcript not created for %s", path.name)
                 if attempt >= attempts - 1:
                     return False
                 time.sleep(delay)
                 continue
-            LOGGER.info("Transcribed: %s", path)
+            LOGGER.info("Transcribed: %s", path.name)
             return True
+        except TranscriptionError as exc:
+            if attempt >= attempts - 1:
+                LOGGER.error(
+                    "Skipping %s due to transcription error: %s",
+                    path.name,
+                    exc,
+                )
+                return False
+            time.sleep(delay)
         except Exception:
             if attempt >= attempts - 1:
-                LOGGER.exception("Skipping %s due to error", path)
+                LOGGER.error("Skipping %s due to error", path.name, exc_info=True)
                 return False
             time.sleep(delay)
     return False
