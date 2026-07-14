@@ -434,11 +434,16 @@ def cmd_check_update(
         "--json",
         help="Print structured JSON result.",
     ),
+    current: str | None = typer.Option(
+        None,
+        "--current",
+        help="Override running version (soak tests; also ESCRIBA_VERSION_OVERRIDE).",
+    ),
 ) -> None:
     """Check GitHub for a newer Escriba release."""
     from escriba.app.updates import check_for_updates
 
-    result = check_for_updates()
+    result = check_for_updates(override=current)
     if json_output:
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
     elif result.update_available:
@@ -471,7 +476,7 @@ def cmd_update(
         run_upgrade_blocking,
     )
 
-    check = check_for_updates()
+    check = check_for_updates(soak=False)
     if not check.update_available:
         if check.error:
             typer.echo(f"No update available ({check.error}).")
