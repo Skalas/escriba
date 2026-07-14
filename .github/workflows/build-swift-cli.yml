@@ -31,7 +31,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd swift-audio-capture/.build/release
-          gh release upload "${{ github.event.release.tag_name }}" \
+          # --clobber: release may already include assets (e.g. created via
+          # `gh release create … *.tar.gz`); replace with the CI-built binary.
+          gh release upload --clobber "${{ github.event.release.tag_name }}" \
             audio-capture-arm64-darwin.tar.gz \
             audio-capture-arm64-darwin.tar.gz.sha256
 
