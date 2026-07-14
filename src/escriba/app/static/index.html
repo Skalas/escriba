@@ -3108,9 +3108,24 @@ function formatCalendarEventTime(startTime) {
 async function renderUpNextSection() {
   const section = document.getElementById('home-upnext-section');
   if (!section) return;
+  section.innerHTML = `<div class="home-upnext" role="status" aria-live="polite">
+    <p class="home-upnext-label">Up next</p>
+    <div class="home-upnext-title" style="font-weight:500;color:var(--text-secondary)">Checking Calendar…</div>
+  </div>`;
   const res = await apiCall('/api/calendar/upcoming');
   if (!res.ok) {
     section.innerHTML = '';
+    return;
+  }
+  if (res.calendar_error === 'permission_denied' || res.calendar_error === 'unavailable') {
+    // Soft hint — silent empty hid real Calendar timeouts/permission issues.
+    const hint = res.calendar_error === 'permission_denied'
+      ? (res.permission_hint || 'Calendar permission needed')
+      : 'Calendar is slow or unavailable — try again in a moment';
+    section.innerHTML = `<div class="home-upnext" role="status">
+      <p class="home-upnext-label">Up next</p>
+      <div class="home-upnext-title" style="font-weight:500;color:var(--text-secondary);white-space:normal">${escHtml(hint)}</div>
+    </div>`;
     return;
   }
   const events = Array.isArray(res.events) ? res.events : [];

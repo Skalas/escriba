@@ -49,3 +49,22 @@ def test_sort_events_by_start_orders_earliest_first() -> None:
     ]
     ordered = sort_events_by_start(events)
     assert [e["title"] for e in ordered] == ["Sooner", "Later"]
+
+
+def test_parse_event_start_accepts_day_month_locale() -> None:
+    from escriba.calendar.apple_calendar import _parse_event_start
+
+    parsed = _parse_event_start("Monday, 13 July 2026 at 10:30:00\u202fPM")
+    assert parsed.year == 2026
+    assert parsed.month == 7
+    assert parsed.day == 13
+    assert parsed.hour == 22
+    assert parsed.minute == 30
+
+
+def test_should_skip_holiday_calendars() -> None:
+    from escriba.calendar.apple_calendar import _should_skip_calendar
+
+    assert _should_skip_calendar("Birthdays")
+    assert _should_skip_calendar("Holidays in Mexico")
+    assert not _should_skip_calendar("Work")

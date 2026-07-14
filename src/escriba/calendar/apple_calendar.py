@@ -13,15 +13,35 @@ _CALENDAR_PERMISSION_HINT = (
     "for Terminal, iTerm, or Escriba."
 )
 
+# Holiday / suggestion calendars make `every event` scans extremely slow.
+_SKIP_CALENDAR_NAME_SNIPPETS = (
+    "birthday",
+    "birthdays",
+    "holiday",
+    "holidays",
+    "festivo",
+    "festivos",
+    "feriado",
+    "siri suggestion",
+    "scheduled reminder",
+    "días feriados",
+    "dias feriados",
+)
+
+# Calendar.app event queries routinely exceed 10s with several synced accounts.
+_OSASCRIPT_TIMEOUT_SECONDS = 45
+
 
 def _parse_event_start(time_str: str) -> datetime:
     """Best-effort parse for Apple Calendar / ISO start strings."""
-    cleaned = (time_str or "").strip()
+    cleaned = (time_str or "").strip().replace("\u202f", " ").replace("\xa0", " ")
     if not cleaned:
         return datetime.max
     for fmt in (
         "%A, %B %d, %Y at %I:%M:%S %p",
+        "%A, %d %B %Y at %I:%M:%S %p",
         "%A, %B %d, %Y at %H:%M:%S",
+        "%A, %d %B %Y at %H:%M:%S",
     ):
         try:
             return datetime.strptime(cleaned, fmt)
@@ -38,14 +58,23 @@ def sort_events_by_start(events: list[dict[str, str]]) -> list[dict[str, str]]:
     return sorted(events, key=lambda evt: _parse_event_start(evt.get("start_time", "")))
 
 
+def _should_skip_calendar(name: str) -> bool:
+    lowered = name.strip().lower()
+    return any(snippet in lowered for snippet in _SKIP_CALENDAR_NAME_SNIPPETS)
+
+
 def get_upcoming_events(
     minutes_ahead: int = 5,
+    *,
+    include_started_within_minutes: int = 120,
 ) -> tuple[list[dict[str, str]], str | None]:
     """
     Read upcoming events from Apple Calendar via osascript.
 
     Args:
         minutes_ahead: Minutes into the future to search for events.
+        include_started_within_minutes: Also include events that started up to
+            this many minutes ago (so an in-progress meeting still appears).
 
     Returns:
         Tuple of (events, calendar_error). ``calendar_error`` is set when
@@ -53,13 +82,36 @@ def get_upcoming_events(
         Each event dict has ``title``, ``start_time``, ``end_time``, and ``url``.
     """
     try:
-        script = f"""
-        tell application "Calendar"
-            set nowDate to current date
-            set futureDate to nowDate + ({minutes_ahead} * minutes)
-            set outputLines to {{}}
-            repeat with cal in calendars
-                set eventsList to (every event of cal whose start date is greater than nowDate and start date is less than futureDate)
+        list_result = subprocess.run(
+            ["osascript", "-e", 'tell application "Calendar" to get name of every calendar'],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if list_result.returncode != 0:
+            stderr = (list_result.stderr or "").strip()
+            logger.debug("osascript calendar list error: %s", stderr)
+            if "not allowed" in stderr.lower() or "access" in stderr.lower():
+                return [], "permission_denied"
+            return [], "unavailable"
+
+        calendar_names = [
+            name.strip()
+            for name in list_result.stdout.split(",")
+            if name.strip() and not _should_skip_calendar(name)
+        ]
+        if not calendar_names:
+            return [], None
+
+        # Build per-calendar queries; skipping holidays/birthdays keeps this under timeout.
+        cal_blocks: list[str] = []
+        for name in calendar_names:
+            safe = name.replace("\\", "\\\\").replace('"', '\\"')
+            cal_blocks.append(
+                f'''
+            try
+                set cal to calendar "{safe}"
+                set eventsList to (every event of cal whose start date ≥ pastDate and start date ≤ futureDate)
                 repeat with evt in eventsList
                     set eventUrl to ""
                     try
@@ -67,7 +119,16 @@ def get_upcoming_events(
                     end try
                     set end of outputLines to ((summary of evt as string) & tab & (start date of evt as string) & tab & (end date of evt as string) & tab & eventUrl)
                 end repeat
-            end repeat
+            end try'''
+            )
+
+        script = f"""
+        tell application "Calendar"
+            set nowDate to current date
+            set pastDate to nowDate - ({include_started_within_minutes} * minutes)
+            set futureDate to nowDate + ({minutes_ahead} * minutes)
+            set outputLines to {{}}
+            {"".join(cal_blocks)}
             set AppleScript's text item delimiters to linefeed
             return outputLines as text
         end tell
@@ -77,7 +138,7 @@ def get_upcoming_events(
             ["osascript", "-e", script],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=_OSASCRIPT_TIMEOUT_SECONDS,
         )
 
         if result.returncode != 0:
