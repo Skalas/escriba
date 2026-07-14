@@ -369,9 +369,12 @@
   .session-group-label {
     font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: .06em; color: var(--text-secondary);
-    padding: 12px 12px 4px; position: sticky; top: 0;
-    background: var(--sidebar-bg); z-index: 1;
+    padding: 10px 12px 6px; position: sticky; top: 0;
+    background: var(--sidebar-bg); z-index: 2;
+    box-shadow: 0 6px 8px -6px var(--sidebar-bg);
   }
+  .session-date-group { display: flex; flex-direction: column; }
+  .session-date-group .session-item { scroll-margin-top: 2rem; }
   .select-toggle-btn {
     font: inherit; font-size: 12px; font-weight: 600;
     color: var(--text-secondary); background: none; border: none;
@@ -529,6 +532,47 @@
   }
   .about-link:hover { color: var(--accent-hover); }
   .about-link .icon { width: 15px; height: 15px; }
+  .update-banner {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--accent);
+    background: var(--accent-subtle);
+    color: var(--text);
+    position: sticky;
+    top: 0;
+    z-index: 1001;
+  }
+  .update-banner.visible { display: flex; }
+  .update-banner-text { flex: 1; min-width: 0; line-height: 1.4; }
+  .update-banner-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .btn-compact { font-size: 12px; padding: 6px 12px; }
+  .btn-compact-wide { font-size: 12px; padding: 6px 14px; }
+  .about-update-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .about-check-row { margin-top: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .about-auto-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+  .about-update-box {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    display: none;
+  }
+  .about-update-box.visible { display: block; }
+  .about-update-notes {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    margin: 8px 0 12px;
+    white-space: pre-wrap;
+  }
+  .about-update-progress {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    min-height: 1.2em;
+  }
   .settings-card h3 { cursor: pointer; user-select: none; }
   .settings-row {
     display: flex;
@@ -703,6 +747,8 @@
     display: flex;
     align-items: flex-start;
     gap: 10px;
+    position: relative;
+    z-index: 0;
   }
   .session-item:hover { background: var(--accent-subtle); }
   .session-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -724,10 +770,12 @@
     line-height: 1.35;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     word-break: break-word;
     overflow-wrap: anywhere;
+    padding-top: 1px;
   }
   .session-actions {
     display: none; gap: 1px; flex-shrink: 0; margin-top: 1px; align-items: flex-start;
@@ -1401,6 +1449,16 @@
   <span id="ai-banner-text"></span>
 </div>
 
+<!-- Update available banner -->
+<div id="update-banner" class="update-banner" role="status" aria-live="polite">
+  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"></path><path d="m8 11 4 4 4-4"></path><path d="M5 21h14"></path></svg>
+  <span class="update-banner-text" id="update-banner-text"></span>
+  <span class="update-banner-actions">
+    <button type="button" class="btn-start btn-compact" id="update-banner-install" onclick="startAppUpdate()">Update</button>
+    <button type="button" class="btn-secondary btn-compact" id="update-banner-dismiss" onclick="dismissUpdateBanner()">Later</button>
+  </span>
+</div>
+
 <!-- Expand handle (shown only when sidebar is collapsed) -->
 <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Expand sidebar" title="Expand sidebar"><svg class="icon" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg></button>
 
@@ -1894,6 +1952,22 @@
           </svg>
           View on GitHub
         </a>
+        <div class="about-check-row">
+          <button type="button" class="btn-secondary btn-compact" id="about-check-updates" onclick="checkForAppUpdate(true)">Check for updates</button>
+          <label class="about-auto-check">
+            <input type="checkbox" id="about-auto-check-updates" onchange="saveAutoUpdateCheckPref()">
+            Check automatically when opening Settings
+          </label>
+        </div>
+        <div class="about-update-box" id="about-update-box">
+          <div class="about-update-header">
+            <strong style="font-size:13px;">Update available</strong>
+            <span class="about-version-badge" id="about-update-version">…</span>
+          </div>
+          <div class="about-update-notes" id="about-update-notes"></div>
+          <button type="button" class="btn-start btn-compact-wide" id="about-update-btn" onclick="startAppUpdate()">Update now</button>
+          <div class="about-update-progress" id="about-update-progress"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -2126,8 +2200,8 @@ async function callEnhance(text, preservePlaceholders) {
 
 async function enhanceSystemPrompt() {
   const ta = document.getElementById('s-system-prompt');
-  const text = (ta.value || '').trim();
-  if (!text) { showSettingsBanner('Write a system prompt first, then enhance it', 'error'); return; }
+  const text = (ta.value || '').trim() || (promptDefaults.system_prompt || '').trim();
+  if (!text) { showSettingsBanner('No default system prompt available to enhance', 'error'); return; }
   const btn = document.getElementById('btn-enhance-system');
   const orig = btn.innerHTML; btn.disabled = true; btn.innerHTML = _spinnerSvg + ' Enhancing...';
   try {
@@ -2180,7 +2254,11 @@ function loadPromptsIntoSettings(cfg) {
     system_prompt: p.default_system_prompt || '',
     templates: (p.default_templates || []).map(t => ({ ...t })),
   };
-  document.getElementById('s-system-prompt').value = p.system_prompt || promptDefaults.system_prompt;
+  const rawPrompt = typeof p.system_prompt === 'string' ? p.system_prompt : '';
+  document.getElementById('s-system-prompt').value = rawPrompt;
+  document.getElementById('s-system-prompt').placeholder = rawPrompt
+    ? ''
+    : 'Using built-in default — type here to customize';
   editingTemplates = (p.templates && p.templates.length ? p.templates : promptDefaults.templates).map(t => ({ ...t }));
   renderTemplateEditor();
 }
@@ -2234,7 +2312,8 @@ function moveTemplate(i, dir) {
   renderTemplateEditor();
 }
 function resetSystemPrompt() {
-  document.getElementById('s-system-prompt').value = promptDefaults.system_prompt;
+  document.getElementById('s-system-prompt').value = '';
+  document.getElementById('s-system-prompt').placeholder = 'Using built-in default — type here to customize';
 }
 function resetTemplates() {
   editingTemplates = promptDefaults.templates.map(t => ({ ...t }));
@@ -2732,8 +2811,10 @@ function renderDateGroupedSessions(sessions) {
   let html = '';
   for (const [label, items] of labels) {
     if (items.length === 0) continue;
+    html += `<div class="session-date-group">`;
     html += `<div class="session-group-label" role="separator" aria-label="${escAttr(label)}">${escHtml(label)}</div>`;
     html += items.map(s => renderSessionItem(s)).join('');
+    html += `</div>`;
   }
   return html;
 }
@@ -3792,6 +3873,159 @@ async function showSettingsView() {
   loadAbout();
 }
 
+let updatePollTimer = null;
+let latestUpdateInfo = null;
+
+function autoUpdateCheckEnabled() {
+  try { return localStorage.getItem('escriba-auto-check-updates') === '1'; } catch (e) { return false; }
+}
+
+function saveAutoUpdateCheckPref() {
+  const enabled = !!document.getElementById('about-auto-check-updates').checked;
+  try { localStorage.setItem('escriba-auto-check-updates', enabled ? '1' : '0'); } catch (e) {}
+}
+
+function syncAutoUpdateCheckPref() {
+  const el = document.getElementById('about-auto-check-updates');
+  if (el) el.checked = autoUpdateCheckEnabled();
+}
+
+function updateDismissKey(version) {
+  return 'escriba-update-dismissed-' + (version || 'unknown');
+}
+
+function isUpdateDismissed(info) {
+  if (!info || !info.latest) return false;
+  try { return localStorage.getItem(updateDismissKey(info.latest)) === '1'; } catch (e) { return false; }
+}
+
+function dismissUpdateBanner() {
+  if (latestUpdateInfo && latestUpdateInfo.latest) {
+    try { localStorage.setItem(updateDismissKey(latestUpdateInfo.latest), '1'); } catch (e) {}
+  }
+  const banner = document.getElementById('update-banner');
+  if (banner) banner.classList.remove('visible');
+}
+
+function renderUpdateUi(info) {
+  latestUpdateInfo = info;
+  const available = !!(info && info.update_available && info.latest);
+  const dismissed = available && isUpdateDismissed(info);
+  const banner = document.getElementById('update-banner');
+  const aboutBox = document.getElementById('about-update-box');
+  if (banner) {
+    if (available && !dismissed) {
+      banner.classList.add('visible');
+      document.getElementById('update-banner-text').textContent =
+        'Escriba ' + info.latest + ' is available (you have ' + info.current + ')';
+    } else {
+      banner.classList.remove('visible');
+    }
+  }
+  if (aboutBox) {
+    if (available) {
+      aboutBox.classList.add('visible');
+      document.getElementById('about-update-version').textContent = 'v' + info.latest;
+      document.getElementById('about-update-notes').textContent =
+        info.release_notes_snippet || 'See release notes on GitHub.';
+    } else {
+      aboutBox.classList.remove('visible');
+    }
+  }
+}
+
+function setBannerUpdateProgress(message) {
+  const text = document.getElementById('update-banner-text');
+  if (text && message) text.textContent = message;
+}
+
+async function checkForAppUpdate(force) {
+  if (!force && !autoUpdateCheckEnabled()) return;
+  if (!force && latestUpdateInfo) {
+    renderUpdateUi(latestUpdateInfo);
+    return;
+  }
+  const btn = document.getElementById('about-check-updates');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  try {
+    const info = await apiCall('/api/update-check');
+    if (!info || !info.ok) return;
+    latestUpdateInfo = info;
+    renderUpdateUi(info);
+  } catch (e) { /* non-critical */ }
+  finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig || 'Check for updates'; }
+  }
+}
+
+function setUpdateProgress(message, isError) {
+  const el = document.getElementById('about-update-progress');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.color = isError ? 'var(--danger)' : 'var(--text-secondary)';
+}
+
+async function pollUpdateStatus() {
+  try {
+    const status = await apiCall('/api/update/status');
+    if (!status) return;
+    if (status.running) {
+      const progress = status.message || status.step || 'Updating…';
+      setUpdateProgress(progress, false);
+      setBannerUpdateProgress(progress);
+      return;
+    }
+    if (updatePollTimer) {
+      clearInterval(updatePollTimer);
+      updatePollTimer = null;
+    }
+    const installBtn = document.getElementById('about-update-btn');
+    const bannerBtn = document.getElementById('update-banner-install');
+    if (installBtn) installBtn.disabled = false;
+    if (bannerBtn) bannerBtn.disabled = false;
+    if (status.completed || (status.step === 'done' && status.ok === true)) {
+      setUpdateProgress(status.message || 'Update complete — quit and reopen Escriba', false);
+      setBannerUpdateProgress('Update complete — quit and reopen Escriba');
+      showModal('Update complete', 'Escriba was updated. Quit the app and reopen it from /Applications to run the new version.');
+    } else if (status.ok === false && status.error) {
+      setUpdateProgress(status.error, true);
+      setBannerUpdateProgress(status.error);
+    }
+  } catch (e) {
+    setUpdateProgress('Could not read update status', true);
+  }
+}
+
+async function startAppUpdate() {
+  const installBtn = document.getElementById('about-update-btn');
+  const bannerBtn = document.getElementById('update-banner-install');
+  if (installBtn) installBtn.disabled = true;
+  if (bannerBtn) bannerBtn.disabled = true;
+  setUpdateProgress('Starting update…', false);
+  try {
+    const res = await apiCall('/api/update/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      setUpdateProgress(res.error || 'Update could not start', true);
+      if (installBtn) installBtn.disabled = false;
+      if (bannerBtn) bannerBtn.disabled = false;
+      return;
+    }
+    if (!updatePollTimer) {
+      updatePollTimer = setInterval(pollUpdateStatus, 1500);
+    }
+    pollUpdateStatus();
+  } catch (e) {
+    setUpdateProgress('Error: ' + e.message, true);
+    if (installBtn) installBtn.disabled = false;
+    if (bannerBtn) bannerBtn.disabled = false;
+  }
+}
+
 async function loadAbout() {
   try {
     const v = await apiCall('/api/version');
@@ -3812,6 +4046,8 @@ async function loadAbout() {
     } else {
       pill.style.display = 'none';
     }
+    syncAutoUpdateCheckPref();
+    if (autoUpdateCheckEnabled()) await checkForAppUpdate(false);
   } catch (e) { /* about is non-critical */ }
 }
 
@@ -4146,10 +4382,15 @@ async function saveSettings() {
     },
   };
   // Prompts: validate system prompt placeholders, clean up templates
-  const systemPrompt = document.getElementById('s-system-prompt').value;
-  if (!systemPrompt.includes('{transcript}') || !systemPrompt.includes('{prompt}')) {
-    showSettingsBanner('System prompt must include both {transcript} and {prompt} placeholders', 'error');
-    return;
+  const systemPromptRaw = document.getElementById('s-system-prompt').value;
+  const systemPrompt = systemPromptRaw.trim();
+  const defaultPrompt = (promptDefaults.system_prompt || '').trim();
+  const isCustomPrompt = systemPrompt && systemPrompt !== defaultPrompt;
+  if (isCustomPrompt) {
+    if (!systemPrompt.includes('{transcript}') || !systemPrompt.includes('{prompt}')) {
+      showSettingsBanner('System prompt must include both {transcript} and {prompt} placeholders', 'error');
+      return;
+    }
   }
   const cleanTemplates = [];
   const seenIds = new Set();
@@ -4162,7 +4403,7 @@ async function saveSettings() {
     seenIds.add(id);
     cleanTemplates.push({ id, label, prompt });
   });
-  body.prompts = { system_prompt: systemPrompt, templates: cleanTemplates };
+  body.prompts = { templates: cleanTemplates, system_prompt: isCustomPrompt ? systemPromptRaw : '' };
 
   const geminiKey = document.getElementById('s-gemini-key').value;
   const anthropicKey = document.getElementById('s-anthropic-key').value;

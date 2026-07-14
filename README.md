@@ -20,6 +20,7 @@ Local audio transcription app for macOS. Captures system audio + microphone, tra
 - **Keyboard navigation** — arrow keys move through the session list and seek the player, Space plays/pauses, with focus rings and screen-reader labels
 - **Settings UI** — configure everything from the dashboard
 - **100% local transcription** — Whisper runs on-device (mlx-whisper on Apple Silicon, with faster-whisper fallback when MLX is unavailable)
+- **In-app updates** — opt-in check against GitHub Releases (Settings / About); one-click upgrade for the install tree; CLI: `escriba check-update` / `escriba update`
 
 ### Requirements
 
