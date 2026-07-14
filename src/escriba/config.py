@@ -723,17 +723,27 @@ def save_config_to_toml(config_dict: dict[str, Any], path: Path) -> None:
 
 
 def _deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
-    """Recursively merge ``updates`` into ``base`` (returns a new dict)."""
+    """Recursively merge ``updates`` into ``base`` (returns a new dict).
+
+    An empty-string value is a clear sentinel: the key is removed from the
+    merged result (used by ``prompts.system_prompt`` reset-to-default).
+    """
     result = dict(base)
     for key, value in updates.items():
         if value is None:
             raise ConfigValidationError(f"{key} cannot be null")
-        if (
-            key in result
-            and isinstance(result[key], dict)
-            and isinstance(value, dict)
-        ):
-            result[key] = _deep_merge(result[key], value)
+        if isinstance(value, dict):
+            existing = result.get(key)
+            merged = _deep_merge(existing if isinstance(existing, dict) else {}, value)
+            for subkey, subval in value.items():
+                if subval == "":
+                    merged.pop(subkey, None)
+            if merged:
+                result[key] = merged
+            else:
+                result.pop(key, None)
+        elif value == "":
+            result.pop(key, None)
         else:
             result[key] = value
     return result
@@ -821,7 +831,7 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
             "cache_ttl": cfg.local_llm.cache_ttl,
         },
         "prompts": {
-            "system_prompt": cfg.prompts.effective_system_prompt,
+            "system_prompt": cfg.prompts.system_prompt,
             "templates": cfg.prompts.effective_templates,
             "default_system_prompt": DEFAULT_SYSTEM_PROMPT,
             "default_templates": list(DEFAULT_PROMPT_TEMPLATES),

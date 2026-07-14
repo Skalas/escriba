@@ -1,6 +1,7 @@
 """Presentation-layer export utilities: filesystem paths and Downloads writes."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -22,19 +23,26 @@ def format_path_for_display(path: Path) -> str:
         return str(path)
 
 
-def unique_export_path(directory: Path, filename: str) -> Path:
-    """Pick a non-colliding path under directory for filename."""
-    target = directory / filename
-    if not target.exists():
-        return target
+def reserve_export_path(directory: Path, filename: str) -> Path:
+    """Atomically reserve a non-colliding export path under ``directory``."""
     stem = Path(filename).stem
     ext = Path(filename).suffix
-    counter = 2
-    while True:
-        candidate = directory / f"{stem} ({counter}){ext}"
-        if not candidate.exists():
+    counter = 1
+    while counter < 10_000:
+        candidate_name = filename if counter == 1 else f"{stem} ({counter}){ext}"
+        candidate = directory / candidate_name
+        try:
+            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
             return candidate
-        counter += 1
+        except FileExistsError:
+            counter += 1
+    raise OSError(f"Could not reserve export path under {directory}")
+
+
+def unique_export_path(directory: Path, filename: str) -> Path:
+    """Return the next non-colliding export path (delegates to ``reserve_export_path``)."""
+    return reserve_export_path(directory, filename)
 
 
 def save_session_export_to_downloads(
@@ -45,6 +53,6 @@ def save_session_export_to_downloads(
     """Write export content to ~/Downloads with a de-duplicated filename."""
     directory = downloads_dir if downloads_dir is not None else Path.home() / "Downloads"
     directory.mkdir(parents=True, exist_ok=True)
-    path = unique_export_path(directory, filename)
+    path = reserve_export_path(directory, filename)
     path.write_text(content, encoding="utf-8")
     return path

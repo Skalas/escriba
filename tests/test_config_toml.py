@@ -94,6 +94,34 @@ label = "No prompt"
     assert [t["label"] for t in cfg.prompts.templates] == ["Valid"]
 
 
+def test_config_to_dict_exposes_raw_system_prompt(tmp_path: Path) -> None:
+    from escriba.config import DEFAULT_SYSTEM_PROMPT, config_to_dict
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text("[audio]\nsample_rate = 16000\n", encoding="utf-8")
+    cfg = AppConfig.load(cfg_path)
+    data = config_to_dict(cfg)
+    assert data["prompts"]["system_prompt"] == ""
+    assert data["prompts"]["default_system_prompt"] == DEFAULT_SYSTEM_PROMPT
+
+
+def test_update_config_toml_clears_system_prompt_with_empty_sentinel(tmp_path: Path) -> None:
+    from escriba.config import _load_toml, update_config_toml
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        """
+[prompts]
+system_prompt = "Custom {transcript} {prompt}"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    update_config_toml({"prompts": {"system_prompt": ""}}, cfg_path)
+    data = _load_toml(cfg_path)
+    assert "prompts" not in data or "system_prompt" not in data.get("prompts", {})
+
+
 def test_update_config_toml_preserves_sections(tmp_path: Path) -> None:
     """Merging prompts must not drop existing sections."""
     from escriba.config import _load_toml, update_config_toml
