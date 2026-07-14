@@ -426,6 +426,87 @@ def cmd_create_issues(
         print("No issues created.")
 
 
+@app.command("check-update")
+def cmd_check_update(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print structured JSON result.",
+    ),
+) -> None:
+    """Check GitHub for a newer Escriba release."""
+    from escriba.app.updates import check_for_updates
+
+    result = check_for_updates()
+    if json_output:
+        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+    elif result.update_available:
+        typer.echo(
+            f"Update available: {result.current} -> {result.latest}"
+            + (f" ({result.release_url})" if result.release_url else "")
+        )
+    elif result.error:
+        typer.echo(f"No update info ({result.error}). Current version: {result.current}")
+    else:
+        typer.echo(f"Up to date ({result.current}).")
+    if result.update_available:
+        raise typer.Exit(code=2)
+
+
+@app.command("update")
+def cmd_update(
+    ctx: typer.Context,
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt.",
+    ),
+) -> None:
+    """Download and install the latest Escriba release (macOS dev/install tree)."""
+    from escriba.app.updates import (
+        UpgradePreflightError,
+        check_for_updates,
+        run_upgrade_blocking,
+    )
+
+    check = check_for_updates()
+    if not check.update_available:
+        if check.error:
+            typer.echo(f"No update available ({check.error}).")
+        else:
+            typer.echo(f"Already on latest release ({check.current}).")
+        raise typer.Exit(code=0)
+
+    typer.echo(f"Update available: {check.current} -> {check.latest}")
+    if check.release_notes_snippet:
+        typer.echo(check.release_notes_snippet)
+        typer.echo("")
+    if not yes and not typer.confirm("Install update now?", default=True):
+        raise typer.Exit(code=0)
+
+    def on_progress(step: str, message: str) -> None:
+        typer.echo(f"[{step}] {message}")
+
+    try:
+        result = run_upgrade_blocking(
+            recording_active=False,
+            release_tag=check.latest,
+            assets=check.assets,
+            on_progress=on_progress,
+        )
+    except UpgradePreflightError as exc:
+        typer.echo(f"Update blocked: {exc.message}", err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(f"Update failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Installed to {result['installed_path']}")
+    typer.echo("Quit and reopen Escriba from /Applications to run the new version.")
+
+
 @app.command("download-model")
 def cmd_download_model(
     ctx: typer.Context,
