@@ -94,8 +94,18 @@ Escriba follows a few core conventions (enforced by project rules and existing c
 Before sending a PR:
 
 - Run `uv sync` (if dependencies changed)
-- Run `uv run pytest`
+- Run `uv run ruff check . && uv run pytest`
 - Manually smoke‑test the app (start/stop recording, basic dashboard flows)
+
+### Releases and CI
+
+Publishing a GitHub release triggers `.github/workflows/build-swift-cli.yml`, which builds the `audio-capture` binary on macOS and uploads the release assets. **Let CI own the Swift assets:** create the release tag without attaching `audio-capture-*.tar.gz` manually so the workflow upload succeeds on the first run.
+
+If you must attach binaries before CI runs, do not silently overwrite a published asset with `gh release upload --clobber` on an existing tag — cut a new patch tag, or delete and republish the release so the provenance is obvious. The in-app / CLI updater downloads the `.tar.gz` only; it does **not** verify the companion `.sha256` file yet.
+
+**Historical note:** `v1.3.0` and `v1.3.1` may show red Actions runs from before `--clobber` existed (upload failed when assets were already attached). Those binaries were corrected with a deliberate re-upload; newer tags should go green when CI uploads without conflict.
+
+In-app / CLI upgrades (`uv run escriba update`, dashboard Settings → About) use the Python path documented in `src/escriba/app/install_paths.py`. Fresh-machine installs use `install.sh`; local dev rebuilds use `make install` — see the install contract there before changing any of those entry points.
 
 ### Project layout (quick reference)
 

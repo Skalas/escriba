@@ -144,16 +144,19 @@ def watch_folder(
                 except queue.Empty:
                     continue
 
+            transcribed = False
             try:
-                LOGGER.info("Processing file: %s", path)
-                if not skip_stability_check:
-                    _wait_for_stable_file(path)
-                transcribed = _retry_transcribe(path, output_dir, combined_transcript)
+                transcribed = _process_watch_path(
+                    path,
+                    output_dir,
+                    combined_transcript,
+                    skip_stability_check=skip_stability_check,
+                )
+            finally:
                 with lock:
                     active.discard(path)
                     if transcribed:
                         completed.add(path)
-            finally:
                 work_queue.task_done()
         LOGGER.info("Worker stopped")
 
@@ -259,6 +262,32 @@ def _wait_for_stable_file(
     LOGGER.warning("File did not stabilize in time: %s", path)
 
 
+def _process_watch_path(
+    path: Path,
+    output_dir: Path,
+    combined_transcript: Optional[Path],
+    *,
+    skip_stability_check: bool,
+) -> bool:
+    """Process one queued file.
+
+    Returns True when transcription succeeded. Never raises — unexpected errors
+    are logged and treated as a failed item so the worker thread keeps running.
+    """
+    try:
+        LOGGER.info("Processing file: %s", path)
+        if not skip_stability_check:
+            _wait_for_stable_file(path)
+        return _retry_transcribe(path, output_dir, combined_transcript)
+    except Exception:
+        LOGGER.error(
+            "Unexpected error processing %s; skipping",
+            path,
+            exc_info=True,
+        )
+        return False
+
+
 def _retry_transcribe(
     path: Path,
     output_dir: Path,
@@ -289,9 +318,9 @@ def _retry_transcribe(
                 )
                 return False
             time.sleep(delay)
-        except Exception:
+        except OSError:
             if attempt >= attempts - 1:
-                LOGGER.error("Skipping %s due to error", path.name, exc_info=True)
+                LOGGER.error("Skipping %s due to I/O error", path.name, exc_info=True)
                 return False
             time.sleep(delay)
     return False

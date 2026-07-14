@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-07-13 · Current version: `1.3.1` · update verification + install-path inventory + #105 slice complete; ship should publish `v1.3.1` on GitHub Releases; next product spike: calendar-driven recording (#64)._
+_Last updated: 2026-07-13 · Current version: `1.3.1` · sprint `docs-p2-install-ci-hygiene` (#168–#171) complete; next product spike: calendar-driven recording (#64)._
 
 ---
 
@@ -310,7 +310,25 @@ HOLD on verification and docs; REDUCE on #105.
 
 **Done when:** `uv run ruff check .` + `uv run pytest` green; human soak per smoke-report after ship cuts `v1.3.1`.
 
-**Deferred from #163 (#105):** MLX ndarray resample parity, Swift CLI signal-handler hardening, triple-flush on config save. _Trigger:_ adjacent MLX/Swift/config work or user report.
+**Deferred from #163 (#105):** MLX ndarray resample parity. _Trigger:_ adjacent MLX work or user report. _(Swift signal-handler hardening, triple-flush clarity, persistence indexes, and install contract shipped in #168–#171.)_
+
+---
+
+### Docs refresh + P2 micro-bundle + install contract + release-CI  ·  _2026-07-13 (#168–#171; parent #167)_
+
+REDUCE on docs/P2/CI; HOLD on install (sharpen contract, no mechanical single-source).
+
+- [x] **README / CONTRIBUTING (#168 / T1–T4).** CLI commands, architecture tree, in-app updates + auto-record notes; release `--clobber` guidance.
+- [x] **P2 micro-bundle (#169 / T5–T7).** Triple-flush clarified (validate-temp + write-real + single reload — intentional); `idx_sessions_folder` / `idx_sessions_status` already shipped (migration 3); Swift signal handler uses `shouldStop` cleanup path (incl. post-permission wait); `watch_folder` worker survives unexpected errors and always discards `active`.
+- [x] **Install contract (#170 / T8–T10).** Keep intentional diffs; document contract in `install_paths.py` + tests; `make install` / dirty-tree refuse unchanged.
+- [x] **Release-CI hygiene (#171 / T11–T12).** Document stale `v1.3.0`/`v1.3.1` Actions failures; prefer CI-owned asset upload on next release.
+
+**Done when:** gate green; ROADMAP deferred list updated.
+
+**Deferred (with triggers):**
+- **MLX ndarray resample parity.** _Trigger:_ adjacent MLX/faster-whisper work.
+- **Bash install single-sourcing into Python.** Contract is explicit; collapse only if drift becomes painful.
+- **Remaining #105 backlog** (schema_version runner beyond current migrations, denormalized `segment_count`, batched segment writes, structlog, handler return types, server-side atomic `append-notes`, Swift XCTest target). _Trigger:_ adjacent core-loop work.
 
 ---
 
@@ -318,15 +336,9 @@ HOLD on verification and docs; REDUCE on #105.
 
 Not a milestone of its own; pull these in when adjacent work makes them cheap.
 
-**Deferred from #105 (sprint `in-app-updates-p2-sidebar`, 2026-07-13):** persistence indexes (`idx_sessions_folder`, `idx_sessions_status`), `schema_version` migration runner, denormalized `segment_count`, batched segment writes; config hot-reload coordination; structured logging (`structlog`) + latency metrics beyond current observability; complete handler return types / typed response models; narrow broad `except Exception`; streaming summaries for long transcripts; server-side atomic `append-notes`; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target. **Done that sprint:** audio Range `start > end` → 416, `mktemp` → `mkstemp` in config save, raw `system_prompt` API/UI (no default persist), export path TOCTOU guard, meeting-app alias scan (already landed in v1.2.0 / #112).
+**Still open:** MLX ndarray resample parity; extended `schema_version` migration runner; denormalized `segment_count`; batched segment writes; config hot-reload coordination; `structlog` beyond current observability; complete handler return types / typed response models; narrow remaining broad `except Exception`; streaming summaries for long transcripts; server-side atomic `append-notes`; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target; bash install single-sourcing into Python (contract is explicit in `install_paths.py`).
 
-**Deferred from #105 (sprint `verify-updates-parity-p2-docs`, 2026-07-13):** MLX ndarray resample parity with faster-whisper path, Swift CLI signal-handler hardening, triple-flush on config save. **Done this sprint:** bounded `watch_folder` processed set (`WATCH_PROCESSED_MAX`), dead `<channel|>` delimiter removal in `_extract_response`, `mix_audio` equal-length assert, `transcribe_file` → `TranscriptionError`.
-
-- **Persistence:** indexes (`idx_sessions_folder`, `idx_sessions_status`), `schema_version` table + migration runner, denormalized `segment_count`, batched segment writes
-- **Config:** bounds checking (`__post_init__`/`validate()`), hot-reload coordination, `prompts.templates` tuple/list consistency
-- **Observability:** structured logging (`structlog`) with `session_id`/durations, request correlation IDs, latency metrics
-- **Type safety:** complete handler return types, typed response models, narrow broad `except Exception`
-- **Streaming summaries** for long transcripts
+**Landed in #105 slices (reference only — not deferred):** persistence indexes (`idx_sessions_folder`, `idx_sessions_status`); config validate-temp-before-write; `mkstemp` config save; bounded `watch_folder` processed set; `TranscriptionError`; `mix_audio` length assert; Swift signal-handler cleanup via `shouldStop`; release-CI docs; install path contract + dirty-tree preflight documented.
 
 ---
 

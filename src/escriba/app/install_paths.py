@@ -1,14 +1,27 @@
 """Install and upgrade path inventory.
 
-Single source for which steps each install entry point runs. ``install.sh`` and
-``Makefile`` are documented here; only the in-app upgrade path is automated in
-Python (``updates._execute_upgrade``).
+**Contract (intentional diffs, not a single shared implementation):**
+
+Entry-point step lists are derived from :data:`INSTALL_STEPS` via
+:func:`steps_for_entry_point` — that table is the single source of truth.
+
+- ``install.sh`` — ``fresh_install`` steps (uv bootstrap, clone, sync, env, …).
+- ``make install`` — ``make_install`` steps only (build + copy).
+- In-app / CLI upgrade — ``in_app_upgrade`` steps plus preflight guards in
+  ``updates._preflight_upgrade`` (macOS check, **refuse dirty git tree**, recording
+  mutex) before progress steps begin.
+
+**Drift trigger:** update :data:`INSTALL_STEPS` and ``tests/test_install_paths.py``
+whenever a step is added/removed from any path, or when Swift handling diverges.
+Do not collapse ``install.sh`` into Python wholesale unless product requires it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
+
+EntryPoint = Literal["fresh_install", "make_install", "in_app_upgrade"]
 
 
 @dataclass(frozen=True)
@@ -31,7 +44,7 @@ INSTALL_STEPS: tuple[InstallStep, ...] = (
         fresh_install=True,
         make_install=False,
         in_app_upgrade=False,
-        notes="upgrade runs this in _preflight_upgrade, not as a progress step",
+        notes="upgrade: updates._preflight_upgrade (not a progress step)",
     ),
     InstallStep(
         "install_uv",
@@ -61,6 +74,7 @@ INSTALL_STEPS: tuple[InstallStep, ...] = (
         fresh_install=False,
         make_install=False,
         in_app_upgrade=True,
+        notes="refuses dirty working tree via updates._preflight_upgrade",
     ),
     InstallStep(
         "uv_sync",
@@ -105,6 +119,12 @@ UPGRADE_PROGRESS_STEP_IDS: tuple[str, ...] = tuple(
     step.id for step in INSTALL_STEPS if step.in_app_upgrade
 )
 
+UPGRADE_PREFLIGHT_GUARDS: tuple[str, ...] = (
+    "macOS only",
+    "refuse dirty git working tree",
+    "refuse while recording active",
+)
+
 UPGRADE_PROGRESS_MESSAGES: dict[str, str] = {
     "git_fetch": "Fetching latest changes…",
     "git_pull": "Updating source…",
@@ -113,6 +133,11 @@ UPGRADE_PROGRESS_MESSAGES: dict[str, str] = {
     "build_app": "Building Escriba.app…",
     "install_app": "Installing to /Applications…",
 }
+
+
+def steps_for_entry_point(entry_point: EntryPoint) -> tuple[str, ...]:
+    """Return ordered step ids for an install entry point (derived from INSTALL_STEPS)."""
+    return tuple(step.id for step in INSTALL_STEPS if getattr(step, entry_point))
 
 
 def upgrade_progress_message(step_id: str) -> str:

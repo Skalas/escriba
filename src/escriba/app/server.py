@@ -1592,10 +1592,11 @@ class _Handler(BaseHTTPRequestHandler):
                 if isinstance(current_config, AppConfig) and current_config.config_path
                 else resolve_config_path() or Path("escriba.toml")
             )
-            # Validate the merged config IN MEMORY before touching the real file.
-            # Strategy: copy the real TOML to a temp file, apply the update there,
-            # then run AppConfig.load() (which calls validate()). Only on success
-            # do we write to the real path.
+            # Validate before write (intentional two-pass TOML touch, not a redundant
+            # "triple flush"): (1) merge+validate on a temp copy, (2) merge+write the
+            # real escriba.toml, then (3) _reload_live_config() reloads .env+TOML once.
+            # Steps 1–2 both call update_config_toml by design so invalid saves never
+            # reach disk; step 3 is the single live-config reload for the running app.
             fd, tmp_name = tempfile.mkstemp(suffix=".toml", dir=config_path.parent)
             os.close(fd)
             tmp_path = Path(tmp_name)

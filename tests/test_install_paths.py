@@ -7,8 +7,10 @@ from unittest.mock import patch
 
 from escriba.app.install_paths import (
     INSTALL_STEPS,
+    UPGRADE_PREFLIGHT_GUARDS,
     UPGRADE_PROGRESS_STEP_IDS,
     install_path_inventory,
+    steps_for_entry_point,
 )
 from escriba.app.updates import _execute_upgrade
 
@@ -44,6 +46,33 @@ def test_make_install_is_minimal_dev_path() -> None:
     assert by_id["install_app"].make_install is True
     assert by_id["git_fetch"].make_install is False
     assert by_id["uv_sync"].make_install is False
+
+
+def test_steps_for_entry_point_derived_from_install_steps() -> None:
+    fresh = steps_for_entry_point("fresh_install")
+    make = steps_for_entry_point("make_install")
+    upgrade = steps_for_entry_point("in_app_upgrade")
+
+    assert fresh == tuple(step.id for step in INSTALL_STEPS if step.fresh_install)
+    assert make == ("build_app", "install_app")
+    assert upgrade == UPGRADE_PROGRESS_STEP_IDS
+    assert "clone_or_pull" in fresh and "clone_or_pull" not in upgrade
+    assert "git_fetch" in upgrade and "git_fetch" not in make
+
+
+def test_upgrade_preflight_documents_dirty_tree_guard() -> None:
+    assert "refuse dirty git working tree" in UPGRADE_PREFLIGHT_GUARDS
+    git_pull = next(step for step in INSTALL_STEPS if step.id == "git_pull")
+    assert "dirty" in git_pull.notes.lower()
+
+
+def test_fresh_install_and_upgrade_diverge_on_git_and_uv() -> None:
+    """Contract: install.sh bootstraps; upgrade path owns git+uv; make install is minimal."""
+    by_id = {step.id: step for step in INSTALL_STEPS}
+    assert by_id["clone_or_pull"].fresh_install and not by_id["clone_or_pull"].in_app_upgrade
+    assert by_id["git_fetch"].in_app_upgrade and not by_id["git_fetch"].fresh_install
+    assert by_id["uv_sync"].fresh_install and by_id["uv_sync"].in_app_upgrade
+    assert not by_id["uv_sync"].make_install
 
 
 def test_execute_upgrade_reports_inventory_step_ids(tmp_path: Path) -> None:

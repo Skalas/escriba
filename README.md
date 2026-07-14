@@ -174,17 +174,38 @@ Alternatively, use `.env` or environment variables. TOML takes precedence.
 
 ### CLI
 
-The app also provides CLI commands:
+The app also provides CLI commands (run from the project directory with `uv run escriba …`):
 
 ```bash
-# Run the menu bar app (same as opening Escriba.app)
-escriba app
+# Menu bar app + dashboard (same as opening Escriba.app)
+uv run escriba app
+
+# Check for updates / install latest release (dev or ~/.escriba install tree)
+uv run escriba check-update
+uv run escriba update              # add --yes to skip confirmation
+
+# Pre-download the on-device LLM used for AI notes
+uv run escriba download-model
 
 # Live streaming transcription (headless)
-escriba live-stream --output-dir transcripts
+uv run escriba live-stream --output-dir transcripts
+uv run escriba live --output-dir transcripts          # non-streaming live capture
 
-# List audio devices
-escriba list-devices
+# Batch: watch a folder or the calendar for meetings
+uv run escriba watch --dir audios --output-dir transcripts
+uv run escriba watch-calendar                       # --auto-start is not implemented yet
+
+# Background transcription daemon
+uv run escriba daemon start
+uv run escriba daemon status
+uv run escriba daemon stop
+uv run escriba daemon start-recording --output-dir transcripts
+uv run escriba daemon stop-recording
+
+# Utilities
+uv run escriba list-devices
+uv run escriba create-issues --transcript path.txt --repo owner/repo
+uv run escriba --print-config                       # dump resolved config as JSON
 ```
 
 ### Architecture
@@ -198,16 +219,33 @@ src/escriba/
 │   ├── server.py             # HTTP API (stdlib http.server)
 │   ├── database.py           # SQLite session/segment storage
 │   ├── session.py            # Recording session + audio WAV writer
+│   ├── updates.py            # GitHub release check + in-app upgrade
+│   ├── install_paths.py      # Install/upgrade step inventory (contract)
+│   ├── model_download.py     # Local LLM download service
+│   ├── observability.py      # Logging, correlation IDs, latency metrics
 │   └── static/index.html     # Dashboard SPA
 ├── audio/
 │   ├── screen_capture.py     # System audio (ScreenCaptureKit via Swift CLI)
+│   ├── live_capture.py       # Live + streaming capture orchestration
+│   ├── call_detection.py     # Mic-activation / call detection
+│   ├── call_state.py         # Debounced auto-record state machine
+│   ├── mic_monitor.py        # Microphone activity monitoring
 │   └── device_detection.py   # Auto-detect audio devices
 ├── transcribe/
 │   ├── streaming_mlx.py      # MLX Whisper backend (Apple Silicon)
 │   ├── streaming.py          # faster-whisper backend
-│   └── config.py             # VAD + hallucination config
-└── summarize/
-    └── llm_summary.py        # Gemini/Claude summarization
+│   ├── whisper.py            # openai-whisper / batch CLI path
+│   ├── config.py             # VAD + hallucination config
+│   └── formats.py            # Export formats (txt, json, markdown)
+├── summarize/
+│   └── llm_summary.py        # Local mlx-lm + Gemini/Claude summaries
+├── knowledge/                # Markdown export adapters
+├── calendar/                 # Apple Calendar integration
+├── daemon/                   # Background daemon mode
+├── watch/                    # Folder watcher for audio files
+├── speaker/                  # Speaker detection / diarization
+├── notify/                   # Telegram notifications
+└── integrations/             # GitHub issues from transcripts
 ```
 
 #### Data storage
