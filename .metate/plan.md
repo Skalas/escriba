@@ -1,81 +1,93 @@
-# Sprint plan — docs refresh + P2 leftovers + install single-source + release-CI hygiene
+# Sprint plan — atomic append-notes + P2 micro-bundle + knowledge adapters + thin calendar spike
 
-> Entry doc for `metate-prep`. Selected from discover: **2 + 3 + 4 + 5**.
-> Mode hint: **REDUCE** (docs, P2 micro-bundle, CI hygiene) with a thin **HOLD** on
-> install-path single-sourcing. Calendar spike (**#64**) explicitly deferred.
+> Entry doc for `metate-prep`. Selected from discover: **3 + 4 + 5 + thin 1**.
+> Mode hint: **HOLD** on append-notes; **REDUCE** on P2; **EXPAND** on knowledge
+> adapters; **EXPAND (spike-thin)** on calendar #64 — investigation + smallest home
+> surface, not full auto-start.
 
 ## Goal
 
-Bring README/contributor docs in line with shipped features; clear another bounded
-slice of ROADMAP P2 leftovers (ex-#105); either single-source the mutable install half
-or keep intentional diffs with a sharper contract; and close the release-CI hygiene gap
-left by historical red runs on `v1.3.0`/`v1.3.1`.
+Land a server-side atomic `append-notes` path so concurrent Enhance cannot lose notes;
+clear another cheap P2 slice from ROADMAP “Still open”; ship `webhook` + `custom-script`
+knowledge adapters behind local-first defaults; and run a **thin** calendar Up-next spike
+(read events + minimal home affordance + decision note) without enabling `--auto-start`.
 
 ## Why now
 
-- **#2** — README CLI/architecture lag `check-update`/`update` and the real module tree.
-- **#3** — #105 is closed, but ROADMAP still lists deferred P2 (MLX resample, Swift signal
-  handler, triple-flush, persistence indexes, …).
-- **#4** — `install_paths.py` inventoried parity; optional to collapse drift before more cuts.
-- **#5** — `--clobber` is on `main`; tag-era runs stay red; assets already fixed — document
-  or one-shot retag hygiene so the next cut is obviously green.
+- **#3** — Deferred race on notes append; preempt before concurrent generate expands.
+- **#4** — Opportunistic Still-open leftovers (not MLX resample / Swift XCTest / streaming).
+- **#5** — v0.10.0 fast-follow still open; expands export breadth without changing default store.
+- **thin #1** — Soak trigger fired; ROADMAP names #64 next — keep spike time-boxed and reversible.
 
 ## Scope note
 
-No parent open issue required for docs/CI; file a fresh P2 checklist issue if triage wants
-tracker visibility. **Out of scope:** calendar Up-next / auto-start (#64), Sparkle,
-framework creep on the SPA.
+Parents / links: [#64](https://github.com/Skalas/escriba/issues/64) (thin only); new issues for
+append-notes / adapters / P2 as needed. **Out of scope:** full calendar auto-start,
+bash install single-sourcing, Sparkle, MLX anti-alias resample, Swift XCTest target.
 
 ## Definition of Done
 
-Done when: README CLI + architecture match reality; a bounded P2 subset is fixed with
-tests or rationale and ROADMAP deferred list updated; install path is either shared or
-explicitly contracted; release-CI story is documented (and optionally proven green on the
-next publish path). Ship gate green.
+Done when: concurrent Enhance cannot drop an append (atomic server path + tests); 2–4 P2
+items landed with ROADMAP updated; webhook + custom-script adapters work with env secrets /
+argv-not-shell / stdlib HTTP and local-markdown remains default; thin calendar spike delivers
+read + minimal Up-next (or documented blocker) plus a build-vs-park decision — **no**
+`--auto-start` enablement unless product explicitly expands mid-sprint. Ship gate green.
 
 ## Seed test matrix
 
-### Strand A — README / docs (#2) · REDUCE
+### Strand A — Atomic append-notes (#3) · HOLD
 
 | ID | Criterion |
 |----|-----------|
-| T1 | README Usage/CLI lists real commands (`app`, `check-update`, `update`, `download-model`, `daemon`, `watch-calendar`, …) |
-| T2 | Architecture / module tree matches current `src/escriba` (no stale `streaming_mps` unless still present) |
-| T3 | Feature bullets mention in-app updates + auto-record (opt-in) without inventing unshipped claims |
-| T4 | CONTRIBUTING or ROADMAP note for release asset upload / `--clobber` if not only in workflow |
+| T1 | Server endpoint (or DB helper) appends notes atomically (single transaction / compare-and-set) |
+| T2 | Two concurrent Enhance/append calls on the same session both persist (no lost write) |
+| T3 | SPA Enhance / generate continue to work; in-flight guard may remain as UX, not sole safety |
+| T4 | Focused tests on the race |
 
-### Strand B — P2 leftovers micro-bundle (#3) · REDUCE
-
-| ID | Criterion |
-|----|-----------|
-| T5 | Triage ROADMAP deferred list; pick 2–4 cheap items (prefer: config triple-flush clarity, Swift signal-handler if small, persistence index, or narrow `except` — **not** full MLX resample unless trivial) |
-| T6 | Each pulled item has a focused test or documented no-test rationale |
-| T7 | ROADMAP / optional new issue updated: done vs still deferred |
-
-### Strand C — Install single-source (#4) · HOLD
+### Strand B — P2 micro-bundle (#4) · REDUCE
 
 | ID | Criterion |
 |----|-----------|
-| T8 | Decision recorded: shared entry **or** keep intentional diffs |
-| T9 | If shared: one path invoked by in-app upgrade and documented for `install.sh` / `make install`; if not: short contract in `install_paths.py` / ROADMAP with drift trigger |
-| T10 | `make install` still produces `/Applications/Escriba.app`; upgrade dirty-tree refuse unchanged |
+| T5 | Triage Still open; pick 2–4 cheap items (prefer: notepad “Your notes” redundancy, `#31` SPA helpers / `SEEK_STEP_SECONDS`, narrow `except`, small config polish) |
+| T6 | Each item has a test or no-test rationale |
+| T7 | ROADMAP Still open updated |
 
-### Strand D — Release-CI hygiene (#5) · REDUCE
+### Strand C — Knowledge adapters (#5) · EXPAND
 
 | ID | Criterion |
 |----|-----------|
-| T11 | Document that `v1.3.0`/`v1.3.1` Actions failures are stale (pre-`--clobber` tag workflow); assets were replaced via clobber upload |
-| T12 | Optional: one-shot proof (workflow_dispatch green on `main`, or notes for next `gh release create` without pre-attaching assets so CI owns upload) |
+| T8 | `webhook` adapter: stdlib HTTP, secrets from env, failures degrade (don’t break session save) |
+| T9 | `custom-script` adapter: argv list (no shell), env-configured path, timeout/fail-soft |
+| T10 | Factory / config selects adapter; **local-markdown remains default** |
+| T11 | Unit tests for both adapters (mocked HTTP / script) |
+
+### Strand D — Thin calendar spike (#64) · EXPAND (thin)
+
+| ID | Criterion |
+|----|-----------|
+| T12 | Reuse/extend `get_upcoming_events` for “today / soon” without new permission classes if possible |
+| T13 | Minimal home “Up next” surface (one row or empty state) — spike UI, not full scheduling product |
+| T14 | One-tap Record pre-titles session from event title when an event is selected (if events available) |
+| T15 | Document Calendar permission gaps; **`--auto-start` stays blocked** with clear error |
+| T16 | Spike decision note in ROADMAP / issue comment: build next vs park |
+
+## Seed H-matrix (plan prose only — no `smoke.humanGates` in profile)
+
+| ID | Type | What the human does |
+|----|------|---------------------|
+| H1 | ux | Approve thin Up-next home affordance (or reject / park) |
+| H2 | live | On Mac: Calendar permission path works for reading today’s events |
+| H3 | graduation | Product call: stay spike-only vs schedule full auto-start sprint later |
 
 ## Suggested issue mapping for prep
 
-- Strand A → docs chore issues
-- Strand B → fresh P2 checklist issue (since #105 closed) or ROADMAP-only ledger rows
-- Strand C → chore under install/upgrade
-- Strand D → docs/chore (may ship with T4/T11 without a long-lived issue)
+- Strand A → new issue (atomic append-notes)
+- Strand B → chore / mini-checklist issue
+- Strand C → new issue(s) under knowledge adapters
+- Strand D → [#64](https://github.com/Skalas/escriba/issues/64) (thin scope in body)
 
 ## Explicit non-goals
 
-- Calendar-driven recording / Up-next (#64)
-- Closing every ROADMAP P2 item in one sprint
-- Rewriting install.sh into Python wholesale unless the shared-entry decision requires a thin wrapper
+- Enabling `watch-calendar --auto-start` or menubar calendar-driven start
+- Closing entire Still-open backlog
+- Checksum verification for release assets / install.sh Python rewrite

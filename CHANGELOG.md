@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Atomic append-notes.** `POST /api/sessions/:id/append-notes` merges note fragments in one DB transaction; live Enhance and session generate use the append path so concurrent writes cannot drop text.
+- **Knowledge adapters — `webhook` + `custom-script`.** Opt-in export transports (HTTPS webhook with allowlisted token env; argv-not-shell script jailed under `scripts_dir`). Default remains `local-markdown`. Failures are fail-soft; export runs off the recording stop path.
+- **Thin calendar Up next (#64).** Home shows the soonest upcoming event; one-tap Record pre-titles the session. `--auto-start` stays blocked. Full calendar auto-start parked pending product decision.
+
+### Fixed
+- **P2 polish.** Named `SEEK_STEP_SECONDS`; removed duplicate session “Your notes” label; narrower calendar subprocess exceptions.
+
 ## [1.3.1] - 2026-07-13
 
 Update verification, install-path inventory, and a bounded #105 P2 slice. Ship should cut `v1.3.1` on GitHub Releases so `releases/latest` ≥ app version.

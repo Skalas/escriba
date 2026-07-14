@@ -794,6 +794,44 @@ class Database:
             )
             self._conn.commit()
 
+    def append_notes(
+        self,
+        session_id: str,
+        new_notes: str,
+        *,
+        separator: str = "\n\n---\n\n",
+    ) -> str | None:
+        """Atomically append to notes_text inside one transaction.
+
+        Args:
+            session_id: Target session id.
+            new_notes: Text to append (stripped; empty append is a no-op).
+            separator: Inserted between existing and new content when both non-empty.
+
+        Returns:
+            Combined notes text, or None when the session does not exist.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT notes_text FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if not row:
+                return None
+            existing = (row["notes_text"] or "").strip()
+            new_part = (new_notes or "").strip()
+            if not new_part:
+                return row["notes_text"] or ""
+            combined = (
+                f"{existing}{separator}{new_part}" if existing else new_part
+            )
+            self._conn.execute(
+                "UPDATE sessions SET notes_text = ? WHERE id = ?",
+                (combined, session_id),
+            )
+            self._conn.commit()
+            return combined
+
     def save_user_notes(self, session_id: str, user_notes: str) -> None:
         with self._lock:
             self._conn.execute(

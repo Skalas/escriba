@@ -732,3 +732,48 @@ def test_database_init_relinks_orphaned_audio(tmp_path: Path) -> None:
         assert session["audio_path"] == str(wav_path.resolve())
     finally:
         db_reopen.close()
+
+
+def test_append_notes_joins_with_separator(db: Database) -> None:
+    """append_notes inserts the standard separator between existing and new text."""
+    session_id = db.create_session(name="append")
+    db.save_notes(session_id, "first block")
+    combined = db.append_notes(session_id, "second block")
+    assert combined == "first block\n\n---\n\nsecond block"
+    row = db.get_session(session_id)
+    assert row is not None
+    assert row["notes_text"] == combined
+
+
+def test_append_notes_atomic_under_concurrency(db: Database) -> None:
+    """Concurrent append_notes calls must not lose either write."""
+    session_id = db.create_session(name="notes-race")
+    barrier = threading.Barrier(2)
+    results: list[str | None] = []
+    errors: list[Exception] = []
+
+    def worker(label: str) -> None:
+        try:
+            barrier.wait(timeout=5)
+            combined = db.append_notes(session_id, f"block-{label}")
+            results.append(combined)
+        except Exception as exc:  # pragma: no cover - surfaced via errors list
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=worker, args=("A",)),
+        threading.Thread(target=worker, args=("B",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+    assert not errors
+    assert len(results) == 2
+    session = db.get_session(session_id)
+    assert session is not None
+    notes = session["notes_text"] or ""
+    assert "block-A" in notes
+    assert "block-B" in notes

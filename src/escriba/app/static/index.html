@@ -365,6 +365,24 @@
   .home-zero-recents { text-align: center; border: 1px dashed var(--border); border-radius: var(--radius); padding: 28px; color: var(--text-secondary); }
   .home-zero-recents svg { width: 26px; height: 26px; stroke: var(--text-secondary); fill: none; stroke-width: 1.8; opacity: .5; display: block; margin: 0 auto 8px; }
   .home-zero-recents p { font-size: 13.5px; line-height: 1.5; margin: 0; }
+  .home-upnext {
+    background: var(--card); border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm); padding: 14px 16px; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .home-upnext-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--text-secondary); margin: 0;
+  }
+  .home-upnext-title { font-size: 14px; font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .home-upnext-time { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .btn-upnext-record {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--danger); color: #fff; border: none; border-radius: 8px;
+    padding: 8px 14px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .btn-upnext-record:hover { filter: brightness(1.06); }
+  .btn-upnext-record:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .session-group-label {
     font-size: 11px; font-weight: 700; text-transform: uppercase;
@@ -1586,8 +1604,7 @@
         <div class="notes-rendered" id="notes-rendered" onclick="toggleNotesEdit()"></div>
         <div id="session-enhance-legend" style="display:none;"></div>
         <div class="notes-editor" id="notes-editor">
-          <p class="notes-editor-label">Your notes</p>
-          <textarea id="session-user-notes-input" placeholder="Context, reminders, background..." rows="4"
+          <textarea id="session-user-notes-input" placeholder="Your notes — context, reminders, background…" rows="4" aria-label="Your notes"
             style="width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:12px;"></textarea>
           <p class="notes-editor-label">AI / generated notes</p>
           <textarea id="session-notes-input" placeholder="AI-generated summary..." rows="8"
@@ -1986,6 +2003,7 @@
           </button>
         </div>
       </div>
+      <div id="home-upnext-section"></div>
       <div id="home-recents-section"></div>
     </div>
   </div>
@@ -2035,6 +2053,7 @@ const NOTES_BTN_REENHANCE = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path
 const NOTES_BTN_GENERATING = '<svg class="icon icon-sm" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;stroke:currentColor;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Generating...';
 const LIVE_BTN_DEFAULT = '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"></path></svg> Enhance notes';
 const LIVE_BTN_LOADING = '<svg class="icon icon-sm live-spinner" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Enhancing…';
+const SEEK_STEP_SECONDS = 5;
 
 function isLiveViewActive() {
   return !viewingHistory && document.getElementById('live-view').style.display !== 'none';
@@ -2452,7 +2471,7 @@ async function reconcileLiveNotepadForCurrentRecording() {
   } catch (e) {}
 }
 
-async function toggleRecording() {
+async function toggleRecording(eventTitle) {
   const btn = document.getElementById('btn-record');
   if (btn.classList.contains('recording')) {
     btn.disabled = true;
@@ -2468,7 +2487,13 @@ async function toggleRecording() {
   } else {
     hideError();
     btn.disabled = true;
-    const res = await apiCall('/api/recording/start', { method: 'POST' });
+    const title = (eventTitle || '').trim();
+    const startBody = title ? { name: title } : {};
+    const res = await apiCall('/api/recording/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(startBody),
+    });
     btn.disabled = false;
     if (!res.ok) { showError(res.error || 'Failed to start'); return; }
     viewingHistory = false;
@@ -2476,6 +2501,7 @@ async function toggleRecording() {
     await reconcileLiveNotepad(null);
     showLiveView();
     await syncStatus();
+    if (title) await refreshSessionList();
   }
 }
 
@@ -3040,6 +3066,7 @@ function renderHomeView() {
     const monthDay = now.toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
     greetEl.innerHTML = `${greet} · <strong>${escHtml(dayName)}, ${escHtml(monthDay)}</strong>`;
   }
+  void renderUpNextSection();
   const section = document.getElementById('home-recents-section');
   if (!section) return;
   if (allSessions.length === 0) {
@@ -3069,6 +3096,46 @@ function renderHomeView() {
   }).join('');
   section.innerHTML = `<div class="home-recents-header"><h3>Jump back in</h3></div>
     <div class="home-recents-grid" id="home-recents-grid">${cards}</div>`;
+}
+
+function formatCalendarEventTime(startTime) {
+  if (!startTime) return '';
+  const dt = new Date(startTime);
+  if (Number.isNaN(dt.getTime())) return escHtml(startTime);
+  return escHtml(dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
+}
+
+async function renderUpNextSection() {
+  const section = document.getElementById('home-upnext-section');
+  if (!section) return;
+  const res = await apiCall('/api/calendar/upcoming');
+  if (!res.ok) {
+    section.innerHTML = '';
+    return;
+  }
+  const events = Array.isArray(res.events) ? res.events : [];
+  if (!events.length) {
+    section.innerHTML = '';
+    return;
+  }
+  const evt = events[0];
+  const title = evt.title || 'Upcoming event';
+  const timeLabel = formatCalendarEventTime(evt.start_time);
+  section.innerHTML = `<div class="home-upnext" role="region" aria-label="Up next">
+    <p class="home-upnext-label">Up next</p>
+    <div class="home-upnext-title" title="${escAttr(title)}">${escHtml(title)}</div>
+    ${timeLabel ? `<span class="home-upnext-time">${timeLabel}</span>` : ''}
+    <button type="button" class="btn-upnext-record" data-event-title="${escAttr(title)}" aria-label="Record ${escAttr(title)}">
+      <span class="hero-rec-dot"></span> Record
+    </button>
+  </div>`;
+  const recordBtn = section.querySelector('.btn-upnext-record');
+  if (recordBtn) {
+    recordBtn.addEventListener('click', () => {
+      const eventTitle = recordBtn.getAttribute('data-event-title') || '';
+      void toggleRecording(eventTitle);
+    });
+  }
 }
 
 // --- Move to folder ---
@@ -3368,12 +3435,13 @@ async function saveNotesForSession(sessionId, notesText) {
 }
 
 async function appendNotesToSession(sessionId, newNotes) {
-  const detail = await apiCall('/api/sessions/' + sessionId);
-  if (!detail.ok) return false;
-  const existing = (detail.session.notes_text || '').trim();
-  const separator = existing ? '\n\n---\n\n' : '';
-  const r = await saveNotesForSession(sessionId, existing + separator + newNotes);
-  return !r || r.ok !== false;
+  const r = await apiCall('/api/sessions/' + sessionId + '/append-notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ append_text: newNotes }),
+  });
+  if (!r || r.ok === false) return { ok: false, error: (r && r.error) || 'append failed' };
+  return { ok: true, notes_text: r.notes_text || '' };
 }
 
 async function saveNotes() {
@@ -3583,11 +3651,13 @@ async function generateSessionNotes() {
     });
     if (selectedSessionId === sid) {
       if (res.ok && res.notes) {
-        const currentNotes = notesInput.value;
-        const separator = currentNotes.trim() ? '\n\n---\n\n' : '';
-        notesInput.value = currentNotes.trim() + separator + res.notes;
-        await saveNotesForSession(sid, notesInput.value);
-        renderNotesView(notesInput.value);
+        const appendRes = await appendNotesToSession(sid, res.notes);
+        if (appendRes.ok) {
+          notesInput.value = appendRes.notes_text || notesInput.value;
+          renderNotesView(notesInput.value);
+        } else {
+          showError(appendRes.error || 'Failed to save notes');
+        }
       } else if (res.downloading) {
         showError('The AI model (' + res.model + ') is downloading now. Watch progress in Settings → AI Notes, then generate again when it finishes.');
       } else {
@@ -3595,7 +3665,7 @@ async function generateSessionNotes() {
       }
     } else if (res.ok && res.notes) {
       const saved = await appendNotesToSession(sid, res.notes);
-      if (saved) {
+      if (saved.ok) {
         const session = allSessions.find(s => s.id === sid);
         const sessionName = session ? session.name : 'Recording';
         showNotice('', {
@@ -4510,10 +4580,10 @@ function _handleNavKeys(e) {
     else audio.pause();
   } else if (e.key === 'ArrowLeft' && audioReady) {
     e.preventDefault();
-    audio.currentTime = Math.max(0, audio.currentTime - 5);
+    audio.currentTime = Math.max(0, audio.currentTime - SEEK_STEP_SECONDS);
   } else if (e.key === 'ArrowRight' && audioReady) {
     e.preventDefault();
-    audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + 5);
+    audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + SEEK_STEP_SECONDS);
   }
 }
 

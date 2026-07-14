@@ -4,23 +4,55 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+_CALENDAR_PERMISSION_HINT = (
+    "Grant Calendar access in System Settings → Privacy & Security → Calendar "
+    "for Terminal, iTerm, or Escriba."
+)
 
-def get_upcoming_events(minutes_ahead: int = 5) -> list[dict[str, str]]:
+
+def _parse_event_start(time_str: str) -> datetime:
+    """Best-effort parse for Apple Calendar / ISO start strings."""
+    cleaned = (time_str or "").strip()
+    if not cleaned:
+        return datetime.max
+    for fmt in (
+        "%A, %B %d, %Y at %I:%M:%S %p",
+        "%A, %B %d, %Y at %H:%M:%S",
+    ):
+        try:
+            return datetime.strptime(cleaned, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.max
+
+
+def sort_events_by_start(events: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Return events ordered by ascending start time."""
+    return sorted(events, key=lambda evt: _parse_event_start(evt.get("start_time", "")))
+
+
+def get_upcoming_events(
+    minutes_ahead: int = 5,
+) -> tuple[list[dict[str, str]], str | None]:
     """
-    Obtiene eventos próximos de Apple Calendar.
+    Read upcoming events from Apple Calendar via osascript.
 
     Args:
-        minutes_ahead: Minutos hacia adelante para buscar eventos
+        minutes_ahead: Minutes into the future to search for events.
 
     Returns:
-        Lista de eventos con 'title', 'start_time', 'end_time', 'url'
+        Tuple of (events, calendar_error). ``calendar_error`` is set when
+        Calendar is unavailable or permission was denied; otherwise ``None``.
+        Each event dict has ``title``, ``start_time``, ``end_time``, and ``url``.
     """
     try:
-        # Usar icalBuddy o EventKit
-        # Por simplicidad, usamos osascript para leer Calendar
         script = f"""
         tell application "Calendar"
             set nowDate to current date
@@ -40,7 +72,7 @@ def get_upcoming_events(minutes_ahead: int = 5) -> list[dict[str, str]]:
             return outputLines as text
         end tell
         """
-        
+
         result = subprocess.run(
             ["osascript", "-e", script],
             capture_output=True,
@@ -49,8 +81,11 @@ def get_upcoming_events(minutes_ahead: int = 5) -> list[dict[str, str]]:
         )
 
         if result.returncode != 0:
-            logger.debug("osascript error: %s", result.stderr)
-            return []
+            stderr = (result.stderr or "").strip()
+            logger.debug("osascript calendar error: %s", stderr)
+            if "not allowed" in stderr.lower() or "access" in stderr.lower():
+                return [], "permission_denied"
+            return [], "unavailable"
 
         events: list[dict[str, str]] = []
         for line in result.stdout.splitlines():
@@ -67,14 +102,14 @@ def get_upcoming_events(minutes_ahead: int = 5) -> list[dict[str, str]]:
                     "url": url,
                 }
             )
-        return events
+        return sort_events_by_start(events), None
 
     except subprocess.TimeoutExpired:
         logger.warning("Timeout reading calendar events")
-        return []
-    except Exception as e:
-        logger.error("Error reading calendar events: %s", e, exc_info=True)
-        return []
+        return [], "unavailable"
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.error("Error reading calendar events: %s", exc, exc_info=True)
+        return [], "unavailable"
 
 
 def has_meeting_link(event: dict[str, str]) -> bool:
@@ -89,9 +124,9 @@ def has_meeting_link(event: dict[str, str]) -> bool:
     """
     url = event.get("url", "").lower()
     title = event.get("title", "").lower()
-    
+
     meeting_keywords = ["zoom", "meet", "teams", "webex", "gotomeeting"]
-    
+
     return any(keyword in url or keyword in title for keyword in meeting_keywords)
 
 
@@ -108,13 +143,15 @@ def watch_calendar(
         check_interval: Intervalo en segundos para verificar calendario
         notification_minutes: Minutos antes del evento para notificar
     """
-    import time
     import threading
+    import time
 
     def watch_loop():
         while True:
             try:
-                events = get_upcoming_events(minutes_ahead=notification_minutes + 5)
+                events, _error = get_upcoming_events(
+                    minutes_ahead=notification_minutes + 5
+                )
                 for event in events:
                     if has_meeting_link(event):
                         callback(event)
@@ -125,3 +162,12 @@ def watch_calendar(
 
     thread = threading.Thread(target=watch_loop, daemon=True)
     thread.start()
+
+
+__all__ = [
+    "get_upcoming_events",
+    "has_meeting_link",
+    "watch_calendar",
+    "sort_events_by_start",
+    "_CALENDAR_PERMISSION_HINT",
+]
