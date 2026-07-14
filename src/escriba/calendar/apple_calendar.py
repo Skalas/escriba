@@ -1,4 +1,4 @@
-"""Apple Calendar integration for auto-starting transcriptions."""
+"""Apple Calendar integration for Up next and settings."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ _CACHE_TTL_SECONDS = 45.0
 _MAX_CALENDAR_WORKERS = 4
 
 _cache_lock = threading.Lock()
-_cache_key: tuple[int, int] | None = None
+_cache_key: tuple[Any, ...] | None = None
 _cache_at: float = 0.0
 _cache_value: tuple[list[dict[str, str]], str | None] = ([], None)
 
@@ -93,6 +94,135 @@ def _parse_event_lines(stdout: str) -> list[dict[str, str]]:
     return events
 
 
+def _list_calendar_names() -> tuple[list[str], str | None]:
+    """List calendar names from Calendar.app.
+
+    Returns:
+        Tuple of (names, calendar_error). ``calendar_error`` is set when
+        Calendar is unavailable or permission was denied; otherwise ``None``.
+    """
+    try:
+        list_result = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                (
+                    'tell application "Calendar"\n'
+                    "    set AppleScript's text item delimiters to linefeed\n"
+                    "    return (name of every calendar) as text\n"
+                    "end tell"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_LIST_CALENDARS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("Timeout listing calendars")
+        return [], "unavailable"
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.error("Error listing calendars: %s", exc, exc_info=True)
+        return [], "unavailable"
+
+    if list_result.returncode != 0:
+        stderr = (list_result.stderr or "").strip()
+        logger.debug("osascript calendar list error: %s", stderr)
+        if "not allowed" in stderr.lower() or "access" in stderr.lower():
+            return [], "permission_denied"
+        return [], "unavailable"
+
+    names = _parse_calendar_names_stdout(list_result.stdout)
+    return names, None
+
+
+def _parse_calendar_names_stdout(stdout: str) -> list[str]:
+    """Parse calendar names from osascript list output (one name per line)."""
+    names: list[str] = []
+    for line in stdout.splitlines():
+        name = line.strip()
+        if name and is_safe_calendar_name(name):
+            names.append(name)
+    return names
+
+
+def is_safe_calendar_name(name: str) -> bool:
+    """Return False for names that cannot be safely embedded in osascript."""
+    cleaned = name.strip()
+    if not cleaned:
+        return False
+    if "\\" in cleaned:
+        return False
+    for ch in cleaned:
+        code = ord(ch)
+        if code < 32 or ch in ('"', "\n", "\r"):
+            return False
+    return True
+
+
+def _allowlist_set(
+    calendar_allowlist: tuple[str, ...] | list[str] | None,
+) -> set[str]:
+    """Normalize configured calendar names into a safe allowlist set."""
+    return {
+        name.strip()
+        for name in (calendar_allowlist or ())
+        if is_safe_calendar_name(name)
+    }
+
+
+def _filter_calendar_names(
+    names: list[str],
+    calendar_allowlist: list[str] | None = None,
+) -> list[str]:
+    """Apply holiday skip list and optional user allowlist.
+
+    An empty allowlist means all non-skipped calendars (backward compatible).
+    """
+    candidates = [
+        name
+        for name in names
+        if is_safe_calendar_name(name) and not _should_skip_calendar(name)
+    ]
+    allow_set = _allowlist_set(calendar_allowlist)
+    if not allow_set:
+        return candidates
+    return [name for name in candidates if name in allow_set]
+
+
+def describe_calendars_for_settings(
+    calendar_allowlist: tuple[str, ...] | list[str] | None = None,
+) -> tuple[list[dict[str, str | bool]], str | None]:
+    """Describe calendars for the Settings multi-select.
+
+    Args:
+        calendar_allowlist: Configured allowlist. Empty means all non-skipped
+            calendars are treated as selected.
+
+    Returns:
+        Tuple of (entries, calendar_error). Each entry has ``name``, ``skipped``,
+        and ``selected`` keys.
+    """
+    names, error = _list_calendar_names()
+    if error:
+        return [], error
+
+    allow = _allowlist_set(calendar_allowlist)
+    use_all = not allow
+    entries: list[dict[str, str | bool]] = []
+    for name in sorted(names, key=str.lower):
+        if not is_safe_calendar_name(name):
+            continue
+        skipped = _should_skip_calendar(name)
+        if skipped:
+            selected = False
+        elif use_all:
+            selected = True
+        else:
+            selected = name in allow
+        entries.append({"name": name, "skipped": skipped, "selected": selected})
+    return entries, None
+
+
 def _query_calendar_events(
     calendar_name: str,
     *,
@@ -100,6 +230,9 @@ def _query_calendar_events(
     include_started_within_minutes: int,
 ) -> list[dict[str, str]]:
     """Fetch events for a single Calendar.app calendar."""
+    if not is_safe_calendar_name(calendar_name):
+        logger.warning("Skipping unsafe calendar name: %r", calendar_name)
+        return []
     safe = calendar_name.replace("\\", "\\\\").replace('"', '\\"')
     script = f"""
     tell application "Calendar"
@@ -139,35 +272,17 @@ def _fetch_upcoming_events(
     minutes_ahead: int,
     *,
     include_started_within_minutes: int,
+    calendar_allowlist: list[str] | None = None,
 ) -> tuple[list[dict[str, str]], str | None]:
     """Query Calendar.app without caching (caller holds the lock)."""
-    try:
-        list_result = subprocess.run(
-            ["osascript", "-e", 'tell application "Calendar" to get name of every calendar'],
-            capture_output=True,
-            text=True,
-            timeout=_LIST_CALENDARS_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        logger.warning("Timeout listing calendars")
-        return [], "unavailable"
-    except (OSError, subprocess.SubprocessError) as exc:
-        logger.error("Error listing calendars: %s", exc, exc_info=True)
-        return [], "unavailable"
+    all_names, list_error = _list_calendar_names()
+    if list_error:
+        return [], list_error
 
-    if list_result.returncode != 0:
-        stderr = (list_result.stderr or "").strip()
-        logger.debug("osascript calendar list error: %s", stderr)
-        if "not allowed" in stderr.lower() or "access" in stderr.lower():
-            return [], "permission_denied"
-        return [], "unavailable"
-
-    calendar_names = [
-        name.strip()
-        for name in list_result.stdout.split(",")
-        if name.strip() and not _should_skip_calendar(name)
-    ]
+    calendar_names = _filter_calendar_names(all_names, calendar_allowlist)
     if not calendar_names:
+        if calendar_allowlist and _filter_calendar_names(all_names, None):
+            return [], "no_matching_calendars"
         return [], None
 
     events: list[dict[str, str]] = []
@@ -215,6 +330,7 @@ def get_upcoming_events(
     minutes_ahead: int = 5,
     *,
     include_started_within_minutes: int = 120,
+    calendar_allowlist: list[str] | None = None,
 ) -> tuple[list[dict[str, str]], str | None]:
     """
     Read upcoming events from Apple Calendar via osascript.
@@ -227,6 +343,8 @@ def get_upcoming_events(
         minutes_ahead: Minutes into the future to search for events.
         include_started_within_minutes: Also include events that started up to
             this many minutes ago (so an in-progress meeting still appears).
+        calendar_allowlist: Optional list of calendar names to query. Empty or
+            ``None`` queries all non-skipped calendars.
 
     Returns:
         Tuple of (events, calendar_error). ``calendar_error`` is set when
@@ -234,7 +352,8 @@ def get_upcoming_events(
         Each event dict has ``title``, ``start_time``, ``end_time``, and ``url``.
     """
     global _cache_key, _cache_at, _cache_value
-    key = (minutes_ahead, include_started_within_minutes)
+    allow_key = tuple(sorted(name.strip() for name in (calendar_allowlist or []) if name.strip()))
+    key = (minutes_ahead, include_started_within_minutes, allow_key)
     with _cache_lock:
         now = time.monotonic()
         if _cache_key == key and (now - _cache_at) < _CACHE_TTL_SECONDS:
@@ -243,6 +362,7 @@ def get_upcoming_events(
         events, error = _fetch_upcoming_events(
             minutes_ahead,
             include_started_within_minutes=include_started_within_minutes,
+            calendar_allowlist=calendar_allowlist,
         )
         _cache_key = key
         _cache_at = time.monotonic()
@@ -259,60 +379,11 @@ def clear_upcoming_events_cache() -> None:
         _cache_value = ([], None)
 
 
-def has_meeting_link(event: dict[str, str]) -> bool:
-    """
-    Verifica si un evento tiene un link de reunión.
-
-    Args:
-        event: Diccionario con información del evento
-
-    Returns:
-        True si tiene link de Zoom/Meet/Teams
-    """
-    url = event.get("url", "").lower()
-    title = event.get("title", "").lower()
-
-    meeting_keywords = ["zoom", "meet", "teams", "webex", "gotomeeting"]
-
-    return any(keyword in url or keyword in title for keyword in meeting_keywords)
-
-
-def watch_calendar(
-    callback,
-    check_interval: int = 60,
-    notification_minutes: int = 1,
-) -> None:
-    """
-    Observa el calendario y llama al callback cuando hay eventos próximos.
-
-    Args:
-        callback: Función a llamar con información del evento
-        check_interval: Intervalo en segundos para verificar calendario
-        notification_minutes: Minutos antes del evento para notificar
-    """
-    def watch_loop():
-        while True:
-            try:
-                events, _error = get_upcoming_events(
-                    minutes_ahead=notification_minutes + 5
-                )
-                for event in events:
-                    if has_meeting_link(event):
-                        callback(event)
-                time.sleep(check_interval)
-            except Exception as e:
-                logger.error("Error in calendar watch loop: %s", e, exc_info=True)
-                time.sleep(check_interval)
-
-    thread = threading.Thread(target=watch_loop, daemon=True)
-    thread.start()
-
-
 __all__ = [
     "get_upcoming_events",
     "clear_upcoming_events_cache",
-    "has_meeting_link",
-    "watch_calendar",
+    "describe_calendars_for_settings",
+    "is_safe_calendar_name",
     "sort_events_by_start",
     "_CALENDAR_PERMISSION_HINT",
 ]
