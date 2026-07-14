@@ -17,17 +17,65 @@ def test_watch_calendar_auto_start_blocked() -> None:
 
 
 def test_get_upcoming_events_permission_denied() -> None:
-    from escriba.calendar.apple_calendar import get_upcoming_events
+    from escriba.calendar import apple_calendar
+    from escriba.calendar.apple_calendar import (
+        clear_upcoming_events_cache,
+        get_upcoming_events,
+    )
 
+    clear_upcoming_events_cache()
     fake = type(
         "R",
         (),
         {"returncode": 1, "stdout": "", "stderr": "Not allowed to send Apple events"},
     )()
-    with patch("escriba.calendar.apple_calendar.subprocess.run", return_value=fake):
+    with patch.object(apple_calendar.subprocess, "run", return_value=fake):
         events, error = get_upcoming_events(minutes_ahead=30)
     assert events == []
     assert error == "permission_denied"
+
+
+def test_get_upcoming_events_cache_coalesces_repeat_calls() -> None:
+    from escriba.calendar import apple_calendar
+    from escriba.calendar.apple_calendar import (
+        clear_upcoming_events_cache,
+        get_upcoming_events,
+    )
+
+    clear_upcoming_events_cache()
+    list_result = type(
+        "R",
+        (),
+        {"returncode": 0, "stdout": "Work, Birthdays\n", "stderr": ""},
+    )()
+    event_result = type(
+        "R",
+        (),
+        {
+            "returncode": 0,
+            "stdout": "Standup\t2026-07-13T10:00:00\t2026-07-13T10:30:00\t\n",
+            "stderr": "",
+        },
+    )()
+    calls: list[str] = []
+
+    def fake_run(cmd, **_kwargs):  # type: ignore[no-untyped-def]
+        script = " ".join(cmd)
+        calls.append(script)
+        if "get name of every calendar" in script:
+            return list_result
+        return event_result
+
+    with patch.object(apple_calendar.subprocess, "run", side_effect=fake_run):
+        first, err1 = get_upcoming_events(minutes_ahead=30)
+        second, err2 = get_upcoming_events(minutes_ahead=30)
+
+    assert err1 is None and err2 is None
+    assert [e["title"] for e in first] == ["Standup"]
+    assert second == first
+    # List once + one Work query; Birthdays skipped; second call is cache hit.
+    assert sum("get name of every calendar" in c for c in calls) == 1
+    assert sum('calendar "Work"' in c for c in calls) == 1
 
 
 def test_sort_events_by_start_orders_earliest_first() -> None:
