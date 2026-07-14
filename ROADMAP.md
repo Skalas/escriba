@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-07-13 · Current version: `1.3.1` · sprint `docs-p2-install-ci-hygiene` (#168–#171) complete; next product spike: calendar-driven recording (#64)._
+_Last updated: 2026-07-13 · Current version: `1.3.1` · sprint `append-notes-adapters-calendar-thin` (#174–#177) complete; calendar full auto-start still parked._
 
 ---
 
@@ -39,7 +39,9 @@ As of the **`1.3.0` sprint** (2026-07-13) live notepad/notes-output are session-
 
 As of the **in-app updates sprint** (2026-07-13, #152 / #153–#158) the dashboard and CLI can check GitHub releases and run a guarded one-click upgrade (ff to release tag, `uv sync`, Swift binary refresh, atomic `/Applications` replace) with recording↔upgrade mutual exclusion, CSRF on install, and fail-soft networking. Local-first: automatic update checks are opt-in (default off). Also shipped: sidebar title clip fix (#87) and a #105 P2 slice (Range 416, config `mkstemp`, prompt-reset clear, atomic export paths).
 
-As of the **update verification sprint** (2026-07-13, #161–#164) automated tests assert `current` vs GitHub `tag_name` on CLI and API paths; `ESCRIBA_VERSION_OVERRIDE` / `check-update --current` enable live soak without rebuilding; install-path drift is inventoried in `escriba.app.install_paths` (intentional diffs vs `install.sh` / Makefile documented); and another #105 slice landed (bounded watch-folder processed set, `mix_audio` length assert, `TranscriptionError`, `_extract_response` cleanup). **Ops:** publish GitHub Release `v1.3.1` at ship so `releases/latest` ≥ app version. **Next product slice:** calendar spike (#64).
+As of the **update verification sprint** (2026-07-13, #161–#164) automated tests assert `current` vs GitHub `tag_name` on CLI and API paths; `ESCRIBA_VERSION_OVERRIDE` / `check-update --current` enable live soak without rebuilding; install-path drift is inventoried in `escriba.app.install_paths` (intentional diffs vs `install.sh` / Makefile documented); and another #105 slice landed (bounded watch-folder processed set, `mix_audio` length assert, `TranscriptionError`, `_extract_response` cleanup). **Ops:** publish GitHub Release `v1.3.1` at ship so `releases/latest` ≥ app version.
+
+As of **`append-notes-adapters-calendar-thin`** (2026-07-13, #174–#177) server-side atomic `append-notes` closes the concurrent Enhance race; `webhook` + `custom-script` knowledge adapters ship behind `local-markdown` default; a thin home **Up next** row reads Calendar via `GET /api/calendar/upcoming` with one-tap Record pre-titling; `--auto-start` stays blocked. **Product call (H3):** validate the spike on a real Mac before scheduling a full calendar auto-start sprint — see decision note under #64 below.
 
 ---
 
@@ -328,7 +330,27 @@ REDUCE on docs/P2/CI; HOLD on install (sharpen contract, no mechanical single-so
 **Deferred (with triggers):**
 - **MLX ndarray resample parity.** _Trigger:_ adjacent MLX/faster-whisper work.
 - **Bash install single-sourcing into Python.** Contract is explicit; collapse only if drift becomes painful.
-- **Remaining #105 backlog** (schema_version runner beyond current migrations, denormalized `segment_count`, batched segment writes, structlog, handler return types, server-side atomic `append-notes`, Swift XCTest target). _Trigger:_ adjacent core-loop work.
+- **Remaining #105 backlog** (schema_version runner beyond current migrations, denormalized `segment_count`, batched segment writes, structlog, handler return types, Swift XCTest target). _Trigger:_ adjacent core-loop work.
+
+---
+
+### Atomic append-notes + knowledge adapters + thin calendar  ·  _2026-07-13 (#174–#177; parents #173/#64)_
+
+HOLD on append-notes; REDUCE on P2; EXPAND on adapters; thin EXPAND on calendar.
+
+- [x] **Atomic append-notes (#174 / T1–T4).** `Database.append_notes` + `POST /api/sessions/:id/append-notes`; SPA Enhance/generate use the atomic path; concurrency tests.
+- [x] **P2 micro-bundle (#175 / T5–T7).** `SEEK_STEP_SECONDS` named in SPA; session editor drops redundant “Your notes” label (aria-label on textarea); narrowed calendar `except`; ROADMAP updated.
+- [x] **Knowledge adapters (#176 / T8–T11).** `webhook` (stdlib HTTP, env auth) + `custom-script` (argv, stdin JSON, timeout); factory/config; **local-markdown remains default**; unit tests with mocks.
+- [x] **Thin calendar Up-next (#177 / T12–T16).** `GET /api/calendar/upcoming` (8h window); home Up-next row + Record pre-titles session; permission gap surfaced; **`--auto-start` stays blocked**.
+
+**Done when:** `uv run ruff check .` + `uv run pytest` green.
+
+**#64 spike decision (T16 — pending human H1–H3):** Ship stayed **spike-only**. Reading today’s events + one-tap Record is in the dashboard; automatic calendar-driven start remains **parked** until product approves the affordance (H1), confirms Calendar permission on a real Mac (H2), and chooses whether to schedule a full auto-start sprint (H3). _Trigger for full build:_ positive H1–H3 + user demand beyond mic-activation auto-record.
+
+**Deferred (with triggers):**
+- **Calendar auto-start / menubar scheduling.** Intentionally not enabled. _Trigger:_ H3 graduation after thin spike soak.
+- **Calendar in-progress events.** Up-next only lists future starts within 8h. _Trigger:_ users want “happening now” rows.
+- **MLX ndarray resample parity; Swift XCTest; streaming summaries; schema_version runner.** Unchanged — see Backlog.
 
 ---
 
@@ -336,9 +358,9 @@ REDUCE on docs/P2/CI; HOLD on install (sharpen contract, no mechanical single-so
 
 Not a milestone of its own; pull these in when adjacent work makes them cheap.
 
-**Still open:** MLX ndarray resample parity; extended `schema_version` migration runner; denormalized `segment_count`; batched segment writes; config hot-reload coordination; `structlog` beyond current observability; complete handler return types / typed response models; narrow remaining broad `except Exception`; streaming summaries for long transcripts; server-side atomic `append-notes`; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target; bash install single-sourcing into Python (contract is explicit in `install_paths.py`).
+**Still open:** MLX ndarray resample parity; extended `schema_version` migration runner; denormalized `segment_count`; batched segment writes; config hot-reload coordination; `structlog` beyond current observability; complete handler return types / typed response models; narrow remaining broad `except Exception`; streaming summaries for long transcripts; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target; bash install single-sourcing into Python (contract is explicit in `install_paths.py`); calendar auto-start / full scheduling product (#64 — thin Up-next shipped, auto-start parked).
 
-**Landed in #105 slices (reference only — not deferred):** persistence indexes (`idx_sessions_folder`, `idx_sessions_status`); config validate-temp-before-write; `mkstemp` config save; bounded `watch_folder` processed set; `TranscriptionError`; `mix_audio` length assert; Swift signal-handler cleanup via `shouldStop`; release-CI docs; install path contract + dirty-tree preflight documented.
+**Landed in #105 / #174–#177 slices (reference only — not deferred):** persistence indexes (`idx_sessions_folder`, `idx_sessions_status`); config validate-temp-before-write; `mkstemp` config save; bounded `watch_folder` processed set; `TranscriptionError`; `mix_audio` length assert; Swift signal-handler cleanup via `shouldStop`; release-CI docs; install path contract + dirty-tree preflight documented; server-side atomic `append-notes`; `SEEK_STEP_SECONDS` SPA constant; `webhook` + `custom-script` knowledge adapters; thin calendar Up-next API + home UI.
 
 ---
 

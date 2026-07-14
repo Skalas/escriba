@@ -1,10 +1,13 @@
-# Smoke — docs + P2 + install contract + release-CI hygiene
+# Smoke — append-notes + adapters + thin calendar
 
 | ID | Criterion | Result |
 |----|-----------|--------|
-| T1–T4 | README/CLI/architecture/CONTRIBUTING | PASS — docs in tree; **human** skim README |
-| T5–T7 | P2 slice | PASS — indexes noted done; Swift shouldStop; watch worker survival; triple-flush documented |
-| T8–T10 | Install contract | PASS — intentional diffs + `steps_for_entry_point` / preflight guards + tests |
-| T11–T12 | Release-CI hygiene | PASS — CONTRIBUTING documents stale red runs + no silent clobber |
+| T1–T4 | Atomic append-notes | PASS — DB + API tests; SPA uses append_text |
+| T5–T7 | P2 micro-bundle | PASS — SEEK_STEP, Your notes label, calendar except |
+| T8–T11 | webhook + custom-script | PASS — unit tests; local-markdown default |
+| T12–T16 | Thin Up next | PASS — API + UI + auto-start still blocked |
 
-Calendar #64 not in scope.
+## Human (H1–H3)
+- H1: Approve Up-next home UX
+- H2: Live Calendar permission on your Mac
+- H3: Product call — stay spike-only vs schedule auto-start
