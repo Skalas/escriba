@@ -84,6 +84,7 @@ _API_STUBS: dict[str, str] = {
     "/api/config": '{"ok":true,"config":{"prompts":{"system_prompt":"","templates":[],"effective_system_prompt":""}},"env_keys":{}}',
     "/api/models": '{"ok":true,"models":{},"ai_available":false,"ai_unavailable_reason":""}',
     "/api/calendar/upcoming": '{"ok":true,"events":[]}',
+    "/api/calendar/calendars": '{"ok":true,"calendars":[{"name":"Work","skipped":false,"selected":true}]}',
 }
 
 
@@ -1849,3 +1850,105 @@ def test_upnext_record_uses_data_attr_not_inline_handler(page) -> None:
     assert "JSON.stringify" not in html
     assert 'data-event-title="' in html
     assert onclick_attr is None
+
+
+def test_calendar_save_validation_omits_when_list_not_loaded(page) -> None:
+    """Save must not include calendar when calendarListLoaded is false."""
+    result = page.evaluate("""() => {
+        calendarListLoaded = false;
+        calendarEntries = [{ name: 'Work', skipped: false, selected: true }];
+        const calendarSave = validateCalendarSelectionForSave();
+        const body = {};
+        if (!calendarSave.omit) {
+            body.calendar = { calendars: collectCalendarAllowlist() ?? [] };
+        }
+        return { calendarSave, hasCalendarKey: 'calendar' in body };
+    }""")
+    assert result["calendarSave"]["ok"] is True
+    assert result["calendarSave"]["omit"] is True
+    assert result["hasCalendarKey"] is False
+
+
+def test_calendar_save_validation_requires_one_when_loaded(page) -> None:
+    """When calendars loaded, save is blocked with none selected."""
+    blocked = page.evaluate("""() => {
+        calendarListLoaded = true;
+        calendarEntries = [
+            { name: 'Work', skipped: false, selected: false },
+            { name: 'Personal', skipped: false, selected: false },
+        ];
+        return validateCalendarSelectionForSave();
+    }""")
+    assert blocked["ok"] is False
+
+    allowed = page.evaluate("""() => {
+        calendarListLoaded = true;
+        calendarEntries = [
+            { name: 'Work', skipped: false, selected: true },
+            { name: 'Personal', skipped: false, selected: false },
+        ];
+        const calendarSave = validateCalendarSelectionForSave();
+        const body = {};
+        if (!calendarSave.omit) {
+            body.calendar = { calendars: collectCalendarAllowlist() ?? [] };
+        }
+        return { calendarSave, body };
+    }""")
+    assert allowed["calendarSave"]["ok"] is True
+    assert allowed["calendarSave"]["omit"] is False
+    assert allowed["body"]["calendar"]["calendars"] == ["Work"]
+
+
+def test_calendar_save_persists_explicit_list_when_all_selected(page) -> None:
+    """All toggles on saves explicit names, not empty=all."""
+    all_selected = page.evaluate("""() => {
+        calendarListLoaded = true;
+        calendarEntries = [
+            { name: 'Work', skipped: false, selected: true },
+            { name: 'Personal', skipped: false, selected: true },
+        ];
+        return collectCalendarAllowlist();
+    }""")
+    assert all_selected == ["Work", "Personal"]
+
+
+def test_calendar_save_omits_after_load_reset(page) -> None:
+    """beginCalendarSettingsLoad must block calendar body until reload completes."""
+    state = page.evaluate("""() => {
+        calendarListLoaded = true;
+        calendarEntries = [{ name: 'Stale', skipped: false, selected: true }];
+        beginCalendarSettingsLoad();
+        return {
+            loaded: calendarListLoaded,
+            entries: calendarEntries.length,
+            omit: validateCalendarSelectionForSave().omit,
+        };
+    }""")
+    assert state["loaded"] is False
+    assert state["entries"] == 0
+    assert state["omit"] is True
+
+
+def test_calendar_load_failure_replaces_toggles_with_static_message(page) -> None:
+    """Failed calendar load must not leave interactive toggles."""
+    page.evaluate("""() => {
+        showSettingsView();
+        calendarListLoaded = true;
+        calendarEntries = [{ name: 'Work', skipped: false, selected: true }];
+        renderCalendarToggles();
+        failCalendarSettings('Calendar unavailable');
+    }""")
+    state = page.evaluate("""() => ({
+        loaded: calendarListLoaded,
+        entries: calendarEntries.length,
+        toggleCount: document.querySelectorAll('#calendar-toggle-list input[type=checkbox]').length,
+        disabled: document.getElementById('calendar-toggle-list')?.getAttribute('aria-disabled'),
+        banner: document.getElementById('calendar-settings-hint')?.textContent || '',
+        listText: document.querySelector('#calendar-toggle-list')?.textContent || '',
+    })""")
+    assert state["entries"] == 0
+    assert state["toggleCount"] == 0
+    assert state["disabled"] == "true"
+    assert "Calendar unavailable" in state["banner"]
+    assert "Calendar unavailable" not in state["listText"]
+
