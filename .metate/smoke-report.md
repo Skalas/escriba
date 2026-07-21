@@ -1,50 +1,35 @@
-# Smoke report — calendar-picker-prune-watch
+# Smoke report — appstate-mic-activation-seam
 
-Sprint: `calendar-picker-prune-watch` · branch same · 2026-07-14
+Sprint: `appstate-mic-activation-seam` · 2026-07-21
 
 ## Automated evidence
 
 - `uv run ruff check .` — green
-- `uv run mypy .` — green (97 files)
-- `uv run pytest` — **470 passed**
-- Focused calendar suite — **33 passed** (`-k calendar`)
+- `uv run pytest` — **481 passed**
+- Focused: `test_recording_seam`, `test_mic_poll_decide`, `test_menubar_quit`, `test_call_state` — green
 
-`smoke.command` is `uv run escriba app` (manual launch). No Playwright e2e suite; DoD mapped to unit/SPA tests below.
-
-## DoD matrix (T1–T10)
+## DoD matrix (T1–T9)
 
 | ID | Result | Evidence |
 |----|--------|----------|
-| T1 | ✅ | `test_calendar_allowlist_round_trip_from_toml` |
-| T2 | ✅ | `test_get_upcoming_events_allowlist_filters_calendars`, `test_calendar_upcoming_passes_config_allowlist` |
-| T3 | ✅ | `test_empty_calendar_allowlist_means_all_non_skipped`, `test_get_upcoming_events_empty_allowlist_queries_all_non_skipped` |
-| T4 | ✅ | SPA calendar load/save tests; `test_calendar_calendars_endpoint_*` |
-| T5 | ✅ | `test_calendar_upcoming_passes_config_allowlist` |
-| T6 | ✅ | `test_get_upcoming_events_skip_list_applies_on_allowlist` |
-| T7 | ✅ | `test_watch_calendar_command_removed` |
-| T8 | ✅ | Same; auto-start remains product-parked (no CLI) |
-| T9 | ✅ | README/AGENTS/CLAUDE updated; CLI help has no watch-calendar |
-| T10 | ⏳ human | ROADMAP notes H1–H3 pending; auto-start parked |
+| T1 | ✅ | Menubar + HTTP use `try_start_recording`; concurrent start tests |
+| T2 | ✅ | Both use `begin_stop` + `complete_stop_recording` |
+| T3 | ✅ | Idempotent no-session / already-stopping / claim-required tests |
+| T4 | ✅ | Concurrent stop-claim race + start-while-stop + stop-while-start tests |
+| T5 | ✅ | `MicPollSnapshot` / `MicPollAction` / detect·decide·act |
+| T6 | ✅ | `test_call_state` + decide auto_stop / hide_while_recording |
+| T7 | ✅ | decide prompt vs auto + cooldown tests |
+| T8 | ✅ | No calendar auto-start in menubar (grep) |
+| T9 | ✅ | ROADMAP “Where we are” note |
 
-## Human gates (plan prose — no `smoke.humanGates` ledger)
+## Human gates (plan prose)
 
-No profile `humanGates` block; checklist only:
-
-### H1 — UX (Settings picker + Up next)
-**Why:** Confirm the picker is usable and Up next still readable with a narrowed set.  
-**Do:** Open dashboard → Settings → Calendar → enable only the calendar that has your next event → Save → Home.  
-**Approved means:** Selected calendars toggle cleanly; Up next shows the expected event (or a clear hint).
-
-### H2 — Live Calendar permission
-**Why:** osascript + multi-account Mac behavior isn’t fully covered by mocks.  
-**Do:** On a real Mac with Calendar access granted to Terminal/Escriba, confirm Settings lists calendars and Up next returns within ~30s when scoped.  
-**Approved means:** No stuck “Checking Calendar…” / false unavailable after allowlist narrows the set.
-
-### H3 — Graduation
-**Why:** Full auto-start (#64) stays parked until you choose.  
-**Do:** Decide spike-only (picker enough) vs schedule a calendar auto-start sprint.  
-**Approved means:** Decision recorded (comment on #64 / ROADMAP); no silent enablement of `--auto-start`.
+| ID | What to do |
+|----|------------|
+| H1 | Mic auto-record: one real call-ish start/stop |
+| H2 | Manual Record + dashboard Stop still clean |
+| H3 | Confirm no surprise calendar auto-starts (#193 still off) |
 
 ## Verdict
 
-Automated smoke **green**. Human H1–H3 still open for product soak — do not block merge of picker work; T10 closes when you record the call.
+Automated smoke **green**. Human H1–H3 optional soak before relying on mic auto-record in production use.

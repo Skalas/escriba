@@ -4,7 +4,7 @@
 
 This roadmap is a living document. It captures **where we are**, the **strategic priorities**, and the **planned milestones**. It is intentionally opinionated about sequencing: we harden the core before we widen the feature set.
 
-_Last updated: 2026-07-14 · Current version: `1.3.1` · sprint `calendar-picker-prune-watch` (#181–#191); calendar picker shipped; full auto-start still parked pending H1–H3._
+_Last updated: 2026-07-21 · Current version: `1.3.1` · recording seam + mic-poll REDUCE in flight (`appstate-mic-activation-seam`); calendar auto-start still next product sprint (#193)._
 
 ---
 
@@ -41,7 +41,9 @@ As of the **in-app updates sprint** (2026-07-13, #152 / #153–#158) the dashboa
 
 As of the **update verification sprint** (2026-07-13, #161–#164) automated tests assert `current` vs GitHub `tag_name` on CLI and API paths; `ESCRIBA_VERSION_OVERRIDE` / `check-update --current` enable live soak without rebuilding; install-path drift is inventoried in `escriba.app.install_paths` (intentional diffs vs `install.sh` / Makefile documented); and another #105 slice landed (bounded watch-folder processed set, `mix_audio` length assert, `TranscriptionError`, `_extract_response` cleanup). **Ops:** publish GitHub Release `v1.3.1` at ship so `releases/latest` ≥ app version.
 
-As of **`calendar-picker-prune-watch`** (2026-07-14, #181–#191) Settings lets users pick which Calendar.app calendars Escriba reads for Up next (`[calendar].calendars` in `escriba.toml`; empty = all non-skipped). Orphan `watch-calendar` CLI removed. **Human gates H1–H3 pending** (picker UX approval, live Calendar permission, graduation call). Full calendar auto-start remains **parked** — see #64 decision note below.
+As of **`calendar-picker-prune-watch`** (2026-07-14, #181–#191) Settings lets users pick which Calendar.app calendars Escriba reads for Up next (`[calendar].calendars` in `escriba.toml`; empty = all non-skipped). Orphan `watch-calendar` CLI removed. **H1/H2 approved** (picker UX + live Calendar on Mac). **H3 → build:** full calendar auto-start filed as [#193](https://github.com/Skalas/escriba/issues/193) (next product sprint after recording-seam hardening).
+
+As of **`appstate-mic-activation-seam`** (2026-07-21, #194–#202) HTTP and menubar stop share `AppState.complete_stop_recording` after a single stop claim; `_check_mic_activation` is detect/decide/act. Mic auto-record behavior unchanged. **#193 calendar auto-start remains the next product sprint** (not wired here).
 
 As of **`append-notes-adapters-calendar-thin`** (2026-07-13, #174–#177) server-side atomic `append-notes` closes the concurrent Enhance race; `webhook` + `custom-script` knowledge adapters ship behind `local-markdown` default; a thin home **Up next** row reads Calendar via `GET /api/calendar/upcoming` with one-tap Record pre-titling. **Product call (H3):** validate the spike on a real Mac before scheduling a full calendar auto-start sprint — see decision note under #64 below.
 
@@ -355,13 +357,29 @@ HOLD on picker; REDUCE on orphan CLI.
 
 - [x] **Calendar allowlist (#182–#187 / T1–T6).** `[calendar].calendars` config + Settings multi-select; `GET /api/calendar/calendars`; Up next queries only the selection; empty = all non-skipped; holiday skip ∩ allowlist; invalid shapes rejected.
 - [x] **Prune watch-calendar (#188–#190 / T7–T9).** Removed orphan `watch-calendar` CLI / `watch_calendar` / `has_meeting_link`; docs aligned; auto-start stays parked.
-- [ ] **H1–H3 human gates (#191 / T10).** UX soak of picker + live Calendar permission + graduation call (spike-only vs full auto-start sprint). Auto-start remains **parked**.
+- [x] **H1/H2 human gates.** Picker UX + live Calendar permission approved (2026-07-14).
+- [x] **H3 graduation.** Full calendar auto-start scheduled as next sprint: [#193](https://github.com/Skalas/escriba/issues/193). In-app auto-start remains **off** until that sprint lands.
 
 **Done when:** ship gate green; picker usable in Settings; H1–H3 recorded when soaked.
 
 **Deferred (with triggers):**
-- **Calendar auto-start / menubar scheduling.** Intentionally not enabled; `watch-calendar` CLI removed. _Trigger:_ positive H1–H3 + demand beyond mic auto-record.
+- **Calendar auto-start / menubar scheduling (#193).** Spec filed; not enabled in-app yet. _Trigger:_ next discover/prep picks #193.
 - **MLX ndarray resample parity; Swift XCTest; streaming summaries; schema_version runner.** Unchanged — see Backlog.
+
+---
+
+### AppState recording seam + mic-poll REDUCE  ·  _2026-07-21 (#194–#202)_
+
+HOLD on single-writer stop; REDUCE on `_check_mic_activation`.
+
+- [x] **Stop claim seam (#194–#197 / T1–T4).** `complete_stop_recording`; HTTP + menubar + quit share begin/complete; reject stop while start in progress; race tests.
+- [x] **Mic poll decompose (#198–#201 / T5–T8).** `MicPollSnapshot` / `MicPollAction` detect·decide·act; prompt/auto/cooldown unchanged; #193 not wired.
+- [x] **ROADMAP hygiene (#202 / T9).** Seam noted; #193 still next product sprint.
+
+**Done when:** ship gate green.
+
+**Deferred (with triggers):**
+- **Calendar auto-start (#193).** _Trigger:_ next product sprint / discover pick.
 
 ---
 
@@ -369,7 +387,7 @@ HOLD on picker; REDUCE on orphan CLI.
 
 Not a milestone of its own; pull these in when adjacent work makes them cheap.
 
-**Still open:** MLX ndarray resample parity; extended `schema_version` migration runner; denormalized `segment_count`; batched segment writes; config hot-reload coordination; `structlog` beyond current observability; complete handler return types / typed response models; narrow remaining broad `except Exception`; streaming summaries for long transcripts; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target; bash install single-sourcing into Python (contract is explicit in `install_paths.py`); calendar auto-start / full scheduling product (#64 — thin Up-next shipped, auto-start parked).
+**Still open:** MLX ndarray resample parity; extended `schema_version` migration runner; denormalized `segment_count`; batched segment writes; config hot-reload coordination; `structlog` beyond current observability; complete handler return types / typed response models; narrow remaining broad `except Exception`; streaming summaries for long transcripts; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target; bash install single-sourcing into Python (contract is explicit in `install_paths.py`); **calendar auto-start (#193)** — next-sprint candidate after H3.
 
 **Landed in #105 / #174–#177 slices (reference only — not deferred):** persistence indexes (`idx_sessions_folder`, `idx_sessions_status`); config validate-temp-before-write; `mkstemp` config save; bounded `watch_folder` processed set; `TranscriptionError`; `mix_audio` length assert; Swift signal-handler cleanup via `shouldStop`; release-CI docs; install path contract + dirty-tree preflight documented; server-side atomic `append-notes`; `SEEK_STEP_SECONDS` SPA constant; `webhook` + `custom-script` knowledge adapters; thin calendar Up-next API + home UI.
 
