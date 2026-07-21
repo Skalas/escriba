@@ -21,6 +21,37 @@ class _FakeAppState:
     def __init__(self, session):
         self._lock = threading.Lock()
         self.session = session
+        self._stop_in_progress = False
+        self._start_in_progress = False
+
+    def begin_stop_recording(self):
+        with self._lock:
+            if self._stop_in_progress:
+                return {"ok": False, "error": "Stop already in progress"}, 409, None
+            if self._start_in_progress:
+                return {"ok": False, "error": "Recording start in progress"}, 409, None
+            session = self.session
+            if not session or not session.is_active:
+                return {"ok": False, "error": "Not recording"}, 409, None
+            self._stop_in_progress = True
+            return {"ok": True}, 200, session
+
+    def finish_stop_recording(self) -> None:
+        with self._lock:
+            self._stop_in_progress = False
+
+    def complete_stop_recording(self, session):
+        with self._lock:
+            if not self._stop_in_progress:
+                raise RuntimeError("complete_stop_recording without claim")
+            if self.session is not session:
+                self._stop_in_progress = False
+                raise RuntimeError("session mismatch")
+        try:
+            session.stop()
+        finally:
+            self.finish_stop_recording()
+        return {"ok": True, "session_id": getattr(session, "db_session_id", None)}
 
 
 def _fake_menubar(session, db, server=None):
