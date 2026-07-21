@@ -7,12 +7,15 @@ import plistlib
 import stat
 import subprocess
 import time
+from enum import Enum
 from pathlib import Path
+from typing import NamedTuple
 
 import rumps
 
 from escriba.app.database import Database
 from escriba.app.server import AppState, PORT, _ThreadingHTTPServer, start_server
+from escriba.audio.call_state import CallEvent
 from escriba.config import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -26,6 +29,26 @@ _DASHBOARD_APP = _DASHBOARD_APP_DIR / "Escriba.app"
 # join + title-thread join + mic close) with headroom, so a normal stop always
 # completes before the DB connection is closed.
 QUIT_STOP_TIMEOUT_S = 45.0
+
+
+class MicPollAction(Enum):
+    """Actions produced by the mic-activation poll decide step."""
+
+    AUTO_STOP = "auto_stop"
+    HIDE_WHILE_RECORDING = "hide_while_recording"
+    HIDE_CALL_ENDED = "hide_call_ended"
+    COOLDOWN = "cooldown"
+    NONE = "none"
+    AUTO_START = "auto_start"
+    PROMPT = "prompt"
+
+
+class MicPollSnapshot(NamedTuple):
+    """Detect output for one mic-activation poll tick."""
+
+    event: CallEvent
+    is_recording: bool
+    auto_started: bool
 
 
 def _ensure_dashboard_app(icon_path: Path | None = None) -> Path:
@@ -194,67 +217,90 @@ class TranscriberMenuBar(rumps.App):
             self._recording_item.title = "Start Recording"
             self.title = "\u3030"
 
-    def _check_mic_activation(self, _):
-        """Poll CoreAudio and drive debounced call start/end handling."""
-        if not self.config.auto_record.enabled:
+    def _detect_mic_poll_state(self) -> MicPollSnapshot:
+        """Sample mic + call-state machine and current recording flags."""
+        from escriba.audio.mic_monitor import call_mic_active
+
+        running = call_mic_active()
+        event = self._call_state.update(running, time.monotonic())
+
+        with self.app_state._lock:
+            session = self.app_state.session
+            is_recording = bool(session and session.is_active)
+            current_id = session.session_id if session else None
+
+        auto_started = (
+            self._auto_started_session_id is not None
+            and current_id == self._auto_started_session_id
+        )
+        return MicPollSnapshot(event, is_recording, auto_started)
+
+    def _decide_mic_poll_action(self, snap: MicPollSnapshot) -> MicPollAction:
+        """Map a mic-poll snapshot to a single action."""
+        from escriba.audio.call_state import should_auto_stop
+
+        if should_auto_stop(snap.event, snap.is_recording, snap.auto_started):
+            return MicPollAction.AUTO_STOP
+        if snap.is_recording:
+            return MicPollAction.HIDE_WHILE_RECORDING
+        if snap.event == CallEvent.CALL_ENDED:
+            return MicPollAction.HIDE_CALL_ENDED
+        if time.time() < self._prompt_cooldown_until:
+            return MicPollAction.COOLDOWN
+        if snap.event != CallEvent.CALL_STARTED:
+            return MicPollAction.NONE
+        if self.config.auto_record.start_mode == "auto":
+            return MicPollAction.AUTO_START
+        return MicPollAction.PROMPT
+
+    def _act_mic_poll_action(self, action: MicPollAction) -> None:
+        """Apply a decided mic-poll action (start/stop/UI/prompt)."""
+        import threading
+
+        from escriba.audio.call_detection import get_call_app_label_if_mic_active
+
+        if action is MicPollAction.AUTO_STOP:
+            logger.info("Call ended, auto-stopping recording")
+            self._begin_stop_recording_session()
+            return
+        if action is MicPollAction.HIDE_WHILE_RECORDING:
+            if not self._call_item.hidden:
+                self._call_item.hidden = True
+            return
+        if action is MicPollAction.HIDE_CALL_ENDED:
+            self._call_item.hidden = True
+            return
+        if action in {MicPollAction.COOLDOWN, MicPollAction.NONE}:
             return
 
-        try:
-            import threading
+        app_name = get_call_app_label_if_mic_active(True)
+        self._last_detected_app = app_name
+        context = f" ({app_name})" if app_name else ""
+        self._call_item.title = f"Record Call{context}"
+        self._call_item.hidden = False
 
-            from escriba.audio.call_detection import get_call_app_label_if_mic_active
-            from escriba.audio.call_state import CallEvent, should_auto_stop
-            from escriba.audio.mic_monitor import call_mic_active
+        if action is MicPollAction.AUTO_START:
+            self._call_item.hidden = True
+            self._begin_start_recording_session(detected_app=app_name, auto=True)
+            return
 
-            running = call_mic_active()
-            event = self._call_state.update(running, time.monotonic())
-
-            with self.app_state._lock:
-                session = self.app_state.session
-                is_recording = bool(session and session.is_active)
-                current_id = session.session_id if session else None
-
-            auto_started = (
-                self._auto_started_session_id is not None
-                and current_id == self._auto_started_session_id
-            )
-            if should_auto_stop(event, is_recording, auto_started):
-                logger.info("Call ended, auto-stopping recording")
-                self._begin_stop_recording_session()
-                return
-
-            if is_recording:
-                if not self._call_item.hidden:
-                    self._call_item.hidden = True
-                return
-
-            if event == CallEvent.CALL_ENDED:
-                self._call_item.hidden = True
-                return
-
-            if time.time() < self._prompt_cooldown_until:
-                return
-
-            if event != CallEvent.CALL_STARTED:
-                return
-
-            app_name = get_call_app_label_if_mic_active(True)
-            self._last_detected_app = app_name
-            context = f" ({app_name})" if app_name else ""
-            self._call_item.title = f"Record Call{context}"
-            self._call_item.hidden = False
-
-            if self.config.auto_record.start_mode == "auto":
-                self._call_item.hidden = True
-                self._begin_start_recording_session(detected_app=app_name, auto=True)
-                return
-
+        if action is MicPollAction.PROMPT:
             logger.info("Mic activation detected, prompting user")
             threading.Thread(
                 target=self._show_call_dialog,
                 args=(app_name,),
                 daemon=True,
             ).start()
+
+    def _check_mic_activation(self, _):
+        """Poll CoreAudio and drive debounced call start/end handling."""
+        if not self.config.auto_record.enabled:
+            return
+
+        try:
+            snap = self._detect_mic_poll_state()
+            action = self._decide_mic_poll_action(snap)
+            self._act_mic_poll_action(action)
         except Exception:
             logger.debug("Mic activation check failed", exc_info=True)
 
@@ -310,11 +356,9 @@ class TranscriberMenuBar(rumps.App):
 
         def _stop_async():
             try:
-                session.stop()
+                self.app_state.complete_stop_recording(session)
             except Exception:
                 logger.exception("Session stop failed")
-            finally:
-                self.app_state.finish_stop_recording()
             _notify("Escriba", "Recording stopped", "Transcript saved.")
 
         threading.Thread(target=_stop_async, daemon=True).start()
@@ -398,20 +442,37 @@ class TranscriberMenuBar(rumps.App):
             session = self.app_state.session
             active = session is not None and session.is_active
         stop_completed = True
-        if active and session is not None:
-            stop_thread = threading.Thread(target=session.stop, daemon=True)
-            stop_thread.start()
-            # Wait long enough to cover stop()'s own internal joins so we never
-            # close the DB out from under a stop that is still finalizing the
-            # session row (which would leave it ACTIVE / half-written).
-            stop_thread.join(timeout=QUIT_STOP_TIMEOUT_S)
-            stop_completed = not stop_thread.is_alive()
-            if not stop_completed:
-                logger.warning(
-                    "Session stop still running after %.0fs at quit — leaving the DB "
-                    "connection open so the in-flight stop can finish its write",
-                    QUIT_STOP_TIMEOUT_S,
-                )
+        if active:
+            _data, status, claimed = self.app_state.begin_stop_recording()
+            if status == 200 and claimed is not None:
+
+                def _stop_claimed() -> None:
+                    try:
+                        self.app_state.complete_stop_recording(claimed)
+                    except Exception:
+                        logger.exception("Session stop failed during quit")
+                        self.app_state.finish_stop_recording()
+
+                stop_thread = threading.Thread(target=_stop_claimed, daemon=True)
+                stop_thread.start()
+                stop_thread.join(timeout=QUIT_STOP_TIMEOUT_S)
+                stop_completed = not stop_thread.is_alive()
+                if not stop_completed:
+                    logger.warning(
+                        "Session stop still running after %.0fs at quit — leaving the DB "
+                        "connection open so the in-flight stop can finish its write",
+                        QUIT_STOP_TIMEOUT_S,
+                    )
+            else:
+                # Another stop already claimed; wait for the guard to clear.
+                deadline = time.monotonic() + QUIT_STOP_TIMEOUT_S
+                while time.monotonic() < deadline:
+                    with self.app_state._lock:
+                        if not self.app_state._stop_in_progress:
+                            break
+                    time.sleep(0.05)
+                with self.app_state._lock:
+                    stop_completed = not self.app_state._stop_in_progress
         if self.server:
             self.server.shutdown()
         # Only close the DB once we know no stop is still writing to it.
