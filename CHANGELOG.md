@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Recording start/stop seam.** HTTP and menubar share `AppState.complete_stop_recording` after a single stop claim; stop is rejected while start is in progress; quit uses the same claim path. Mic auto-record poll is detect/decide/act (`MicPollAction`) with unchanged prompt/auto/cooldown behavior. Calendar auto-start (#193) still not wired.
+
 ### Added
 - **Calendar picker (#181).** Settings multi-select for which Apple Calendar calendars Escriba reads; `[calendar].calendars` in `escriba.toml`. Empty allowlist = all non-skipped calendars; saving an explicit set (including “all currently listed”) persists those names so new calendars are not auto-included. `GET /api/calendar/calendars` feeds the UI; Up next honors the allowlist.
 - **Atomic append-notes.** `POST /api/sessions/:id/append-notes` merges note fragments in one DB transaction; live Enhance and session generate use the append path so concurrent writes cannot drop text.

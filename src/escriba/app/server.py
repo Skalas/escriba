@@ -204,6 +204,8 @@ class AppState:
         with self._lock:
             if self._stop_in_progress:
                 return {"ok": False, "error": "Stop already in progress"}, 409, None
+            if self._start_in_progress:
+                return {"ok": False, "error": "Recording start in progress"}, 409, None
             session = self.session
             if not session or not session.is_active:
                 return {"ok": False, "error": "Not recording"}, 409, None
@@ -214,6 +216,31 @@ class AppState:
         """Release the stop-in-progress guard."""
         with self._lock:
             self._stop_in_progress = False
+
+    def complete_stop_recording(
+        self, session: TranscriptionSession
+    ) -> dict[str, Any]:
+        """
+        Run ``session.stop()`` then release the stop claim.
+
+        Callers must already hold the claim from ``begin_stop_recording`` for
+        this same session object.
+        """
+        with self._lock:
+            if not self._stop_in_progress:
+                raise RuntimeError(
+                    "complete_stop_recording called without an active stop claim"
+                )
+            if self.session is not session:
+                self._stop_in_progress = False
+                raise RuntimeError(
+                    "complete_stop_recording session does not match AppState.session"
+                )
+        try:
+            session.stop()
+        finally:
+            self.finish_stop_recording()
+        return {"ok": True, "session_id": session.db_session_id}
 
 if getattr(sys, "frozen", False):
     STATIC_DIR = Path(sys.executable).parent.parent / "Resources" / "static"
@@ -1105,12 +1132,7 @@ class _Handler(BaseHTTPRequestHandler):
         data, status, session = self.app_state.begin_stop_recording()
         if status != 200 or session is None:
             return data, status
-        db_session_id = session.db_session_id
-        try:
-            session.stop()
-        finally:
-            self.app_state.finish_stop_recording()
-        return {"ok": True, "session_id": db_session_id}, 200
+        return self.app_state.complete_stop_recording(session), 200
 
     def _generate_notes(self, body: dict) -> tuple[dict, int]:
         with self.app_state._lock:

@@ -1,101 +1,95 @@
-# Sprint plan — calendar picker + prune watch-calendar orphans (+ human gates)
+# Sprint plan — unify AppState recording seam + split mic-activation poll
 
-> Entry doc for `metate-prep`. Selected from discover: **merge 1 + 3**, with **human
-> gates from candidate 2** (H1–H3 as soak/product checklist — not a full auto-start build).
-> Mode hint: **HOLD** on calendar selection; **REDUCE** on orphan CLI/calendar path.
+> Entry doc for `metate-prep`. Selected from discover: **merge 2 + 3**.
+> Mode hint: **HOLD** on recording single-writer / stop-path parity; **REDUCE** on
+> `_check_mic_activation` decomposition (behavior-preserving).
 
 ## Goal
 
-Let users pick which Apple Calendar calendars Escriba reads for Up next (and related
-calendar reads), persist that choice, and stop scanning every synced account by default.
-While in the calendar module, prune or clearly deprecate the orphan `watch_calendar` /
-meeting-link CLI surface that Up next does not use. Keep `--auto-start` blocked; use the
-H-matrix for UX / permission / graduation sign-off only.
+Harden the recording start/stop path so menubar and HTTP share one clear
+`AppState` claim model (especially stop: async menubar vs sync HTTP), then thin
+`_check_mic_activation` into detect / decide / act helpers so the poll loop stays
+testable and ready for a later calendar auto-start sprint (#193) without growing
+another god-method.
 
 ## Why now
 
-- **#1 / issue #181** — Multi-account Calendar scans timed out Up next; the event lived on
-  one personal calendar. User-requested for this cycle (P1 / performance).
-- **#3** — Graph: `watch_calendar` in-degree 0; `has_meeting_link` unused on the Up-next
-  path. Cheap REDUCE ride-along while the calendar module is open.
-- **Human gates (from #2 / #64)** — Thin Up next already shipped; full auto-start stays
-  parked until H1–H3. Include the checklist in this sprint’s smoke/aftercare — do not
-  implement calendar-driven auto-record.
+- **#2** — Graph: dual stop paths (`_Handler._stop_recording` sync vs menubar
+  `_begin_stop_recording_session` async + `finish_stop_recording`). Calendar
+  auto-start (#193) would add a third caller — harden the seam first.
+- **#3** — `_check_mic_activation` is high fan-out (~21 outbound); same loop
+  calendar scheduling would extend. REDUCE now while mic auto-record stays green.
 
 ## Scope note
 
-Parents / links: [#181](https://github.com/Skalas/escriba/issues/181),
-[#64](https://github.com/Skalas/escriba/issues/64) (gates only).
+Parents / links: structural prep for [#193](https://github.com/Skalas/escriba/issues/193);
+does **not** implement calendar auto-start.
 
 **In scope**
 
-- Settings multi-select of Calendar.app calendars
-- Persist selection in `escriba.toml` (e.g. `[calendar]` / allowlist)
-- `get_upcoming_events` / `GET /api/calendar/upcoming` honor the selection
-- Holiday/birthday skip list remains a safety net
-- Document empty-selection default (all non-skipped vs require ≥1 — prep picks one)
-- Prune or deprecate `watch_calendar` / unused meeting-link CLI path so public surface matches behavior
-- H1–H3 human validation (plan prose; profile has no `smoke.humanGates`)
+- Unify start/stop claiming around `AppState.try_start_recording` /
+  `begin_stop_recording` / `finish_stop_recording` (or equivalent single-writer API)
+- Align HTTP and menubar stop so both honor the same claim/finish contract
+- Extract detect / decide / act (or similarly named) helpers from
+  `_check_mic_activation` without changing mic auto-record behavior
+- Tests for concurrent start, stop claim, and mic auto-record debounce paths
+- Docs only if public behavior/docs drift (prefer minimal)
 
 **Out of scope**
 
-- Full calendar auto-start / menubar scheduling product (#64 build)
-- Server `do_GET` decomposition (discover #4)
-- #105 P2 pile (MLX resample, Swift XCTest, schema_version runner, etc.)
-- Sparkle / bash install single-sourcing
+- Full calendar auto-start / Settings for calendar scheduling (#193)
+- `do_GET` decomposition (discover #4)
+- #105 P2 pile (MLX resample, Swift XCTest, schema_version, …)
+- Daemon → AppState fold (separate HOLD; do not expand this sprint)
 
 ## Definition of Done
 
-Done when: user can enable/disable calendars in Settings; selection survives restart;
-Up next only queries the selected set (faster when scoped); holiday skip still applies;
-orphan watch-calendar surface is gone or explicitly deprecated with matching CLI/docs;
-`--auto-start` remains blocked with a clear error; H1–H3 recorded (approve / live
-permission / graduation call); ship gate green.
+Done when: menubar and HTTP start/stop go through one `AppState` single-writer
+contract (no divergent “sync stop skips claim” hole); mic auto-record
+start/stop/debounce behavior is unchanged and covered by tests; `_check_mic_activation`
+is a thin orchestrator over extracted helpers; ship gate green. #193 remains filed
+and untouched functionally.
 
 ## Seed test matrix
 
-### Strand A — Calendar picker (#181) · HOLD
+### Strand A — AppState recording seam (#2) · HOLD
 
 | ID | Criterion |
 |----|-----------|
-| T1 | Config: `[calendar]` (or equivalent) loads/saves allowlist; round-trip via `PUT /api/config` / `update_config_toml` |
-| T2 | `get_upcoming_events` (or server wrapper) only queries selected calendars; unlisted calendars never scanned |
-| T3 | Empty selection behaves per documented default (all non-skipped **or** require ≥1 — one rule, tested) |
-| T4 | Settings UI lists available calendars; toggle persists; permission_denied / unavailable surfaces a soft hint |
-| T5 | Home Up next uses the filtered API; SPA regression or server test covers selection → fewer calendars queried |
-| T6 | Holiday/birthday skip list still applied on top of the allowlist |
+| T1 | Start: menubar + HTTP both use `try_start_recording` (or documented single entry); concurrent start still single-writer |
+| T2 | Stop: both paths use `begin_stop_recording` + `finish_stop_recording` (or equivalent); no path stops the session while bypassing the claim |
+| T3 | Already-stopping / no-session stop is idempotent and safe (clear errors, no double-finish crash) |
+| T4 | Focused tests for concurrent start and stop-claim races (extend existing TG1/T1-style tests) |
 
-### Strand B — Prune orphan calendar CLI (#3) · REDUCE
+### Strand B — Mic-activation poll REDUCE (#3) · REDUCE
 
 | ID | Criterion |
 |----|-----------|
-| T7 | `watch_calendar` / `cmd_watch_calendar` / unused meeting-link path: delete **or** deprecate with clear docs — no silent dead public API |
-| T8 | `--auto-start` stays blocked with clear error (existing test remains or is updated) |
-| T9 | CLI help / README matches the remaining calendar surface; no broken imports |
+| T5 | `_check_mic_activation` decomposed into detect / decide / act (names flexible); public menubar behavior unchanged |
+| T6 | Auto-start on sustained mic-active and auto-stop on debounced inactive still pass (unit and/or existing call-detection tests) |
+| T7 | Prompt vs auto `start_mode` still honored; cooldown / dismiss semantics unchanged |
+| T8 | No intentional calendar-event start wired yet (assert #193 still out of this diff) |
 
-### Strand C — Decision hygiene · HOLD
+### Strand C — Hygiene · HOLD
 
 | ID | Criterion |
 |----|-----------|
-| T10 | ROADMAP / #64 comment: record H1–H3 outcomes; auto-start remains parked unless H3 explicitly schedules a follow-up sprint |
+| T9 | ROADMAP / brief note: seam hardened; #193 still next product sprint when picked |
 
 ## Seed H-matrix (plan prose only — no `smoke.humanGates` in profile)
 
-Prep will not seed an H ledger unless the profile gains `smoke.humanGates`; treat these as
-a human checklist in smoke/aftercare.
-
 | ID | Type | What the human does |
 |----|------|---------------------|
-| H1 | ux | Approve calendar-picker Settings + Up next still readable with a narrowed set |
-| H2 | live | On a real Mac: Calendar permission works; selected calendar(s) show the expected event |
-| H3 | graduation | Product call: stay spike-only (picker only) vs schedule a full calendar auto-start sprint later |
+| H1 | live | With mic auto-record enabled: one real call-ish cycle starts and stops as before |
+| H2 | live | Manual Record + dashboard Stop still clean (no stuck “stopping”, no double session) |
+| H3 | other | Confirm calendar auto-start still off (no surprise starts from events) |
 
 ## Mode
 
-Prep finalizes mode. Hint: **HOLD** overall (calendar selection is product-facing but
-behavior-bounded); Strand B is **REDUCE**.
+Prep finalizes mode. Hint: **HOLD** overall (correctness of the recording mutex);
+Strand B is **REDUCE** (structure only).
 
 ## Next ceremony
 
-Hand off to **`metate-prep`**, which reads this file as its entry doc, files the issue
-ledger from the T-matrix, and cuts the working branch from `main`.
+Hand off to **`metate-prep`**, which reads this file, files the T-matrix issue ledger,
+and cuts the working branch from `main`.
