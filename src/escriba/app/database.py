@@ -308,6 +308,14 @@ class Database:
             )
             self._conn.commit()
 
+    def set_session_status(self, session_id: str, status: str):
+        """Update only the status, leaving stopped_at/duration untouched."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET status = ? WHERE id = ?", (status, session_id)
+            )
+            self._conn.commit()
+
     def add_segments(self, session_id: str, segments: list[dict]):
         if not segments:
             return
