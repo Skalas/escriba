@@ -955,7 +955,12 @@ class _Handler(BaseHTTPRequestHandler):
         with self.app_state._lock:
             session = self.app_state.session
             if session:
-                return {"ok": True, **session.get_status()}
+                status = {"ok": True, **session.get_status()}
+                # A finished session's error is reported once; keeping it would
+                # pin the dashboard banner open for the rest of the app's life.
+                if not session.is_active and status.get("error"):
+                    status["error"] = session.consume_error()
+                return status
         return {"ok": True, "is_active": False, "session_id": None}
 
     def _get_version(self) -> dict:
@@ -1427,10 +1432,28 @@ class _Handler(BaseHTTPRequestHandler):
             if segments:
                 db.add_segments(session_id, segments)
 
+            # A rebuilt transcript supersedes whatever went wrong at stop time,
+            # so the session is no longer errored — in the DB row and in the
+            # finished session object the status poll still reads from.
+            if session.get("status") == "error":
+                db.set_session_status(session_id, "completed")
+                self._discard_stale_session_error(session_id)
+
             return {"ok": True, "segment_count": len(segments)}, 200
         except Exception as e:
             logger.error("Re-transcribe failed: %s", e, exc_info=True)
             return {"ok": False, "error": "Re-transcription failed; check logs"}, 503
+
+    def _discard_stale_session_error(self, session_id: str) -> None:
+        """Drop a finished session's pending error once it no longer applies."""
+        with self.app_state._lock:
+            tracked = self.app_state.session
+            if (
+                tracked is not None
+                and not tracked.is_active
+                and tracked.db_session_id == session_id
+            ):
+                tracked.consume_error()
 
     def _generate_session_notes(self, session_id: str, body: dict) -> tuple[dict, int]:
         db = self._require_db()
@@ -1467,7 +1490,12 @@ class _Handler(BaseHTTPRequestHandler):
                 # server-side save here would race that path and duplicate or
                 # clobber notes, so generation only returns the text.
                 return {"ok": True, "notes": notes}, 200
-            return {"ok": False, "error": "Failed to generate notes"}, 503
+            # The provider layer already logged why it produced nothing.
+            return {
+                "ok": False,
+                "error": f"The model ({model}) returned no text. Check the log, "
+                "or pick another model in Settings → AI Notes.",
+            }, 503
         except Exception as e:
             logger.error("Error generating session notes: %s", e, exc_info=True)
             return {"ok": False, "error": "Notes generation failed; check logs"}, 503

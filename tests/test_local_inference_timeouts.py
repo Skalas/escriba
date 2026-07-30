@@ -64,3 +64,30 @@ def test_inference_uses_single_atomic_worker_job() -> None:
     job_timeout = llm_summary._LOCAL_MODEL_LOAD_TIMEOUT + llm_summary._LOCAL_GENERATION_TIMEOUT
     parent_timeout = job_timeout + llm_summary._LOCAL_INFERENCE_PARENT_GRACE_SECONDS
     mock_future.result.assert_called_once_with(timeout=parent_timeout)
+
+
+def test_thinking_truncated_output_is_reported_not_swallowed(caplog) -> None:
+    """A model that reasons past its budget must fail loudly, not silently.
+
+    The regression: gemma-4 spent its whole budget in the thinking channel,
+    _extract_response collapsed that to "", and every layer above returned
+    "no notes" with nothing in the log.
+    """
+    with patch.dict("sys.modules", {"mlx_lm": MagicMock()}), patch.object(
+        llm_summary._local_inference_process, "run", return_value=""
+    ) as run, caplog.at_level("ERROR", logger="escriba.summarize.llm_summary"):
+        result = llm_summary._call_llm_local("prompt", "model", max_tokens=4096)
+
+    assert result == ""
+    run.assert_called_once()
+    assert "truncated mid-reasoning" in caplog.text
+
+
+def test_long_form_local_calls_disable_thinking() -> None:
+    """Notes/summary prompts spend the whole budget on the answer."""
+    with patch.dict("sys.modules", {"mlx_lm": MagicMock()}), patch.object(
+        llm_summary._local_inference_process, "run", return_value="## Notes"
+    ) as run:
+        llm_summary._call_llm_local("prompt", "model", max_tokens=4096, enable_thinking=False)
+
+    assert run.call_args[0][3] is False
