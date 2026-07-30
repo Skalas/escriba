@@ -45,6 +45,8 @@ As of **`calendar-picker-prune-watch`** (2026-07-14, #181–#191) Settings lets 
 
 As of **`appstate-mic-activation-seam`** (2026-07-21, #194–#202) HTTP and menubar stop share `AppState.complete_stop_recording` after a single stop claim; `_check_mic_activation` is detect/decide/act. Mic auto-record behavior unchanged. **#193 calendar auto-start remains the next product sprint** (not wired here).
 
+As of **`stop-drain-and-notes-silence`** (2026-07-29) a stop that merely runs slow is no longer reported as a failure: the drain budget is derived from pending work (`max(60s, chunk_duration × 6)`) instead of a flat 10s, and a stop-time error is delivered once rather than pinned to the dashboard for the app's lifetime. Re-transcribing an errored session clears it. Local AI notes no longer fail silently — a model that reasons past its budget is logged with model/budget/truncation and surfaced by name in the endpoint's error; long-form prompts run with thinking disabled. Verified on a real 66-minute session: `error` → `completed` after retranscribe, notes 0 chars → 3221 chars.
+
 As of **`append-notes-adapters-calendar-thin`** (2026-07-13, #174–#177) server-side atomic `append-notes` closes the concurrent Enhance race; `webhook` + `custom-script` knowledge adapters ship behind `local-markdown` default; a thin home **Up next** row reads Calendar via `GET /api/calendar/upcoming` with one-tap Record pre-titling. **Product call (H3):** validate the spike on a real Mac before scheduling a full calendar auto-start sprint — see decision note under #64 below.
 
 ---
@@ -383,11 +385,28 @@ HOLD on single-writer stop; REDUCE on `_check_mic_activation`.
 
 ---
 
+### Stop-drain budget + silent-notes fix  ·  _2026-07-29_
+
+HOLD. Field-reported: a session stuck at `Status: error` with a permanent "Recording did not stop cleanly" banner, and AI notes that produced nothing without logging anything.
+
+- [x] **Drain budget from pending work.** `_process_join_timeout()` = `max(60s, chunk_duration × 6)`; the progress-polling variant was rejected in review — segments only land when a whole chunk finishes decoding, so an in-flight chunk is indistinguishable from a deadlock while it runs.
+- [x] **Stop error delivered once.** `consume_error()`; `/api/status` pops it only for a finished session; banner dismissible + auto-clearing; retranscribe clears both the DB row and the pending in-memory error.
+- [x] **Local generation fails loudly.** Thinking disabled for long-form prompts; unusable output logged with model/budget/truncation; endpoint names the model.
+- [x] **Tests.** Drain budget scaling, slow-flush finalization, one-shot error (session + server), retranscribe clears, truncation logged.
+
+**Done when:** ship gate green. Smoke: T1/T2/T4/T5 verified live on a real 66-minute session; T3 (banner dismissal) is a browser eyeball.
+
+**Deferred (with triggers):**
+- **Leaked inference worker on quit.** _Confirmed live during this smoke:_ quitting left the 10.7 GB mlx-lm worker orphaned under PID 1. _Trigger:_ next sprint touching app quit/lifecycle — needs an atexit/quit shutdown of the persistent `ProcessPoolExecutor`.
+- **Calendar auto-start (#193).** _Trigger:_ next product sprint / discover pick.
+
+---
+
 ## Backlog (P2 — ride along opportunistically)
 
 Not a milestone of its own; pull these in when adjacent work makes them cheap.
 
-**Still open:** MLX ndarray resample parity; extended `schema_version` migration runner; denormalized `segment_count`; batched segment writes; config hot-reload coordination; `structlog` beyond current observability; complete handler return types / typed response models; narrow remaining broad `except Exception`; streaming summaries for long transcripts; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target; bash install single-sourcing into Python (contract is explicit in `install_paths.py`); **calendar auto-start (#193)** — next-sprint candidate after H3.
+**Still open:** one-shot stop-error delivery lives on `TranscriptionSession.consume_error()` — **trigger:** move the "already surfaced" flag to `AppState`/`_get_status` the moment a second consumer of `session.error` appears (websocket push, menubar poll), since two consumers would race to consume the same one-shot error; MLX ndarray resample parity; extended `schema_version` migration runner; denormalized `segment_count`; batched segment writes; config hot-reload coordination; `structlog` beyond current observability; complete handler return types / typed response models; narrow remaining broad `except Exception`; streaming summaries for long transcripts; further `CaptureSupervisor` stderr-drainer split; Swift XCTest target; bash install single-sourcing into Python (contract is explicit in `install_paths.py`); **calendar auto-start (#193)** — next-sprint candidate after H3.
 
 **Landed in #105 / #174–#177 slices (reference only — not deferred):** persistence indexes (`idx_sessions_folder`, `idx_sessions_status`); config validate-temp-before-write; `mkstemp` config save; bounded `watch_folder` processed set; `TranscriptionError`; `mix_audio` length assert; Swift signal-handler cleanup via `shouldStop`; release-CI docs; install path contract + dirty-tree preflight documented; server-side atomic `append-notes`; `SEEK_STEP_SECONDS` SPA constant; `webhook` + `custom-script` knowledge adapters; thin calendar Up-next API + home UI.
 

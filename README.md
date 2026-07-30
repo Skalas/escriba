@@ -119,10 +119,16 @@ GEMINI_API_KEY=your-key
 ANTHROPIC_API_KEY=your-key
 ```
 
+Local models that support a reasoning mode run with it disabled for notes and summaries: on a
+long transcript the reasoning block eats the whole token budget and the model never reaches its
+answer. If a local model still returns nothing usable, the log says so (model, token budget, and
+whether it truncated mid-reasoning) and the dashboard names the model in the error.
+
 ### Re-transcribe
 
 Sessions with saved audio but failed transcripts (0 segments) can be re-processed:
-click **Re-transcribe** in the session detail view.
+click **Re-transcribe** in the session detail view. A session marked `error` — for example one
+whose recording did not stop cleanly — returns to `completed` once its transcript is rebuilt.
 
 ### Configuration
 
