@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import threading
+import time
 import wave
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +13,8 @@ import pytest
 
 from escriba.app.database import Database
 from escriba.app.session import (
+    PROCESS_JOIN_CHUNK_FACTOR,
+    PROCESS_JOIN_MIN_TIMEOUT_S,
     TranscriptionSession,
     _summary_to_markdown,
 )
@@ -592,7 +596,8 @@ def test_t2_slow_process_thread_join_skips_flush_and_close(
 ) -> None:
     """T2: if the process thread is still alive, do not flush/close concurrently."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    monkeypatch.setattr("escriba.app.session.PROCESS_JOIN_TIMEOUT_S", 0.01)
+    monkeypatch.setattr("escriba.app.session.PROCESS_JOIN_MIN_TIMEOUT_S", 0.01)
+    monkeypatch.setattr("escriba.app.session.PROCESS_JOIN_CHUNK_FACTOR", 0)
     db = Database(tmp_path / "t2.db")
     try:
         session = _make_active_session(minimal_config, db)
@@ -669,5 +674,87 @@ def test_t3_finished_title_thread_allows_refine(
             session.stop()
 
         refine.assert_called_once()
+    finally:
+        db.close()
+
+
+def test_slow_final_flush_is_waited_out_and_finalized(
+    minimal_config: AppConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A final flush slower than one chunk still gets its flush and WAV close.
+
+    The regression: a flat 10s join called a merely-slow drain "stuck" and
+    skipped finalization. This thread outlives a chunk duration but finishes
+    inside the drain budget, so the session must complete cleanly.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    db = Database(tmp_path / "drain.db")
+    try:
+        session = _make_active_session(minimal_config, db)
+        drained = threading.Event()
+
+        def slow_drain() -> None:
+            time.sleep(minimal_config.streaming.chunk_duration * 2)
+            drained.set()
+
+        thread = threading.Thread(target=slow_drain, daemon=True)
+        thread.start()
+        session._process_thread = thread
+
+        with patch.object(session, "_flush_buffer") as flush, patch.object(
+            session, "_close_audio_file"
+        ) as close, patch.object(
+            TranscriptionSession, "_schedule_knowledge_store_export"
+        ), patch.object(TranscriptionSession, "_refine_title"), patch.object(
+            session, "_export"
+        ):
+            session.stop()
+
+        assert drained.is_set()
+        flush.assert_called_once()
+        close.assert_called_once()
+        assert session.error is None
+        assert session.db_session_id is not None
+        row = db.get_session(session.db_session_id)
+        assert row is not None and row["status"] == "completed"
+    finally:
+        db.close()
+
+
+def test_drain_budget_scales_with_chunk_duration(
+    minimal_config: AppConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The drain budget tracks how much audio can still be pending at stop."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    db = Database(tmp_path / "budget.db")
+    try:
+        session = TranscriptionSession(minimal_config, database=db)
+
+        # Sub-second chunks: the floor governs, so the drain is never starved.
+        assert session._process_join_timeout() == PROCESS_JOIN_MIN_TIMEOUT_S
+
+        long_chunks = replace(
+            minimal_config,
+            streaming=replace(minimal_config.streaming, chunk_duration=60),
+        )
+        long_session = TranscriptionSession(long_chunks, database=db)
+        assert long_session._process_join_timeout() == 60 * PROCESS_JOIN_CHUNK_FACTOR
+    finally:
+        db.close()
+
+
+def test_stop_error_is_reported_once(
+    minimal_config: AppConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop-time error is news once, not on every later status poll."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    db = Database(tmp_path / "consume.db")
+    try:
+        session = _make_active_session(minimal_config, db)
+        session.error = "Recording did not stop cleanly"
+
+        assert session.consume_error() == "Recording did not stop cleanly"
+        assert session.consume_error() is None
+        assert session.get_status()["error"] is None
     finally:
         db.close()

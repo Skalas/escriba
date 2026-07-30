@@ -18,10 +18,17 @@ logger = logging.getLogger(__name__)
 AUDIO_BUFFER_CAP_FACTOR = 2
 AUDIO_BUFFER_OVERFLOW_LOG_INTERVAL_S = 5.0
 
-# How long stop() waits for the audio-processing thread to finish before it
-# gives up. If the thread is still alive after this, the main thread must NOT
-# touch the transcriber or WAV writer concurrently (see stop()).
-PROCESS_JOIN_TIMEOUT_S = 10.0
+# How long stop() waits for the audio-processing thread. Its remaining work is
+# bounded: at most the buffer cap plus a flush already in flight, so roughly
+# three chunks of audio to transcribe. A loaded machine transcribes at about
+# half of realtime, hence twice that in wall-clock. A single deadline (rather
+# than polling for progress) is the only honest measure here — segments land
+# only when a whole chunk finishes decoding, so an in-flight chunk is
+# indistinguishable from a deadlock while it runs. If the thread is still alive
+# when the wait ends, the main thread must NOT touch the transcriber or WAV
+# writer concurrently (see stop()).
+PROCESS_JOIN_CHUNK_FACTOR = 6
+PROCESS_JOIN_MIN_TIMEOUT_S = 60.0
 # How long stop() waits for an in-flight preliminary title generation before
 # refining. Two concurrent mlx-lm generations crash Metal, so if the thread is
 # still alive after this, the refine pass is skipped.
@@ -257,17 +264,9 @@ class TranscriptionSession:
         # writer concurrently — that races on shared state and can corrupt the
         # recording. We still finalize the DB row so the session isn't left
         # ACTIVE forever.
-        process_thread_finished = True
-        if self._process_thread:
-            self._process_thread.join(timeout=PROCESS_JOIN_TIMEOUT_S)
-            process_thread_finished = not self._process_thread.is_alive()
-            if not process_thread_finished:
-                logger.error(
-                    "Audio-processing thread still alive after %.0fs; skipping final "
-                    "flush and WAV close to avoid concurrent access",
-                    PROCESS_JOIN_TIMEOUT_S,
-                )
-                self.error = self.error or "Recording did not stop cleanly"
+        process_thread_finished = self._join_process_thread()
+        if not process_thread_finished:
+            self.error = self.error or "Recording did not stop cleanly"
 
         if process_thread_finished:
             self._run_cleanup_step("final buffer flush", self._flush_buffer)
@@ -311,6 +310,41 @@ class TranscriptionSession:
             )
 
         logger.info("Session stopped: %s", self.session_id)
+
+    def _process_join_timeout(self) -> float:
+        """How long stop() gives the audio-processing thread to drain.
+
+        Scaled to the configured chunk duration, because that is what sets how
+        much audio can still be waiting to be transcribed when stop() is called.
+        """
+        chunk_duration = self.config.streaming.chunk_duration
+        return max(
+            PROCESS_JOIN_MIN_TIMEOUT_S, chunk_duration * PROCESS_JOIN_CHUNK_FACTOR
+        )
+
+    def _join_process_thread(self) -> bool:
+        """Wait out the audio-processing thread's final flush.
+
+        Draining the tail of a long recording is slow, not stuck: the final
+        flush transcribes the remaining buffer, which on a backlogged
+        transcriber takes many times the chunk duration. Returns False only if
+        the thread outlives that whole budget, which stop() reads as stuck.
+        """
+        thread = self._process_thread
+        if thread is None:
+            return True
+
+        timeout = self._process_join_timeout()
+        thread.join(timeout=timeout)
+        if not thread.is_alive():
+            return True
+
+        logger.error(
+            "Audio-processing thread still alive after %.0fs; skipping final "
+            "flush and WAV close to avoid concurrent access",
+            timeout,
+        )
+        return False
 
     def _close_mic_stream_safely(self, timeout: float = 3.0):
         """Stop/close the mic stream off-thread with a timeout.
@@ -630,6 +664,16 @@ class TranscriptionSession:
         with self.transcriber.lock:
             return list(self.transcriber.segments)
 
+    def consume_error(self) -> str | None:
+        """Return the pending error once, then forget it.
+
+        A stop-time failure is news exactly once. The session object outlives
+        the recording, so a sticky ``error`` would make every later status poll
+        re-raise the same banner forever.
+        """
+        error, self.error = self.error, None
+        return error
+
     def get_status(self) -> dict[str, Any]:
         elapsed = ""
         if self.start_time:
@@ -923,7 +967,11 @@ def _generate_custom_notes(
                 logger.error("No local model available for notes")
                 return None
 
-            return _call_llm_local(full_prompt, model_id, max_tokens=4096)
+            # Thinking off: on a long transcript the reasoning block eats the
+            # whole token budget and the model never reaches its answer.
+            return _call_llm_local(
+                full_prompt, model_id, max_tokens=4096, enable_thinking=False
+            )
         elif provider == "gemini":
             resolved_model = model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
             return _call_llm_gemini(full_prompt, resolved_model)
