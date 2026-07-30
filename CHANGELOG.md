@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-29
+
+Calendar picker, knowledge adapters, atomic note appends, the shared recording-stop seam, and a stop/notes reliability pass.
+
 ### Changed
 - **Recording start/stop seam.** HTTP and menubar share `AppState.complete_stop_recording` after a single stop claim; stop is rejected while start is in progress; quit uses the same claim path. Mic auto-record poll is detect/decide/act (`MicPollAction`) with unchanged prompt/auto/cooldown behavior. Calendar auto-start (#193) still not wired.
 

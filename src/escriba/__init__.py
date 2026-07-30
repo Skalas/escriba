@@ -5,4 +5,4 @@ __all__ = ["__version__"]
 try:
     __version__ = version("escriba")
 except PackageNotFoundError:  # running from source without an installed dist
-    __version__ = "1.3.1"
+    __version__ = "1.4.0"
