@@ -944,7 +944,7 @@
   #error-banner {
     background: var(--badge-error); color: var(--danger); padding: 12px 16px;
     border-radius: 10px; margin-bottom: 16px; font-size: 14px; display: none;
-    border-left: 3px solid var(--danger);
+    border-left: 3px solid var(--danger); cursor: pointer;
   }
   #error-banner.visible { display: block; animation: slideDown 200ms ease; }
 
@@ -1526,7 +1526,7 @@
     </button>
     <button class="btn-icon" onclick="showSettingsView()" title="Settings" aria-label="Settings"><svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
   </div>
-  <div id="error-banner"></div>
+  <div id="error-banner" role="alert" tabindex="0" aria-label="Dismiss error" onclick="hideError()" onkeydown="onErrorBannerKeydown(event)"></div>
 
   <!-- Live view -->
   <div id="live-view" style="display:none;">
@@ -4875,11 +4875,28 @@ function escJsAttr(s) {
     .replace(/>/g, '&gt;');
 }
 
+// Errors are transient news: dismissible by click and auto-cleared, so a
+// one-off failure can never leave the banner pinned across the whole session.
+const ERROR_BANNER_TIMEOUT_MS = 15000;
+let _errorBannerTimer = null;
+
 function showError(msg) {
   const b = document.getElementById('error-banner');
   b.textContent = msg; b.classList.add('visible');
+  b.title = 'Dismiss';
+  clearTimeout(_errorBannerTimer);
+  _errorBannerTimer = setTimeout(hideError, ERROR_BANNER_TIMEOUT_MS);
 }
-function hideError() { document.getElementById('error-banner').classList.remove('visible'); }
+function onErrorBannerKeydown(event) {
+  if (!['Enter', ' ', 'Escape'].includes(event.key)) return;
+  event.preventDefault();
+  hideError();
+}
+function hideError() {
+  clearTimeout(_errorBannerTimer);
+  _errorBannerTimer = null;
+  document.getElementById('error-banner').classList.remove('visible');
+}
 
 // --- Re-transcribe ---
 async function splitSessionHere(sessionId, segmentId, timestampLabel) {
