@@ -849,7 +849,10 @@ def _generate_summary_local(
 
     try:
         response_text = _call_llm_local(
-            _build_summary_prompt(transcript), model_id, max_tokens=4096
+            _build_summary_prompt(transcript),
+            model_id,
+            max_tokens=4096,
+            enable_thinking=False,
         )
     except TimeoutError as e:
         logger.error("Local summary timed out: %s", e)
@@ -873,8 +876,23 @@ def _generate_summary_local(
         return None
 
 
+def _is_thinking_truncated(result: str | None) -> bool:
+    """True when a generation reasoned but never reached its answer.
+
+    Local generation results are tri-state: text (usable answer), ``""`` (the
+    model spent its whole token budget in the thinking channel — see
+    ``_extract_response``), and ``None`` (no output at all). Only the middle
+    case is worth retrying with thinking disabled.
+    """
+    return result == ""
+
+
 def _extract_response(text: str) -> str:
-    """Extract the response portion from model output, stripping thinking blocks."""
+    """Extract the response portion from model output, stripping thinking blocks.
+
+    Returns ``""`` when the model emitted only a thinking block; callers read
+    that as truncated-before-answering (see ``_is_thinking_truncated``).
+    """
     import re
 
     # Gemma 4 outputs: <|channel>thought\n...<|channel>response\n...
@@ -975,7 +993,22 @@ def _call_llm_local(
     from escriba.app.observability import timed
 
     with timed("llm.local"):
-        return _local_inference_process.run(prompt, model_id, max_tokens, enable_thinking)
+        result = _local_inference_process.run(
+            prompt, model_id, max_tokens, enable_thinking
+        )
+
+    # An empty result means the model reasoned past its budget without ever
+    # answering (see _is_thinking_truncated). Callers disable thinking to avoid
+    # that, but say so out loud rather than returning nothing silently.
+    if not result:
+        logger.error(
+            "Local model %s returned no usable text (max_tokens=%d, thinking=%s%s)",
+            model_id,
+            max_tokens,
+            enable_thinking,
+            ", truncated mid-reasoning" if _is_thinking_truncated(result) else "",
+        )
+    return result
 
 
 def generate_session_title(
