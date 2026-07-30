@@ -18,6 +18,7 @@ from escriba.app.server import (
     AppState,
     start_server,
 )
+from escriba.app.session import TranscriptionSession
 from escriba.app.updates import UpdateCheckResult
 from escriba.config import AppConfig
 from tests.conftest import make_handler as _make_handler
@@ -1021,3 +1022,98 @@ def test_calendar_calendars_rejects_foreign_host(live_server) -> None:
     assert status == 421
     assert body["ok"] is False
 
+
+
+def test_stopped_session_error_is_served_once(app_state: AppState) -> None:
+    """A stop-time error must not pin the dashboard banner open forever."""
+    handler = _make_handler(app_state)
+
+    stopped = MagicMock()
+    stopped.is_active = False
+    stopped.error = "Recording did not stop cleanly"
+    stopped.get_status.return_value = {
+        "is_active": False,
+        "session_id": "s1",
+        "elapsed": "00:01:00",
+        "segments_count": 3,
+        "error": "Recording did not stop cleanly",
+    }
+
+    def consume():
+        error, stopped.error = stopped.error, None
+        stopped.get_status.return_value = {**stopped.get_status.return_value, "error": None}
+        return error
+
+    stopped.consume_error.side_effect = consume
+    app_state.session = stopped
+
+    first = handler._get_status()
+    second = handler._get_status()
+
+    assert first["error"] == "Recording did not stop cleanly"
+    assert second["error"] is None
+
+
+def test_active_session_error_is_not_consumed(app_state: AppState) -> None:
+    """An in-flight session's error stays put — it is still current."""
+    handler = _make_handler(app_state)
+
+    active = MagicMock()
+    active.is_active = True
+    active.get_status.return_value = {"is_active": True, "error": "mic died"}
+    app_state.session = active
+
+    assert handler._get_status()["error"] == "mic died"
+    active.consume_error.assert_not_called()
+
+
+def test_retranscribe_clears_errored_status(app_state: AppState, tmp_path: Path) -> None:
+    """A rebuilt transcript supersedes the stop-time failure."""
+    handler = _make_handler(app_state)
+    db = app_state.db
+    assert db is not None
+    session_id = db.create_session(name="s", model="tiny", language="es", backend="mlx-whisper")
+    db.stop_session(session_id, status="error")
+    audio = tmp_path / "s.wav"
+    audio.write_bytes(b"RIFF")
+    db.update_audio_path(session_id, str(audio))
+
+    with patch(
+        "escriba.app.session.retranscribe_from_wav",
+        return_value=[{"start_time": 0.0, "end_time": 1.0, "text": "hola"}],
+    ):
+        body, status = handler._retranscribe_session(session_id)
+
+    assert status == 200 and body["ok"] is True
+    row = db.get_session(session_id)
+    assert row is not None and row["status"] == "completed"
+
+
+def test_retranscribe_discards_stale_session_error(
+    app_state: AppState, tmp_path: Path
+) -> None:
+    """The rebuilt transcript also clears the banner the status poll would show."""
+    handler = _make_handler(app_state)
+    db = app_state.db
+    assert db is not None
+    session_id = db.create_session(name="s", model="tiny", language="es", backend="mlx-whisper")
+    db.stop_session(session_id, status="error")
+    audio = tmp_path / "s.wav"
+    audio.write_bytes(b"RIFF")
+    db.update_audio_path(session_id, str(audio))
+
+    stopped = TranscriptionSession(app_state.config, database=db)
+    stopped.db_session_id = session_id
+    stopped.is_active = False
+    stopped.error = "Recording did not stop cleanly"
+    app_state.session = stopped
+
+    with patch(
+        "escriba.app.session.retranscribe_from_wav",
+        return_value=[{"start_time": 0.0, "end_time": 1.0, "text": "hola"}],
+    ):
+        _body, status = handler._retranscribe_session(session_id)
+
+    assert status == 200
+    assert stopped.error is None
+    assert handler._get_status()["error"] is None
