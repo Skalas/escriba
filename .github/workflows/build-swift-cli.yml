@@ -19,6 +19,11 @@ jobs:
           cd swift-audio-capture
           swift build -c release
 
+      - name: Run watchdog verdict tests
+        run: |
+          cd swift-audio-capture
+          ./.build/release/watchdog-tests
+
       - name: Package binary
         run: |
           cd swift-audio-capture/.build/release
