@@ -35,6 +35,11 @@ _ORPHAN_WATCHDOG_POLL_SECONDS = 5.0
 _ORPHAN_REAP_GRACE_SECONDS = 5.0
 # Bounded wait for the inference lock during shutdown; see _LocalInferenceProcess.
 _SHUTDOWN_LOCK_TIMEOUT = 2.0
+# Join budget while quitting; kept small because this blocks the AppKit main thread.
+_QUIT_TERM_JOIN_TIMEOUT = 1.0
+_QUIT_KILL_JOIN_TIMEOUT = 0.5
+# Retries for snapshotting the pool's worker map while it may be mutating.
+_WORKER_SNAPSHOT_ATTEMPTS = 3
 # Command-line markers identifying a ProcessPoolExecutor worker or its tracker.
 _ORPHAN_CMD_MARKERS = ("multiprocessing.spawn", "multiprocessing.resource_tracker")
 
@@ -449,7 +454,15 @@ class _LocalInferenceProcess:
             executor = self._executor
             if executor is None:
                 return
-            self._terminate_workers(executor)
+            # Short joins: this runs on the AppKit main thread during quit, and
+            # the default 5s + 2s budget is a visible beachball. The worker has
+            # default SIGTERM disposition and needs far less; anything that does
+            # outlive it is caught by its own parent-death watchdog.
+            self._terminate_workers(
+                executor,
+                term_join_timeout=_QUIT_TERM_JOIN_TIMEOUT,
+                kill_join_timeout=_QUIT_KILL_JOIN_TIMEOUT,
+            )
             try:
                 executor.shutdown(wait=False, cancel_futures=True)
             except Exception:
@@ -474,6 +487,9 @@ class _LocalInferenceProcess:
     @staticmethod
     def _terminate_workers(
         executor: concurrent.futures.ProcessPoolExecutor,
+        *,
+        term_join_timeout: float = 5.0,
+        kill_join_timeout: float = 2.0,
     ) -> None:
         """Forcibly kill the pool's worker processes.
 
@@ -487,15 +503,19 @@ class _LocalInferenceProcess:
         if not procs:
             return
         # shutdown() may call this without the lock, concurrently with the
-        # pool's own manager thread mutating _processes.
-        try:
-            workers = list(procs.values())
-        except RuntimeError:
+        # pool's own manager thread mutating _processes. dict() copies in a
+        # single operation rather than iterating, so a mutation has a much
+        # smaller window to invalidate it.
+        workers = None
+        for _attempt in range(_WORKER_SNAPSHOT_ATTEMPTS):
             try:
-                workers = list(procs.values())
+                workers = list(dict(procs).values())
+                break
             except RuntimeError:
-                logger.warning("Could not snapshot inference workers to terminate")
-                return
+                continue
+        if workers is None:
+            logger.warning("Could not snapshot inference workers to terminate")
+            return
         for proc in workers:
             try:
                 if proc.is_alive():
@@ -504,10 +524,10 @@ class _LocalInferenceProcess:
                 logger.warning("Failed to terminate inference worker", exc_info=True)
         for proc in workers:
             try:
-                proc.join(timeout=5)
+                proc.join(timeout=term_join_timeout)
                 if proc.is_alive():
                     proc.kill()
-                    proc.join(timeout=2)
+                    proc.join(timeout=kill_join_timeout)
             except Exception:
                 logger.warning("Failed to kill inference worker", exc_info=True)
 
@@ -538,8 +558,16 @@ class _LocalInferenceProcess:
                         enable_thinking,
                     )
                 except RuntimeError as exc:
-                    logger.info("Local inference unavailable: %s", exc)
-                    return None
+                    # BrokenProcessPool subclasses RuntimeError. Returning here
+                    # would leave the dead pool installed and every later
+                    # summary silently failing for the life of the app, so only
+                    # a real shutdown gives up; anything else rebuilds.
+                    if self._shutting_down:
+                        logger.info("Local inference unavailable: %s", exc)
+                        return None
+                    logger.warning("Local inference pool unusable: %s", exc)
+                    self._reset_executor()
+                    continue
                 try:
                     return future.result(timeout=parent_timeout)
                 except TimeoutError as exc:
@@ -587,7 +615,17 @@ def shutdown_local_inference() -> None:
         logger.warning("Local inference shutdown failed", exc_info=True)
 
 
-atexit.register(shutdown_local_inference)
+# concurrent.futures registers its own _python_exit via threading._register_atexit,
+# and CPython runs those (joining the pool, which blocks on the in-flight
+# generation for up to 900s) *before* plain atexit callbacks -- so a plain
+# atexit hook would fire only after the wait it exists to prevent. Registering
+# on the same list after that import puts us ahead of it in LIFO order.
+try:
+    threading._register_atexit(shutdown_local_inference)
+    _registered_ahead_of_pool_exit = True
+except AttributeError:  # pragma: no cover - CPython internal, present since 3.9
+    atexit.register(shutdown_local_inference)
+    _registered_ahead_of_pool_exit = False
 
 
 def _pid_alive(pid: int) -> bool:

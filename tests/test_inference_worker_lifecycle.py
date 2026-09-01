@@ -124,6 +124,30 @@ def test_worker_init_arms_the_watchdog_with_the_given_parent(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+class _FakeProc:
+    """Stands in for a pool worker process, recording how it was reaped."""
+
+    def __init__(self, alive_after_terminate: bool = False):
+        self.terminated = False
+        self.killed = False
+        self.join_timeouts: list[float] = []
+        self._alive_after_terminate = alive_after_terminate
+
+    def is_alive(self):
+        if not self.terminated:
+            return True
+        return self._alive_after_terminate and not self.killed
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+    def join(self, timeout=None):
+        self.join_timeouts.append(timeout)
+
+
 def test_shutdown_kills_the_running_worker():
     """shutdown() must reach _terminate_workers, not just cancel pending futures."""
     proc = llm_summary._LocalInferenceProcess()
@@ -135,7 +159,7 @@ def test_shutdown_kills_the_running_worker():
 
     monkeyed = _FakeExecutor()
     proc._executor = monkeyed
-    proc._terminate_workers = lambda executor: killed.append(executor)
+    proc._terminate_workers = lambda executor, **_kw: killed.append(executor)
 
     proc.shutdown()
 
@@ -257,19 +281,23 @@ def test_shutdown_does_not_block_on_an_in_flight_inference():
     `run` keeps `_lock` across a future wait of up to ~16 minutes. If shutdown
     blocked on it, quitting mid-summary would hang the app — and a user who then
     force-quits strands exactly the worker this is meant to reap.
+
+    The join budget is measured for real here, not stubbed: it runs on the
+    AppKit main thread and is just as capable of beachballing quit.
     """
     import threading
     import time
 
     proc = llm_summary._LocalInferenceProcess()
-    killed = []
+    worker = _FakeProc(alive_after_terminate=True)
 
     class _FakeExecutor:
+        _processes = {1: worker}
+
         def shutdown(self, **_kwargs):
             pass
 
     proc._executor = _FakeExecutor()
-    proc._terminate_workers = lambda executor: killed.append(executor)
 
     holder_has_lock = threading.Event()
     release = threading.Event()
@@ -277,7 +305,7 @@ def test_shutdown_does_not_block_on_an_in_flight_inference():
     def _hold_lock():
         with proc._lock:
             holder_has_lock.set()
-            release.wait(timeout=10)
+            release.wait(timeout=30)
 
     holder = threading.Thread(target=_hold_lock, daemon=True)
     holder.start()
@@ -290,9 +318,13 @@ def test_shutdown_does_not_block_on_an_in_flight_inference():
     release.set()
     holder.join(timeout=5)
 
+    # 0.2s lock wait + the quit join budget, nowhere near the 5s+2s default.
     assert elapsed < 2.0, f"shutdown blocked for {elapsed:.1f}s"
-    # The worker is killed regardless; the in-flight run resets the broken pool.
-    assert len(killed) == 1
+    assert worker.terminated and worker.killed
+    assert worker.join_timeouts == [
+        llm_summary._QUIT_TERM_JOIN_TIMEOUT,
+        llm_summary._QUIT_KILL_JOIN_TIMEOUT,
+    ]
 
 
 def test_shutdown_prevents_a_new_worker_from_being_spawned(monkeypatch):
@@ -342,16 +374,115 @@ def test_sweep_skipped_outside_a_venv(monkeypatch):
     assert llm_summary._find_orphaned_worker_pids() == []
 
 
-def test_terminate_workers_survives_a_concurrent_worker_map_mutation(caplog):
-    """shutdown() snapshots _processes without the lock, racing the pool manager."""
+class _MutatingMap:
+    """A worker map that raises the first `failures` times it is copied."""
 
-    class _ExplodingMap(dict):
-        def values(self):
+    def __init__(self, procs, failures):
+        self._procs = procs
+        self._remaining = failures
+
+    def __bool__(self):
+        return bool(self._procs)
+
+    def keys(self):
+        if self._remaining > 0:
+            self._remaining -= 1
             raise RuntimeError("dictionary changed size during iteration")
+        return self._procs.keys()
+
+    def __getitem__(self, key):
+        return self._procs[key]
+
+
+def test_terminate_workers_retries_a_racing_worker_map_snapshot():
+    """shutdown() snapshots _processes without the lock, racing the pool manager."""
+    proc = _FakeProc()
 
     class _FakeExecutor:
-        _processes = _ExplodingMap({1: object()})
+        _processes = _MutatingMap({1: proc}, failures=2)
 
-    # Must not raise; a failed snapshot is logged, not swallowed silently.
+    llm_summary._LocalInferenceProcess._terminate_workers(_FakeExecutor())
+
+    assert proc.terminated, "a transient snapshot race must not skip the reap"
+
+
+def test_terminate_workers_reports_an_unreadable_worker_map(caplog):
+    class _FakeExecutor:
+        _processes = _MutatingMap({1: _FakeProc()}, failures=99)
+
+    # Must not raise; a failed reap is logged loudly, not swallowed.
     llm_summary._LocalInferenceProcess._terminate_workers(_FakeExecutor())
     assert "Could not snapshot inference workers" in caplog.text
+
+
+def test_broken_pool_is_rebuilt_rather_than_silently_disabling_inference(monkeypatch):
+    """BrokenProcessPool subclasses RuntimeError — it must not be mistaken for shutdown.
+
+    A worker that dies while idle (MLX abort, or jetsam picking the largest RSS
+    process) breaks the pool permanently. Swallowing that would leave every
+    later AI-notes request silently returning None for the life of the app.
+    """
+    from concurrent.futures.process import BrokenProcessPool
+
+    proc = llm_summary._LocalInferenceProcess()
+    pools = []
+
+    class _Pool:
+        def __init__(self, **_kwargs):
+            self.submits = 0
+            pools.append(self)
+
+        def submit(self, *_a, **_kw):
+            self.submits += 1
+            # The first pool is broken; a rebuilt one works.
+            if len(pools) == 1:
+                raise BrokenProcessPool("A process in the pool was terminated abruptly")
+            future = concurrent_future()
+            future.set_result("notes")
+            return future
+
+        def shutdown(self, **_kwargs):
+            pass
+
+    def concurrent_future():
+        import concurrent.futures
+
+        return concurrent.futures.Future()
+
+    monkeypatch.setattr(llm_summary.concurrent.futures, "ProcessPoolExecutor", _Pool)
+
+    assert proc.run("p", "m", 10, False) == "notes"
+    assert len(pools) == 2, "the broken pool must be replaced, not reused"
+
+
+def test_shutdown_still_declines_rather_than_rebuilding(monkeypatch):
+    """The same RuntimeError path must give up — not retry — once shutting down."""
+    proc = llm_summary._LocalInferenceProcess()
+    pools = []
+
+    class _Pool:
+        def __init__(self, **_kwargs):
+            pools.append(self)
+
+        def shutdown(self, **_kwargs):
+            pass
+
+    monkeypatch.setattr(llm_summary.concurrent.futures, "ProcessPoolExecutor", _Pool)
+    proc.shutdown()
+
+    assert proc.run("p", "m", 10, False) is None
+    assert pools == []
+
+
+def test_shutdown_runs_before_the_pools_own_exit_hook():
+    """A plain atexit hook fires only after CPython has already joined the pool.
+
+    concurrent.futures registers _python_exit on threading's list, which runs
+    during Py_FinalizeEx *before* atexit callbacks — and it blocks on the
+    in-flight generation for up to 900s. Ours has to be on that same list, and
+    registered after that import so LIFO ordering puts it first.
+    """
+    import threading
+
+    assert hasattr(threading, "_register_atexit"), "CPython internal moved"
+    assert llm_summary._registered_ahead_of_pool_exit is True

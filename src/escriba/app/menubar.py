@@ -509,13 +509,18 @@ def _install_inference_shutdown_signals() -> None:
         return
 
     def _handler(signum, frame, _previous=previous):
-        shutdown_local_inference()
         if callable(_previous):
+            # Delegate without shutting down: a pre-existing handler may log and
+            # keep running rather than exit, and the shutdown flag is never
+            # cleared -- latching it on a survivable signal would leave local
+            # inference refusing every later request until restart.
             _previous(signum, frame)
             return
         # SIG_DFL, SIG_IGN, or None (a handler installed from non-Python code,
-        # which PyObjC does). Falling through without re-raising would consume
-        # the signal and leave the app running.
+        # which PyObjC does). This process is going away, so reap first, then
+        # re-raise: falling through without it would consume the signal and
+        # leave the app running.
+        shutdown_local_inference()
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 
