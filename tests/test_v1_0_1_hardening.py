@@ -191,8 +191,14 @@ def test_t5_start_failure_cleans_up_and_marks_db(tmp_path: Path) -> None:
     assert row["status"] == "error"
 
 
-def test_t5_mic_failure_after_system_start_stops_capture(tmp_path: Path) -> None:
-    """T5 (#89): system capture is stopped if mic capture fails in 'both' mode."""
+def test_mic_failure_in_both_mode_keeps_recording_system_audio(tmp_path: Path) -> None:
+    """A mic failure in 'both' mode degrades to system-only instead of aborting.
+
+    Supersedes the original T5 (#89) contract: #89 was about never leaking a
+    started system capture, which the mic-only path below still covers. Killing
+    a 'both' session over the mic loses the call the user meant to record —
+    a Bluetooth headset held by the call app is the common way to get here.
+    """
     from escriba.app.database import Database
     from escriba.app.session import TranscriptionSession
     from escriba.config import AppConfig
@@ -220,8 +226,43 @@ def test_t5_mic_failure_after_system_start_stops_capture(tmp_path: Path) -> None
     ):
         session.start()
 
+    try:
+        assert session.is_active is True
+        assert session.error is None
+        fake_capture.stop.assert_not_called()
+        assert "system audio only" in (session.warning or "")
+        assert session.consume_warning() is not None
+        assert session.consume_warning() is None
+    finally:
+        session.stop()
+
+
+def test_mic_failure_in_mic_mode_still_aborts_and_stops_capture(tmp_path: Path) -> None:
+    """T5 (#89): with no other source, a mic failure errors the session cleanly."""
+    from escriba.app.database import Database
+    from escriba.app.session import TranscriptionSession
+    from escriba.config import AppConfig
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        "[audio]\naudio_source = \"mic\"\nsample_rate = 16000\nchannels = 1\n"
+        "[streaming]\nbackend = \"mlx-whisper\"\nmodel_size = \"tiny\"\nchunk_duration = 0.5\n"
+        "[auto_name]\nenabled = false\n",
+        encoding="utf-8",
+    )
+    config = AppConfig.load(cfg_path)
+    db = Database(tmp_path / "s.db")
+    session = TranscriptionSession(config, database=db)
+    session.output_dir = tmp_path / "out"
+
+    with patch("escriba.app.session._build_transcriber", return_value=MagicMock()), patch.object(
+        TranscriptionSession, "_start_mic_capture", side_effect=RuntimeError("no mic")
+    ):
+        session.start()
+
     assert session.is_active is False
-    fake_capture.stop.assert_called_once()
+    assert session.error is not None
+    assert session._audio_writer is None
     assert session.db_session_id is not None
     row = db.get_session(session.db_session_id)
     assert row is not None
@@ -235,6 +276,9 @@ def _bare_capture() -> object:
     cap = ScreenCaptureAudioCapture.__new__(ScreenCaptureAudioCapture)
     cap.process = None
     cap.read_thread = None
+    cap._stderr_thread = None
+    cap.on_tap_dead = None
+    cap._callbacks_disabled = False
     cap.is_capturing = False
     cap._lock = threading.Lock()
     cap.stop_event = threading.Event()
