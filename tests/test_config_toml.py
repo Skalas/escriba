@@ -288,6 +288,26 @@ def test_invalid_calendar_calendars_shape_rejected(tmp_path: Path) -> None:
         AppConfig.load(cfg_path)
 
 
+def test_keep_bluetooth_playback_defaults_true(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text("[audio]\naudio_source = \"both\"\n", encoding="utf-8")
+    cfg = AppConfig.load(cfg_path)
+    assert cfg.audio.keep_bluetooth_playback is True
+
+
+def test_keep_bluetooth_playback_round_trip(tmp_path: Path) -> None:
+    from escriba.config import config_to_dict
+
+    cfg_path = tmp_path / "escriba.toml"
+    cfg_path.write_text(
+        "[audio]\nkeep_bluetooth_playback = false\n",
+        encoding="utf-8",
+    )
+    cfg = AppConfig.load(cfg_path)
+    assert cfg.audio.keep_bluetooth_playback is False
+    assert config_to_dict(cfg)["audio"]["keep_bluetooth_playback"] is False
+
+
 def test_invalid_calendar_calendars_element_type_rejected(tmp_path: Path) -> None:
     from escriba.config import AppConfig, ConfigValidationError
 

@@ -237,6 +237,7 @@ transcripts/
 .metate/session.json
 # metate issue ledger
 .metate/issues.json
+.metate/release.json
 # metate profile reconcile backups
 .metate/*.bak
 # codebase-memory Cursor rule is installed tooling (source: metate repo)

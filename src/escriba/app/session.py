@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import struct
 import threading
@@ -17,6 +18,29 @@ logger = logging.getLogger(__name__)
 # Cap live PCM buffer at this multiple of one transcription chunk.
 AUDIO_BUFFER_CAP_FACTOR = 2
 AUDIO_BUFFER_OVERFLOW_LOG_INTERVAL_S = 5.0
+# How long an unbroken run of effectively-silent audio from the system tap counts
+# as a broken capture. "Effectively silent" means peak amplitude below
+# SYSTEM_SIGNAL_PEAK_THRESHOLD_INT16, low enough to ignore thermal noise but high
+# enough to catch a dead tap.
+SYSTEM_SILENCE_WARN_SECONDS = 120.0
+# Cold variant: the tap has never produced signal in this session. Two quiet
+# minutes at the start of a recording is the normal case, not a fault — nobody
+# has played anything yet. Observed 2026-09-01: a session warned "nothing is
+# being recorded" 123s in, purely because playback had not started. The old
+# Swift design carried this warm/cold distinction as `sawSignal` and the
+# 2026-08-22 rewrite dropped it along with silence-triggered rebuild; the
+# distinction was the good half.
+SYSTEM_SILENCE_COLD_WARN_SECONDS = 300.0
+# Any per-chunk peak below this on the system tap is treated as silence for
+# degradation tracking. -60 dBFS ≈ 32 on int16 scale.
+SYSTEM_SIGNAL_PEAK_THRESHOLD_INT16: float = 32.0
+# A mic whose per-chunk RMS amplitude stays below this for an extended time is
+# almost certainly degraded. -45 dBFS ≈ 184 on int16 scale. RMS (not peak) is
+# used so a brief burst of loud noise inside a long quiet window does not falsely
+# clear the degraded flag — only sustained speech clears it.
+MIC_LOW_RMS_THRESHOLD_INT16: float = 184.0
+_MIC_THRESHOLD_DBFS: int = round(20 * math.log10(MIC_LOW_RMS_THRESHOLD_INT16 / 32767))
+MIC_LOW_RMS_WARN_SECONDS = 60.0
 
 # How long stop() waits for the audio-processing thread. Its remaining work is
 # bounded: at most the buffer cap plus a flush already in flight, so roughly
@@ -35,12 +59,31 @@ PROCESS_JOIN_MIN_TIMEOUT_S = 60.0
 TITLE_JOIN_TIMEOUT_S = 30.0
 
 
+# macOS names the built-in input after the machine model ("MacBook Pro
+# Microphone", "Mac Studio Microphone"), which is the only handle Core Audio
+# gives us to tell it apart from Continuity and USB inputs.
+_BUILT_IN_MIC_MARKERS = ("macbook", "imac", "mac mini", "mac studio", "mac pro", "built-in")
+
+
+def _is_built_in_mic(name: str) -> bool:
+    lowered = name.lower()
+    return any(marker in lowered for marker in _BUILT_IN_MIC_MARKERS)
+
+
 class _SessionStartAborted(Exception):
     """Raised internally to funnel every start() failure through cleanup.
 
     The human-facing reason is set on ``session.error`` before raising; this
     only steers control flow to ``_abort_start()``.
     """
+
+
+# B1: severity order for peek_warning_item. tap_dead is most urgent (audio stopped
+# entirely); direct/mic_fallback are lowest (set-once informational at start()).
+# Unknown keys fall back to insertion order via the loop-exit path in peek_warning_item.
+_WARNING_PRIORITY = (
+    "tap_dead", "system", "mic", "mic_shared_output", "mic_fallback", "direct",
+)
 
 
 class TranscriptionSession:
@@ -54,6 +97,7 @@ class TranscriptionSession:
         self.transcriber = None
         self.screen_capture = None
         self._mic_stream = None
+        self._mic_device_name: str | None = None
         self._audio_buffer = bytearray()
         self._system_buffer = bytearray()
         self._mic_buffer = bytearray()
@@ -67,6 +111,17 @@ class TranscriptionSession:
         self._last_segment_count: int = 0
         self.output_dir = Path("transcripts")
         self.error: str | None = None
+        self._warnings: dict[str, str] = {}
+        self._warnings_lock = threading.Lock()  # W1: guards _warnings across threads
+        self._silent_system_seconds: float = 0.0
+        self._system_degraded: bool = False
+        self._last_system_signal_ts: float = 0.0   # B4: wall-clock of last non-silent system pcm
+        self._system_tracking_started: float = 0.0  # B4: when _track_system_silence first called
+        self._mic_rms_low_seconds: float = 0.0
+        self._mic_degraded: bool = False
+        self._last_mic_signal_ts: float = 0.0   # B4: wall-clock of last healthy mic rms
+        self._mic_tracking_started: float = 0.0  # B4: when _track_mic_degradation first called
+        self._tap_dead: bool = False  # W4: latched when Swift tap emits '[tap] dead'
         self._audio_file: Path | None = None
         self._audio_writer: wave.Wave_write | None = None
         self.detected_app: str | None = None
@@ -75,6 +130,28 @@ class TranscriptionSession:
         self._title_refined: bool = False
         self._title_thread: threading.Thread | None = None
         self._last_buffer_overflow_log: float = 0.0
+
+    @property
+    def warning(self) -> str | None:
+        """First pending warning across all sources, or None."""
+        with self._warnings_lock:
+            return next(iter(self._warnings.values()), None)
+
+    @warning.setter
+    def warning(self, value: str | None) -> None:
+        with self._warnings_lock:
+            if value is None:
+                self._warnings.pop("direct", None)
+            else:
+                self._warnings["direct"] = value
+
+    def _set_warning(self, key: str, msg: str) -> None:
+        with self._warnings_lock:
+            self._warnings[key] = msg
+
+    def _clear_warning(self, key: str) -> None:
+        with self._warnings_lock:
+            self._warnings.pop(key, None)
 
     def _open_audio_file(self):
         """Open a WAV file to record the session audio."""
@@ -115,6 +192,16 @@ class TranscriptionSession:
         self._mic_buffer = bytearray()
         self._last_segment_count = 0
         self.error = None
+        with self._warnings_lock:
+            self._warnings.clear()
+        self._silent_system_seconds = 0.0
+        self._system_degraded = False
+        self._last_system_signal_ts = 0.0
+        self._system_tracking_started = 0.0
+        self._mic_rms_low_seconds = 0.0
+        self._mic_degraded = False
+        self._last_mic_signal_ts = 0.0
+        self._mic_tracking_started = 0.0
         self._last_buffer_overflow_log = 0.0
 
         # Create DB session
@@ -168,6 +255,7 @@ class TranscriptionSession:
                         sample_rate=self.config.audio.sample_rate,
                         channels=self.config.audio.channels,
                         audio_callback=self._on_system_audio if audio_source == "both" else self._on_audio_data,
+                        on_tap_dead=self._on_tap_dead,
                     )
                 except ImportError as e:
                     self.error = (
@@ -185,9 +273,22 @@ class TranscriptionSession:
                 try:
                     self._start_mic_capture(mix_mode=audio_source == "both")
                 except Exception as e:
-                    self.error = "Failed to start microphone capture. Check permissions."
                     logger.error("Failed to start microphone capture: %s", e, exc_info=True)
-                    raise _SessionStartAborted from e
+                    # In "both" mode the system tap is already running, so a mic
+                    # failure costs one of two sources — not the recording. A
+                    # headset in Bluetooth call mode routinely holds the mic
+                    # exclusively; dropping the whole session over it loses the
+                    # very call the user meant to capture.
+                    if audio_source == "mic":
+                        self.error = "Failed to start microphone capture. Check permissions."
+                        raise _SessionStartAborted from e
+                    self._set_warning(
+                        "direct",
+                        "Microphone unavailable — recording system audio only. "
+                        "Another app may be holding it.",
+                    )
+                else:
+                    self._warn_if_mic_is_a_fallback()
 
             # Start processing thread
             self._process_thread = threading.Thread(
@@ -270,6 +371,11 @@ class TranscriptionSession:
 
         if process_thread_finished:
             self._run_cleanup_step("final buffer flush", self._flush_buffer)
+            # M7: clear any degradation / tap-dead warnings the final flush may have
+            # set while stopping. A stopped session's warnings are stale — the actions
+            # they suggest ("restart recording") no longer apply.
+            with self._warnings_lock:
+                self._warnings.clear()
             self._run_cleanup_step("audio file close", self._close_audio_file)
 
         # Export transcript (reads segments under the transcriber lock).
@@ -373,23 +479,185 @@ class TranscriptionSession:
             )
 
     def _start_mic_capture(self, mix_mode: bool = False):
-        """Start capturing audio from the microphone via sounddevice."""
+        """Start capturing audio from the microphone via sounddevice.
+
+        Tries the system default input first, then any other input device. A
+        Bluetooth headset that a call app already holds exclusively fails to
+        open at every sample rate, and the built-in mic sitting right there is
+        a better recording than no recording at all.
+        """
+        import sounddevice as sd
+
+        callback_fn = self._on_mic_audio if mix_mode else self._on_audio_data
+
+        first_error: Exception | None = None
+        avoid_shared = mix_mode and self.config.audio.keep_bluetooth_playback
+        shared_name = (
+            self._default_input_shares_output_device() if avoid_shared else None
+        )
+        for device in self._candidate_mic_devices(demote_default=bool(shared_name)):
+            try:
+                self._open_mic_stream(device, callback_fn, mix_mode)
+                self._announce_shared_output_demotion(shared_name)
+                return
+            except Exception as e:
+                first_error = first_error or e
+                if device is None:
+                    name = "default"
+                else:
+                    try:
+                        name = sd.query_devices(device)["name"]
+                    except Exception:
+                        name = str(device)
+                logger.warning("Mic device %s unavailable: %s", name, e)
+
+        raise first_error or RuntimeError("No input device available")
+
+    def _announce_shared_output_demotion(self, shared_name: str | None) -> None:
+        """Report the demotion only once a device is actually open.
+
+        T11: this used to be announced while building the candidate list, before
+        anything had been opened. When every built-in candidate failed to open,
+        capture fell through to the shared device and the banner still claimed
+        the built-in mic was recording — and `_warn_if_mic_is_a_fallback`
+        suppressed the correcting message precisely because that banner existed.
+        The device that opened is the only thing worth reporting.
+        """
+        if not shared_name:
+            return
+        if self._mic_device_name == shared_name:
+            logger.warning(
+                "Wanted to avoid the shared device %r but every alternative "
+                "failed to open — recording it after all; system audio may go "
+                "silent if the Bluetooth profile switches", shared_name,
+            )
+            return
+        logger.info(
+            "Default mic %r is also the output device — recording %r to keep "
+            "playback in A2DP", shared_name, self._mic_device_name,
+        )
+        self._set_warning(
+            "mic_shared_output",
+            f"{shared_name} is in use for playback — recording with "
+            f"{self._mic_device_name} instead so system audio stays in stereo.",
+        )
+
+    def _warn_if_mic_is_a_fallback(self) -> None:
+        """Say so when the recording is using a mic the user did not pick."""
+        import sounddevice as sd
+
+        if not self._mic_device_name:
+            return
+        try:
+            default_name = sd.query_devices(kind="input")["name"]
+        except Exception:
+            return
+        if default_name == self._mic_device_name:
+            return
+        with self._warnings_lock:
+            deliberate = "mic_shared_output" in self._warnings
+        if deliberate:
+            return
+        logger.warning(
+            "Default mic %r unavailable; recording with %r instead",
+            default_name, self._mic_device_name,
+        )
+        self._set_warning(
+            "mic_fallback",
+            f"{default_name} was unavailable — recording with "
+            f"{self._mic_device_name} instead.",
+        )
+
+    def _on_tap_dead(self) -> None:
+        """Called by screen_capture when the Swift tap emits '[tap] dead'."""
+        if not self.is_active:
+            return
+        self._tap_dead = True
+        self._set_warning(
+            "tap_dead",
+            "System audio capture has stopped — the audio chain failed repeatedly. "
+            "Try stopping and restarting the recording.",
+        )
+
+    def _candidate_mic_devices(
+        self, demote_default: bool = False
+    ) -> list[int | None]:
+        """The default input, then the built-in mic, then anything else.
+
+        The built-in mic outranks the rest of the fallbacks because the other
+        candidates are typically Continuity devices — an iPhone that may be
+        face-down in a pocket makes a worse recording than the Mac's own mic.
+
+        ``demote_default`` moves the default input below the built-in mic. The
+        caller decides that (see ``_default_input_shares_output_device``); this
+        method only orders candidates and never touches session state. macOS has
+        one bidirectional Bluetooth profile, so opening an AirPods microphone
+        drops the link to HFP — mono, 24 kHz — and silences a system-audio tap
+        built against the A2DP format. Recording the Mac's own mic costs some
+        proximity and keeps playback in A2DP.
+        """
+        import sounddevice as sd
+
+        candidates: list[int | None] = [None]
+        try:
+            default_index = sd.default.device[0]
+            # W10: only fall back to built-in mics. Continuity (iPhone) and
+            # remote devices make worse recordings than the machine's own mic
+            # and should not be auto-selected without explicit user intent.
+            built_ins = [
+                index
+                for index, device in enumerate(sd.query_devices())
+                if device["max_input_channels"] > 0
+                and index != default_index
+                and _is_built_in_mic(device["name"])
+            ]
+            if demote_default and built_ins:
+                # Default last, not never: a mono recording still beats none.
+                candidates = [*built_ins, None]
+            else:
+                candidates.extend(built_ins)
+        except Exception:
+            logger.debug("Could not enumerate input devices", exc_info=True)
+        return candidates
+
+    def _default_input_shares_output_device(self) -> str | None:
+        """The device name when the default input is also the default output.
+
+        Name equality is the available signal: CoreAudio lists a bidirectional
+        Bluetooth headset as one input and one output entry under the same
+        name, and no public API exposes the transport they share.
+        """
+        import sounddevice as sd
+
+        try:
+            input_name = sd.query_devices(kind="input")["name"]
+            output_name = sd.query_devices(kind="output")["name"]
+        except Exception:
+            logger.debug("Could not query the default devices", exc_info=True)
+            return None
+        if input_name and input_name == output_name:
+            return input_name
+        return None
+
+    def _open_mic_stream(self, device, callback_fn, mix_mode: bool) -> None:
+        """Open and start one input device, resampling to the target rate."""
         import numpy as np
         import sounddevice as sd
 
         target_rate = self.config.audio.sample_rate
         channels = self.config.audio.channels
-        callback_fn = self._on_mic_audio if mix_mode else self._on_audio_data
 
         # Try the target rate first; fall back to the device's default rate
         try:
-            device_info = sd.query_devices(kind="input")
+            device_info = sd.query_devices(device, kind="input")
             device_rate = int(device_info["default_samplerate"])
         except Exception:
             device_rate = target_rate
 
         try:
-            sd.check_input_settings(samplerate=target_rate, channels=channels)
+            sd.check_input_settings(
+                device=device, samplerate=target_rate, channels=channels
+            )
             actual_rate = target_rate
         except Exception:
             logger.info("Mic doesn't support %dHz, using native %dHz with resampling", target_rate, device_rate)
@@ -409,16 +677,23 @@ class TranscriptionSession:
             pcm = (samples * 32767).astype(np.int16).tobytes()
             callback_fn(pcm)
 
-        self._mic_stream = sd.InputStream(
+        stream = sd.InputStream(
+            device=device,
             samplerate=actual_rate,
             channels=channels,
             dtype="float32",
             callback=mic_callback,
         )
-        self._mic_stream.start()
+        try:
+            stream.start()
+        except Exception:
+            stream.close()
+            raise
+        self._mic_stream = stream
+        self._mic_device_name = sd.query_devices(device, kind="input")["name"]
         logger.info(
-            "Started microphone capture (device_rate=%s, target_rate=%s, resample=%s, mix_mode=%s)",
-            actual_rate, target_rate, needs_resample, mix_mode,
+            "Started microphone capture (device=%s, device_rate=%s, target_rate=%s, resample=%s, mix_mode=%s)",
+            self._mic_device_name, actual_rate, target_rate, needs_resample, mix_mode,
         )
 
     def _chunk_pcm_byte_size(self) -> int:
@@ -522,6 +797,139 @@ class TranscriptionSession:
         mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
         return mixed.tobytes()
 
+    def _track_system_silence(self, system_pcm: bytes) -> None:
+        """Warn (and keep warning) when the system tap delivers effectively-silent audio.
+
+        B4: absent source (empty bytes) advances wall-clock silence so a tap
+        that stops delivering bytes at all also trips the warning. Uses
+        max(frame-based, wall-clock) to preserve existing test behavior.
+        """
+        import numpy as np
+
+        sample_rate = self.config.audio.sample_rate
+        channels = self.config.audio.channels
+        now = time.monotonic()
+
+        if self._system_tracking_started == 0.0:
+            self._system_tracking_started = now
+
+        if system_pcm:
+            seconds = len(system_pcm) / max(sample_rate * channels * 2, 1)
+            samples = np.frombuffer(system_pcm, dtype=np.int16)
+            peak = float(np.max(np.abs(samples))) if len(samples) > 0 else 0.0
+
+            if peak >= SYSTEM_SIGNAL_PEAK_THRESHOLD_INT16:
+                if self._system_degraded:
+                    self._system_degraded = False
+                    self._clear_warning("system")
+                # W4: real signal clears the tap_dead latch (tap recovered).
+                if self._tap_dead:
+                    self._tap_dead = False
+                    self._clear_warning("tap_dead")
+                self._silent_system_seconds = 0.0
+                self._last_system_signal_ts = now
+                return
+
+            self._silent_system_seconds += seconds
+
+        # B4: wall-clock fills the gap when the source delivers no bytes.
+        last_active = self._last_system_signal_ts or self._system_tracking_started
+        wall_clock_silent = now - last_active
+        silent_seconds = max(self._silent_system_seconds, wall_clock_silent)
+
+        # A tap that has produced signal and then stopped is a real fault. One
+        # that has never produced any is usually just an idle output device.
+        saw_signal = self._last_system_signal_ts > 0.0
+        threshold = (
+            SYSTEM_SILENCE_WARN_SECONDS if saw_signal
+            else SYSTEM_SILENCE_COLD_WARN_SECONDS
+        )
+        if silent_seconds < threshold:
+            return
+
+        if not self._system_degraded:
+            self._system_degraded = True
+            logger.warning(
+                "System audio has been effectively silent for %.0fs — the tap is running "
+                "but capturing nothing (check the output device)",
+                silent_seconds,
+            )
+        # W3: mic_active is True only when mic is actually capturing in this session.
+        mic_active = (
+            self.config.audio.audio_source in ("both", "mic") and self._mic_stream is not None
+        )
+        minutes = int(threshold // 60)
+        if mic_active:
+            detail = (
+                f"{minutes} min — only your microphone "
+                "is being recorded. Check your audio output device."
+            )
+        else:
+            detail = (
+                f"{minutes} min — nothing is being recorded. "
+                "Check your audio output device."
+            )
+        self._set_warning("system", f"No system audio captured for {detail}")
+
+    def _track_mic_degradation(self, mic_pcm: bytes) -> None:
+        """Warn (and keep warning) when the mic sustains suspiciously low RMS.
+
+        B1: uses RMS (not peak). Real noise at -50 dBFS has RMS ≈ 103 int16
+        (below threshold 184) but peaks of 1400–3000 int16 (above threshold),
+        so peak comparison always takes the "healthy" branch — wrong.
+
+        B4: absent source (empty bytes) advances wall-clock silence so a mic
+        that stops delivering bytes also trips the warning.
+        """
+        import numpy as np
+
+        sample_rate = self.config.audio.sample_rate
+        channels = self.config.audio.channels
+        now = time.monotonic()
+
+        if self._mic_tracking_started == 0.0:
+            self._mic_tracking_started = now
+
+        if mic_pcm:
+            seconds = len(mic_pcm) / max(sample_rate * channels * 2, 1)
+            samples = np.frombuffer(mic_pcm, dtype=np.int16)
+            rms = (
+                float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
+                if len(samples) > 0
+                else 0.0
+            )
+
+            if rms >= MIC_LOW_RMS_THRESHOLD_INT16:
+                if self._mic_degraded:
+                    self._mic_degraded = False
+                    self._clear_warning("mic")
+                self._mic_rms_low_seconds = 0.0
+                self._last_mic_signal_ts = now
+                return
+
+            self._mic_rms_low_seconds += seconds
+
+        # B4: wall-clock fills the gap when source delivers no bytes.
+        last_active = self._last_mic_signal_ts or self._mic_tracking_started
+        wall_clock_silent = now - last_active
+        silent_seconds = max(self._mic_rms_low_seconds, wall_clock_silent)
+
+        if silent_seconds < MIC_LOW_RMS_WARN_SECONDS:
+            return
+
+        if not self._mic_degraded:
+            self._mic_degraded = True
+            logger.warning(
+                "Microphone level has been below RMS threshold (%d dBFS) for %.0fs "
+                "— mic may be degraded or muted",
+                _MIC_THRESHOLD_DBFS, silent_seconds,
+            )
+        self._set_warning(
+            "mic",
+            "Microphone appears degraded — audio level is very low. "
+            "Check your microphone or switch to a different input device.",
+        )
+
     def _process_loop(self):
         chunk_duration = self.config.streaming.chunk_duration
 
@@ -539,17 +947,41 @@ class TranscriptionSession:
         # Need at least 0.5s of audio
         min_bytes = int(sample_rate * channels * 2 * 0.5)
 
+        audio_source = self.config.audio.audio_source
         with self._buffer_lock:
-            if self.config.audio.audio_source == "both":
+            if audio_source == "both":
+                system_pcm = bytes(self._system_buffer)
+                mic_pcm = bytes(self._mic_buffer)
                 pcm_data = self._mix_buffers()
                 self._system_buffer = bytearray()
                 self._mic_buffer = bytearray()
             else:
                 pcm_data = bytes(self._audio_buffer)
+                system_pcm = pcm_data if audio_source == "system" else b""
+                mic_pcm = pcm_data if audio_source == "mic" else b""
                 self._audio_buffer = bytearray()
 
-            if len(pcm_data) < min_bytes:
-                return
+        # B2: run degradation trackers BEFORE the min_bytes guard so a wedged
+        # Swift child that delivers no bytes still advances wall-clock silence
+        # detection and eventually trips the warning.
+        if audio_source in ("both", "system"):
+            self._track_system_silence(system_pcm)
+        if audio_source in ("both", "mic") and self._mic_stream:
+            self._track_mic_degradation(mic_pcm)
+
+        # W4: re-assert the tap_dead warning each flush while the tap is known
+        # dead, so it survives banner-dismiss cycles without needing a new event.
+        # M7: guard is_active so the final buffer flush after stop() does not set
+        # a stale warning on a session that has already ended.
+        if self._tap_dead and self.is_active:
+            self._set_warning(
+                "tap_dead",
+                "System audio capture has stopped — the audio chain failed repeatedly. "
+                "Try stopping and restarting the recording.",
+            )
+
+        if len(pcm_data) < min_bytes:
+            return
 
         # Tee PCM data to the WAV file for playback
         if self._audio_writer:
@@ -673,6 +1105,45 @@ class TranscriptionSession:
         """
         error, self.error = self.error, None
         return error
+
+    def consume_warning(self) -> str | None:
+        """Return one pending warning message (by insertion order) and remove it.
+
+        Thin wrapper over consume_warning_item so both callers share the same
+        pop logic; four test files assert against this signature, server.py uses
+        consume_warning_item for the source key.
+        """
+        item = self.consume_warning_item()
+        return item[1] if item else None
+
+    def consume_warning_item(self) -> tuple[str, str] | None:
+        """Return (source_key, message) for one pending warning and remove it.
+
+        W2: callers that need to key dismissal on source (e.g. the server adding
+        warning_source to the status response) use this instead of consume_warning.
+        """
+        with self._warnings_lock:
+            if not self._warnings:
+                return None
+            key = next(iter(self._warnings))
+            return key, self._warnings.pop(key)
+
+    def peek_warning_item(self) -> tuple[str, str] | None:
+        """Return (source_key, message) for the highest-priority pending warning without removing it.
+
+        W1: used by _get_status while is_active so one-shot warnings (direct,
+        mic_fallback) survive status calls that do not render the warning field.
+        B1: iterates _WARNING_PRIORITY so a severe warning (tap_dead) inserted after
+        a low-severity one (direct) is never starved by insertion order.
+        """
+        with self._warnings_lock:
+            if not self._warnings:
+                return None
+            for key in _WARNING_PRIORITY:
+                if key in self._warnings:
+                    return key, self._warnings[key]
+            key = next(iter(self._warnings))
+            return key, self._warnings[key]
 
     def get_status(self) -> dict[str, Any]:
         elapsed = ""

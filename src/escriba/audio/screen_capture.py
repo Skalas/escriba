@@ -87,6 +87,7 @@ class ScreenCaptureAudioCapture:
         channels: int = 1,
         audio_callback: Optional[Callable[[bytes], None]] = None,
         use_screen_capture: bool = False,
+        on_tap_dead: Optional[Callable[[], None]] = None,
     ):
         if not SWIFT_CLI_AVAILABLE:
             raise ImportError(
@@ -98,8 +99,14 @@ class ScreenCaptureAudioCapture:
         self.channels = channels
         self.audio_callback = audio_callback
         self.use_screen_capture = use_screen_capture
+        # M6: on_tap_dead is IMMUTABLE after construction. stop() sets
+        # _callbacks_disabled to gate delivery without destroying the callback,
+        # so restart() (stop→start) does not permanently silence dead-tap propagation.
+        self.on_tap_dead = on_tap_dead
+        self._callbacks_disabled = False
         self.process: Optional[subprocess.Popen] = None
         self.read_thread: Optional[threading.Thread] = None
+        self._stderr_thread: Optional[threading.Thread] = None
         self.is_capturing = False
         self._lock = threading.Lock()
         self.stop_event = threading.Event()
@@ -121,6 +128,8 @@ class ScreenCaptureAudioCapture:
                 logger.warning("Capture already started")
                 return False
 
+            # M6: re-enable callbacks for this new capture session.
+            self._callbacks_disabled = False
             self.stop_event.clear()
 
             try:
@@ -147,6 +156,11 @@ class ScreenCaptureAudioCapture:
                     target=self._read_audio_stream, daemon=True
                 )
                 self.read_thread.start()
+
+                self._stderr_thread = threading.Thread(
+                    target=self._drain_stderr, daemon=True
+                )
+                self._stderr_thread.start()
 
                 logger.info("✓ Started system audio capture with Swift CLI")
                 return True
@@ -177,21 +191,10 @@ class ScreenCaptureAudioCapture:
 
             while not self.stop_event.is_set() and self._is_capturing():
                 if self.process.poll() is not None:
-                    # Proceso terminó - obtener código de salida
                     exit_code = self.process.returncode
                     logger.warning(
                         "Swift CLI process ended unexpectedly (exit code: %s)", exit_code
                     )
-                    # Leer stderr para diagnóstico
-                    if self.process.stderr:
-                        try:
-                            stderr_output = self.process.stderr.read()
-                            if stderr_output:
-                                logger.warning(
-                                    "Swift CLI stderr: %s", stderr_output.decode('utf-8', errors='ignore')
-                                )
-                        except Exception:
-                            pass
                     break
 
                 chunk = self.process.stdout.read(chunk_size)
@@ -221,6 +224,33 @@ class ScreenCaptureAudioCapture:
             with self._lock:
                 self.is_capturing = False
 
+    def _drain_stderr(self):
+        """Drain Swift CLI stderr continuously into the Python logger.
+
+        Running as a daemon thread so every [tap] log line (including rebuild
+        events) reaches app.log in real time, not only on process failure.
+        Does not block capture and cannot deadlock: it reads from a pipe whose
+        write-end is held only by the Swift child; when the child exits the
+        pipe EOF arrives and this thread exits naturally.
+        """
+        proc = self.process
+        if not proc or not proc.stderr:
+            return
+        try:
+            for raw in proc.stderr:
+                line = raw.decode("utf-8", errors="replace").rstrip().replace("\r", "")
+                if not line:
+                    continue
+                logger.info("[swift] %s", line)
+                # M6: read into a local so the check and call use the same value;
+                # also honour _callbacks_disabled set by stop() so a late line
+                # arriving after stop cannot fire on a dead session.
+                cb = self.on_tap_dead
+                if line.startswith("[tap] dead") and cb and not self._callbacks_disabled:
+                    cb()
+        except Exception as e:
+            logger.debug("stderr drain ended: %s", e)
+
     def restart(self) -> bool:
         """
         Reinicia la captura de audio del sistema.
@@ -243,8 +273,16 @@ class ScreenCaptureAudioCapture:
 
     def stop(self):
         """Detiene la captura de audio (idempotente)."""
+        # M6+M8: snapshot both thread handles and set _callbacks_disabled under
+        # the lock so concurrent stop() callers cannot race on the check-then-join,
+        # and so _drain_stderr sees callbacks_disabled atomically with is_capturing.
         with self._lock:
             self.is_capturing = False
+            self._callbacks_disabled = True
+            read_thread = self.read_thread
+            stderr_thread = self._stderr_thread
+            self.read_thread = None
+            self._stderr_thread = None
 
         self.stop_event.set()
 
@@ -264,10 +302,13 @@ class ScreenCaptureAudioCapture:
                 logger.debug("Error stopping Swift CLI: %s", e)
             self.process = None
 
-        # Esperar thread de lectura
-        if self.read_thread and self.read_thread != threading.current_thread():
-            self.read_thread.join(timeout=2.0)
-        self.read_thread = None
+        # M8: join using local snapshots — no TOCTOU race on self.read_thread /
+        # self._stderr_thread, which concurrent callers may have already nulled.
+        if read_thread and read_thread != threading.current_thread():
+            read_thread.join(timeout=2.0)
+
+        if stderr_thread and stderr_thread != threading.current_thread():
+            stderr_thread.join(timeout=1.0)
 
         logger.info("Stopped system audio capture")
 

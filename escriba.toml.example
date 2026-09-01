@@ -14,6 +14,9 @@ mic_boost = 1.4
 auto_detect_devices = true
 system_device = "0"
 mic_device = "1"
+# When headphones are also the mic, record with the Mac mic so playback
+# stays stereo. Set false to use the headset mic (macOS may switch to HFP).
+keep_bluetooth_playback = true
 
 [streaming]
 chunk_duration = 20.0

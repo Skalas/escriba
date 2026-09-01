@@ -1045,6 +1045,7 @@ def test_stopped_session_error_is_served_once(app_state: AppState) -> None:
         return error
 
     stopped.consume_error.side_effect = consume
+    stopped.consume_warning_item.return_value = None
     app_state.session = stopped
 
     first = handler._get_status()
@@ -1061,10 +1062,42 @@ def test_active_session_error_is_not_consumed(app_state: AppState) -> None:
     active = MagicMock()
     active.is_active = True
     active.get_status.return_value = {"is_active": True, "error": "mic died"}
+    active.peek_warning_item.return_value = None
     app_state.session = active
 
     assert handler._get_status()["error"] == "mic died"
     active.consume_error.assert_not_called()
+
+
+def test_active_session_oneshot_warning_survives_status_call(app_state: AppState) -> None:
+    """A one-shot warning set at start() must survive a status call that does not render it.
+
+    W1: direct/mic_fallback are set once and never re-armed. If _get_status
+    consumed them on every call, init() and reconcile callers (which ignore
+    the warning field) would silently discard the message before the user ever
+    sees it.
+    """
+    handler = _make_handler(app_state)
+
+    active = MagicMock()
+    active.is_active = True
+    active.get_status.return_value = {"is_active": True, "error": None}
+    active.peek_warning_item.return_value = (
+        "direct",
+        "Microphone unavailable — recording system audio only",
+    )
+    app_state.session = active
+
+    first = handler._get_status()
+    second = handler._get_status()
+
+    # Warning visible on both calls — peek does not consume it.
+    assert first.get("warning") == "Microphone unavailable — recording system audio only"
+    assert first.get("warning_source") == "direct"
+    assert second.get("warning") == "Microphone unavailable — recording system audio only"
+    # consume_warning_item must never be called while is_active.
+    active.consume_warning_item.assert_not_called()
+    assert active.peek_warning_item.call_count == 2
 
 
 def test_retranscribe_clears_errored_status(app_state: AppState, tmp_path: Path) -> None:
@@ -1117,3 +1150,38 @@ def test_retranscribe_discards_stale_session_error(
     assert status == 200
     assert stopped.error is None
     assert handler._get_status()["error"] is None
+
+
+# --- capture warnings on the status endpoint --------------------------------
+
+def test_status_endpoint_delivers_the_warning_once(tmp_path) -> None:
+    """A stopped session's warning is delivered once, not pinned to the banner.
+
+    Lives here rather than with the capture-degradation tests because it
+    exercises the status endpoint: keeping it there made a commit that changed
+    only capture depend on a later server change.
+    """
+    import dataclasses
+
+    from escriba.app.database import Database
+    from escriba.app.server import AppState
+    from escriba.app.session import TranscriptionSession
+    from escriba.config import AppConfig
+    from tests.conftest import make_handler
+
+    base = AppConfig()
+    config = dataclasses.replace(
+        base, audio=dataclasses.replace(base.audio, audio_source="both")
+    )
+    session = TranscriptionSession(config)
+
+    warning = "Microphone unavailable — recording system audio only."
+    session.warning = warning
+    app_state = AppState(
+        config=session.config, db=Database(tmp_path / "status-test.db")
+    )
+    app_state.session = session
+    handler = make_handler(app_state)
+
+    assert handler._get_status()["warning"] == warning
+    assert "warning" not in handler._get_status()
