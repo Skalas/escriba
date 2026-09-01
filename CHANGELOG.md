@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-01
+
+Bluetooth profile-switch tap recovery, and a degraded capture the user can see.
+
+> **Behaviour change for existing `audio_source = "both"` users.** With
+> `keep_bluetooth_playback` on by default, a recording made while your
+> headphones are also your microphone now uses the Mac's built-in mic instead of
+> the headset mic. You trade mic proximity for a system-audio tap that keeps
+> working and playback that stays in stereo. The dashboard says which mic it
+> opened; set `keep_bluetooth_playback = false` to go back to the headset mic.
+
+### Added
+- **`[audio] keep_bluetooth_playback`** (default `true`, Settings → Audio). In `both` mode, when the default input is also the default output — AirPods, most headsets — Escriba records the Mac's built-in mic instead. macOS has one bidirectional Bluetooth profile, so opening the headset mic drops the link from A2DP (stereo, 48 kHz) to HFP call mode (mono, 24 kHz) and silences a system-audio tap that was built against the old format. The banner names the device actually opened. Set `false` to use the headset mic and accept the switch. (#216)
+- **The tap chain is disposable.** Listeners on the output device's sample rate, stream format and stream configuration rebuild tap + aggregate device + IO proc when the device changes format underneath the session. Verified on hardware: a deliberate A2DP→HFP switch forced by another app produces a rebuild within seconds and the audio after it is real speech. (#217)
+- **Degraded-capture warnings.** A system tap that produced audio and then went effectively silent for 2 minutes, or a mic sustaining RMS below ≈-45 dBFS for 1 minute, raises a dashboard banner naming the likely cause. A tap that has *never* produced signal waits 5 minutes instead — two quiet minutes at the start of a recording is somebody not having pressed play yet, not a fault. (#211, #212)
+- **Swift CLI stderr reaches `app.log` in real time** via a drain thread, not only when the process fails. Every `[tap] …` line is now visible during a live session, which is how the recovery path above was verified at all. `scripts/watch-tap-log.sh` colour-codes it. (#210)
+- **Swift test target.** `watchdog-tests` covers the rebuild verdict, the listener settle window, the failure backoff and the stale-request guard, wired into both `fastGate` and `shipGate`. A standalone executable rather than XCTest, because the active toolchain is CommandLineTools. (#214)
+
+### Fixed
+- **The recorded bug.** A call on 2026-08-21 was captured for 888 s at −47 to −50 dBFS and produced 273 segments of pure hallucination. `CoreAudioTapStart` built the tap, aggregate device and IO proc once against the format in force at start and never rebuilt them; there were zero property listeners in the bridge. Identical hardware and routing 30 dB apart, with only the tap's creation time as the variable. (#205, #206)
+- **Rebuilds no longer fight each other.** The watchdog does not run on the rebuild queue, so a listener event could clear its settle check against a stale timestamp, wait on the chain lock while the watchdog rebuilt, and then tear down a chain milliseconds old — an audible glitch, and the generation counter could not catch it because a rebuild bumps the generation on entry, making its own HAL chatter look fresh. A rebuild request is now dropped when another path already satisfied it. (#207)
+- **A mic failure no longer kills a `both`-mode recording.** A headset the call app holds exclusively cost the whole session, which is the very call the user meant to capture. Capture now falls back to the built-in mic and says so. Fallback is restricted to built-in devices — a Continuity iPhone face-down in a pocket makes a worse recording than the Mac's own mic.
+- **Warnings survive the poll.** A still-true degradation keeps its banner asserted instead of showing once and vanishing, the 3 s status poll no longer resets the dismiss timer, and dismissing one condition does not silence a different one. Dismissal is per-source and clears on the next recording.
+
+### Notes
+- The clock-stall watchdog (8 s without an IO-proc callback) has never fired on real hardware — the failure mode here is a tap that keeps clocking while delivering silence. It is kept as a correct guard, but the route/format listener is what fixes the reported bug. Recorded in `.metate/plan.md` as assumption A3.
+- `vad_enabled` remains inert on the default MLX backend (assigned, never read); this sprint addresses hallucinated filler upstream by keeping the tap alive instead. Deferred with a trigger in `ROADMAP.md`.
+- Five further items are deferred with triggers in `ROADMAP.md`, including the spoofable built-in-mic name test, name-equality device matching, and allocation on the real-time audio thread.
+
 ## [1.4.0] - 2026-07-29
 
 Calendar picker, knowledge adapters, atomic note appends, the shared recording-stop seam, and a stop/notes reliability pass.

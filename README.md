@@ -17,6 +17,7 @@ Local audio transcription app for macOS. Captures system audio + microphone, tra
 - **Live notepad (jot & enhance)** — jot key points during a meeting on the primary notepad (scoped to the active session across view switches and auto-record starts); one **Enhance** turns your shorthand into a finished note in place, combined with the transcript — your words are kept and AI additions are clearly marked. Enhanced notes persist with the session, and you can later edit **both** your own notes and the AI output on a saved session
 - **Markdown export** — auto-save each session's notes + transcript via a configurable knowledge adapter (`[knowledge_store]` in `escriba.toml`); default `local-markdown`, optional `webhook` / `custom-script`
 - **Up next (calendar spike)** — home shows the soonest Apple Calendar event with one-tap Record (pre-titles the session); choose which calendars to read in Settings; calendar auto-start is not enabled yet
+- **Bluetooth-safe capture** — when your headphones are also the microphone, Escriba records the Mac's built-in mic instead, so macOS never flips the headset into call mode (mono playback, and a system-audio tap that goes silent). The capture chain also rebuilds itself if the output device changes format mid-recording, and the dashboard tells you when a recording is degraded rather than letting Whisper invent filler over silence. Opt out with `keep_bluetooth_playback = false`
 - **Speaker detection** — simple energy-based or pyannote diarization
 - **Keyboard navigation** — arrow keys move through the session list and seek the player, Space plays/pauses, with focus rings and screen-reader labels
 - **Settings UI** — configure everything from the dashboard
@@ -141,6 +142,7 @@ Create `escriba.toml` in the project root:
 audio_source = "both"     # "system" | "mic" | "both"
 mic_boost = 1.4
 sample_rate = 16000
+keep_bluetooth_playback = true  # headphones that are also the mic → record the Mac mic
 
 [streaming]
 model_size = "medium"     # tiny | base | small | medium | large

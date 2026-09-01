@@ -2,8 +2,10 @@
 # The skill engines are codebase-agnostic; everything project-specific lives here.
 
 # --- gates ---------------------------------------------------------------
-fastGate: "uv run ruff check . && uv run pytest"                 # quick loop, run after each review round
-shipGate: "uv run ruff check . && uv run mypy . && uv run pytest"  # full pre-PR gate (mirrors CI)
+# T10: swift run watchdog-tests exercises the extracted watchdog verdict function.
+# Requires macOS 14+ with swift CLI (CLT sufficient; full Xcode not required).
+fastGate: "uv run ruff check . && uv run pytest && (cd swift-audio-capture && swift build -c release && ./.build/release/watchdog-tests)"
+shipGate: "uv run ruff check . && uv run mypy . && uv run pytest && (cd swift-audio-capture && swift build -c release && ./.build/release/watchdog-tests)"
 
 # --- implementer (the only writer) ---------------------------------------
 implementer:
@@ -47,15 +49,59 @@ prep:
     labels: ["sprint"]     # applied to every filed issue
     milestone: ""          # blank = none
 
+# --- assumption probe (runs BEFORE build/review) ---------------------------
+# Added 2026-09-01 after the `tap-profile-switch-recovery` post-mortem.
+#
+# That sprint spent nine review rounds (2026-08-21, 13:48→17:05) hardening a
+# silence-based watchdog. On 2026-08-22 a single live run invalidated the whole
+# design — silence is not a tap failure, and rebuilding on it glitches playback.
+# The load-bearing function was rewritten (+153/-289) and its entire test suite
+# deleted. No review round could have caught it: TCC denies the audio grant to
+# non-app processes, so the only environment that can observe the fault is the
+# signed bundle, and that is the SMOKE stage, which runs AFTER review.
+#
+# The information order was inverted: the cheapest, most decisive signal sat
+# behind the most expensive gate. This section moves it forward.
+assumptions:
+  # Any plan whose design rests on behaviour that only real hardware, a signed
+  # bundle, a TCC grant or a live external service can exhibit must list that
+  # behaviour in a "Load-bearing assumptions" section of the plan, with a probe
+  # and a verdict field per row.
+  require: when-hardware-observable
+  probeBeforeReview: true   # an unprobed load-bearing row blocks entry to review
+  # Cost discipline: a probe is one run, minutes, answering one question. It is
+  # not a smoke pass. If a row cannot be probed cheaply, say so in the plan and
+  # carry it as a stated risk rather than an assumed fact.
+  recordIn: ".metate/plan.md"
+
 # --- smoke (metate-smoke) -------------------------------------------------
 # No automated e2e suite (menubar app). Behavior proof = run the app and exercise
 # the record → transcribe → summarize loop in the dashboard.
 smoke:
   command: "uv run escriba app"   # launch app + dashboard at http://127.0.0.1:19876
   seedCommand: ""                 # n/a — no fixture seed
+  humanGates:                     # hardware-only criteria, walked by the user
+    - id: T12
+      doc: ".metate/t12-listener-check.md"
+      issue: 217
+      why: "The only recovery path covering the recorded failure. Cannot be verified headlessly — a terminal tap reads digital zeros under TCC."
 
 # --- aftercare (metate-aftercare) -----------------------------------------
 aftercare:
+  release:
+    enabled: true
+    scheme: semver
+    tagPrefix: "v"
+    currentFrom: git-tag     # tags + GitHub Releases are the published artifact
+    githubRelease: true
+    # This repo ALSO carries the version in pyproject.toml, and the in-app
+    # updater (escriba.app.updates) compares the installed __version__ against
+    # GitHub releases/latest. If the tag moves and the version file does not,
+    # the app prompts users to "update" to the code they are already running.
+    # So a release here means: bump pyproject.toml + the src/escriba/__init__.py
+    # fallback in the sprint PR, and let ship cut the tag after merge.
+    versionFile: "pyproject.toml"
+    planFile: ".metate/release.json"
   deliverables:
     - ROADMAP.md           # update milestone checkboxes / "Where we are"
     - CHANGELOG.md         # create/append the release feature list
@@ -73,6 +119,20 @@ codebaseMemory:
   indexCommand: ""         # blank = rely on the auto_index git watcher; else an explicit reindex command
 review:
   autoFix: all
+  maxRounds: 3             # the engine's cap — see enforce below
+  # `tap-profile-switch-recovery` ran NINE rounds. Rounds 4-9 ran outside
+  # metate-review and left no artifacts in .metate/review/, so the cap never
+  # applied. The cap is not bureaucracy: it is the signal to stop polishing and
+  # go get real feedback. Had it fired at round 3, the 2026-08-22 correction
+  # would have arrived before six more rounds of hardening the wrong design.
+  enforce: artifacts       # every round must write .metate/review/round<N>-findings.json
+  onCapReached: go-to-smoke  # a 4th round is a smoke trip, not another round
+  # A design change invalidates the acceptance criteria. metate had no step that
+  # reconciled the two, which is how T1 came to assert the exact opposite of the
+  # code while issue #205 still carried the original wording and would have been
+  # auto-closed by the PR.
+  onDesignChange: rederive-dod   # editing the plan's design marks the DoD stale
+  dodStaleBlocksShip: true       # ship refuses until T* and the ledger agree
 discover:
   signals:                 # which sources to sweep for candidate work
     aftercare: true        # last sprint's deliverables (roadmap, next-sprint pointers) — the loop-closing input

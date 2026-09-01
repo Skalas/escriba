@@ -47,6 +47,14 @@ As of **`appstate-mic-activation-seam`** (2026-07-21, #194–#202) HTTP and menu
 
 As of **`stop-drain-and-notes-silence`** (2026-07-29) a stop that merely runs slow is no longer reported as a failure: the drain budget is derived from pending work (`max(60s, chunk_duration × 6)`) instead of a flat 10s, and a stop-time error is delivered once rather than pinned to the dashboard for the app's lifetime. Re-transcribing an errored session clears it. Local AI notes no longer fail silently — a model that reasons past its budget is logged with model/budget/truncation and surfaced by name in the endpoint's error; long-form prompts run with thinking disabled. Verified on a real 66-minute session: `error` → `completed` after retranscribe, notes 0 chars → 3221 chars.
 
+As of **`tap-profile-switch-recovery`** (2026-09-01, #205–#217) system-audio capture survives a Bluetooth output device changing format mid-session. Root cause of the recorded failure — a call captured for 888 s at −47 dBFS that produced 273 hallucinated segments — was that `CoreAudioTapStart` built the tap, aggregate device and IO proc once against the format in force at start and never rebuilt them; the bridge had zero property listeners. Two paths now cover it: **prevention** (`keep_bluetooth_playback`, default on — do not open the headset mic while it is also the output, so macOS is never asked to flip to HFP) and **recovery** (output-device format listeners rebuild the whole chain). Plus degraded-capture banners so a bad recording is visible instead of being papered over with invented filler, and a Swift `watchdog-tests` target in both gates.
+
+**T12 verified on hardware** (macOS 26.6.2 / M4 Max / AirPods Pro): a deliberate A2DP→HFP switch forced by another app produces a rebuild within seconds and the audio after it is real speech. That was the sprint's one load-bearing unknown.
+
+**Two things the next reader should not misread.** The 8 s clock-stall watchdog has **never fired on real hardware** — the failure mode here is a tap that keeps clocking while delivering silence, so the listener is what fixes the bug and the watchdog is a guard for a failure that does not occur on this hardware. And `keep_bluetooth_playback` does **not** cover the recorded failure, where the call app forced HFP and Escriba's mic had already moved to the built-in; it covers switches Escriba would otherwise cause itself.
+
+**Process note for the next `metate-discover`.** This sprint spent nine review rounds in three hours hardening a silence-based watchdog that one live run then invalidated — silence is not a tap failure, and rebuilding on it glitches playback. Four of six load-bearing assumptions turned out false (recorded in `.metate/plan.md`), and not one was probeable by code review, because a terminal-launched tap reads digital zeros under TCC. Guards added in `.metate/profile.yml`: hardware-observable assumptions must be probed *before* review, review rounds must write artifacts so the 3-round cap can bite, and a design change now marks the DoD stale so the issue ledger cannot drift from the code the way T1 did.
+
 As of **`append-notes-adapters-calendar-thin`** (2026-07-13, #174–#177) server-side atomic `append-notes` closes the concurrent Enhance race; `webhook` + `custom-script` knowledge adapters ship behind `local-markdown` default; a thin home **Up next** row reads Calendar via `GET /api/calendar/upcoming` with one-tap Record pre-titling. **Product call (H3):** validate the spike on a real Mac before scheduling a full calendar auto-start sprint — see decision note under #64 below.
 
 ---
@@ -411,6 +419,69 @@ Not a milestone of its own; pull these in when adjacent work makes them cheap.
 **Landed in #105 / #174–#177 slices (reference only — not deferred):** persistence indexes (`idx_sessions_folder`, `idx_sessions_status`); config validate-temp-before-write; `mkstemp` config save; bounded `watch_folder` processed set; `TranscriptionError`; `mix_audio` length assert; Swift signal-handler cleanup via `shouldStop`; release-CI docs; install path contract + dirty-tree preflight documented; server-side atomic `append-notes`; `SEEK_STEP_SECONDS` SPA constant; `webhook` + `custom-script` knowledge adapters; thin calendar Up-next API + home UI.
 
 ---
+
+## Deferred from `tap-profile-switch-recovery` (with triggers — read these at next discover)
+
+Recorded across nine review rounds on 2026-08-21 plus the 2026-08-22 design correction. The
+sprint ran in HOLD mode, so these were deliberately not folded in. Note for the next discover:
+rounds 4–9 ran outside `metate-review` and left no artifacts in `.metate/review/`, which is why
+the 3-round cap never forced an early trip to smoke — see the process fix in `.metate/profile.yml`.
+
+- **Built-in-mic detection is a spoofable substring test.** `_is_built_in_mic` matches model-name
+  markers ("macbook", "built-in", …) on a user/attacker-influencable device name, so a virtual
+  audio driver named "MacBook Pro Microphone" would be auto-selected as the fallback input.
+  _Trigger:_ any report of an unexpected capture device, or any widening of the mic-fallback
+  list beyond built-in devices. → verify `kAudioDevicePropertyTransportType ==
+  kAudioDeviceTransportTypeBuiltIn` and keep name markers only as a heuristic.
+  _Raised in priority:_ `_candidate_mic_devices(avoid_output_device=True)` now selects a
+  built-in mic on the *common* `audio_source = "both"` path — whenever the default input is
+  also the output device — so this is no longer a rare-fallback-only concern.
+- **`_default_input_shares_output_device` uses name equality, on a default-on path.** Virtual
+  audio drivers (BlackHole, Loopback, Soundflower) appear as one input and one output entry under
+  the same name, so a user who deliberately set BlackHole as their default output would have their
+  chosen input silently demoted to the built-in mic. The setting is named `keep_bluetooth_playback`,
+  so the correct gate is the transport, not the name. Not fixed in the sprint because sounddevice
+  does not expose transport type — it needs a Core Audio query through the Swift CLI or ctypes,
+  which is real scope. _Trigger:_ any report of an unexpected mic on a machine with a virtual audio
+  device, or any further use of name equality to identify a device. → gate on
+  `kAudioDevicePropertyTransportType == kAudioDeviceTransportTypeBluetooth`. Pairs with the
+  `_is_built_in_mic` item above; fix both in one pass.
+- **`IOProcCallback` allocates on the real-time audio thread.** The multi-buffer mix path calls
+  `malloc`/`free` per callback (`CoreAudioTapBridge.m`). Allocation on the IO thread can block and
+  invert priority, which is a dropout source — worth noting in a codebase whose bug reports are
+  about audio glitches. Pre-existing on `main`, not introduced by the tap sprint, and untouched
+  deliberately to keep the sprint HOLD. _Trigger:_ any dropout or glitch report that the tap
+  rebuild path does not explain, or the next substantive edit to the IO proc. → preallocate a mix
+  buffer on `TapContext` sized to the largest frame count seen, growing under `ctx->lock` only.
+- **The capture device is not persisted on the session.** A fallback recording is unauditable
+  once the banner is gone, which matters because the transcript may have been sent to an
+  opt-in cloud summarizer. _Trigger:_ the next `sessions` schema change, or any user question
+  about which microphone produced a recording. → store `capture_device` + `audio_source` on the
+  row and expose them in `GET /api/sessions/:id`.
+- **VAD is unimplemented for the default backend.** `escriba.toml` keeps `vad_enabled = false`
+  because `streaming_mlx.py` assigns `self.vad_enabled` and never reads it — only the
+  faster-whisper path honours it. So nothing at the transcriber level suppresses hallucinated
+  filler on near-silent audio; the sprint addresses that upstream by keeping the tap alive
+  instead. _Trigger:_ hallucinated segments reported on a session whose capture was healthy, or
+  any move to make VAD a user-facing setting. → implement a level gate in the MLX path before
+  the model call, or make the flag's inertness explicit in the config UI.
+- **The SPA has no test seam.** The warning banner's dismissal TTL, source keying and
+  `showNotice`/`hideNotice` logic live in an inline script in the single-file dashboard and are
+  covered only by code inspection — `pytest` cannot reach them. Dismissal is sticky per source
+  for the rest of the recording and is cleared only on the next recording start/stop: there is no
+  TTL, despite an inline comment that claims dismissals "expire automatically". T8 was scoped down
+  to match the code on 2026-09-01. _Trigger:_ a user reporting a banner they dismissed and then
+  wanted back, a third defect in banner/notice behaviour, or any growth of client-side state
+  beyond the current dismissal Map. → add a re-show TTL (~5 min) and delete the stale comment.
+  → stand up a minimal browser-automation check rather than widening the inline script further.
+- **Swift coverage stops at the pure verdict functions.** `watchdog-tests` covers the watchdog
+  verdict and the failure-backoff arithmetic, but tap creation, the aggregate device, IO-proc
+  delivery, listener dispatch and the round-trip Bluetooth profile switch are untestable
+  headlessly (TCC yields digital zeros to non-app processes). The target is a standalone
+  executable rather than XCTest because the active toolchain is CLT
+  (`xcode-select -p` → CommandLineTools) even though Xcode.app is installed. _Trigger:_ a
+  concurrency or lifetime defect in the bridge that the verdict tests cannot express, or the
+  toolchain moving to full Xcode. → switch to XCTest and/or add a hardware-in-the-loop check.
 
 ## How we work
 
