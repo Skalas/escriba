@@ -960,6 +960,17 @@ class _Handler(BaseHTTPRequestHandler):
                 # pin the dashboard banner open for the rest of the app's life.
                 if not session.is_active and status.get("error"):
                     status["error"] = session.consume_error()
+                # W1: peek while recording so one-shot warnings (direct, mic_fallback)
+                # survive status calls that do not render the warning field; pop only
+                # when the session has stopped (re-armed warnings reset in stop() anyway).
+                if session.is_active:
+                    warning_item = session.peek_warning_item()
+                else:
+                    warning_item = session.consume_warning_item()
+                if warning_item:
+                    source, msg = warning_item
+                    status["warning"] = msg
+                    status["warning_source"] = source
                 return status
         return {"ok": True, "is_active": False, "session_id": None}
 

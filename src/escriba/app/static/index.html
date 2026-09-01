@@ -973,6 +973,26 @@
   #notice-banner.info {
     border-left: 3px solid var(--accent);
   }
+  #notice-banner.warn {
+    border-left: 3px solid var(--warning);
+  }
+  #notice-banner .notice-close {
+    background: transparent;
+    border: none;
+    color: var(--warning);
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0 0 0 8px;
+    cursor: pointer;
+    vertical-align: middle;
+    min-width: 28px;
+    min-height: 28px;
+  }
+  #notice-banner .notice-close:focus-visible {
+    outline: 2px solid var(--warning);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
   #notice-banner .notice-link {
     color: var(--accent);
     font-weight: 700;
@@ -1712,6 +1732,11 @@
             <option value="both">System + Mic (calls)</option>
           </select>
         </div>
+        <div class="settings-row">
+          <span class="settings-label">Keep stereo Bluetooth playback</span>
+          <label class="settings-toggle"><input type="checkbox" id="s-keep-bt-playback" aria-label="Keep stereo Bluetooth playback"><span class="slider"></span></label>
+        </div>
+        <p class="theme-swatch-desc" style="margin:0 0 8px;">When your headphones are also the microphone, record with the Mac mic instead. Opening the headset mic switches macOS to call mode — mono playback and a silent system-audio tap.</p>
         <div class="settings-row">
           <span class="settings-label">Mic Boost</span>
           <input type="number" class="settings-input" id="s-mic-boost" step="0.1" min="0.1" max="5.0">
@@ -2636,6 +2661,7 @@ async function toggleRecording(eventTitle) {
     }
   } else {
     hideError();
+    _dismissedWarnings.clear();
     btn.disabled = true;
     const title = (eventTitle || '').trim();
     const startBody = title ? { name: title } : {};
@@ -2707,6 +2733,7 @@ async function syncStatus() {
     lastWasRecording = isRecording;
     if (document.getElementById('settings-view').style.display !== 'none') updateSettingsSaveState();
     if (s.error) showError(s.error);
+    if (s.warning) showNotice(s.warning, { type: 'warn', timeout: WARNING_BANNER_TIMEOUT_MS, warningSource: s.warning_source });
   } catch (e) {}
 }
 
@@ -3666,11 +3693,31 @@ function runExportAction(action) {
 }
 
 let noticeDismissTimer = null;
+// B5/W8: track which warning sources the user has explicitly dismissed.
+// Keyed on warning_source (a stable identifier like "mic_fallback") rather than
+// message text, which interpolates device names — so dismissing one banner
+// never suppresses a different condition.
+// There is NO time-based expiry. An earlier version of this comment claimed
+// suppression was bounded by a WARNING_SUPPRESS_TTL_MS that was never written.
+// A dismissal is sticky for the rest of the recording and clears only on
+// recording start/stop. That is deliberate — the status poll runs every 3s and
+// a re-showing banner would be unusable — but a user who dismisses a still-true
+// warning does not get it back until the next recording. A re-show TTL (~5 min)
+// is deferred with a trigger in ROADMAP.md; T8 was scoped to match this code.
+const _dismissedWarnings = new Map();
+const WARNING_BANNER_TIMEOUT_MS = 15000;
 
-function hideNotice() {
+function hideNotice(userDismissed) {
   const banner = document.getElementById('notice-banner');
   if (!banner) return;
-  banner.classList.remove('visible', 'success', 'info');
+  // B2: dismissal is sticky for the session; cleared on recording start.
+  // Per-source keying means a NEW source still surfaces.
+  if (userDismissed && banner._warningSource) {
+    _dismissedWarnings.set(banner._warningSource, true);
+  }
+  banner._warningSource = null;
+  banner._warningMessage = null;
+  banner.classList.remove('visible', 'success', 'info', 'warn');
   banner.textContent = '';
   banner.innerHTML = '';
   if (noticeDismissTimer) {
@@ -3682,9 +3729,22 @@ function hideNotice() {
 function showNotice(message, opts = {}) {
   const banner = document.getElementById('notice-banner');
   if (!banner) return;
-  hideNotice();
+  if (opts.type === 'warn' && opts.warningSource) {
+    // B2: if the exact same warning is already showing, do nothing — avoids
+    // DOM rebuild every 3s that resets the dismiss timer and replaces the × button.
+    if (banner._warningSource === opts.warningSource &&
+        banner._warningMessage === message &&
+        banner.classList.contains('visible')) return;
+    // B2/B5: suppress re-show of a source the user explicitly dismissed this session.
+    if (_dismissedWarnings.has(opts.warningSource)) return;
+  }
+  hideNotice(false);
   const type = opts.type || 'info';
   banner.className = 'visible ' + type;
+  if (opts.type === 'warn') {
+    banner._warningSource = opts.warningSource || null;
+    banner._warningMessage = message;
+  }
   if (opts.action && opts.action.sid) {
     const before = opts.action.before || message || '';
     const after = opts.action.after || '';
@@ -3695,13 +3755,21 @@ function showNotice(message, opts = {}) {
       escHtml(after);
     banner.querySelector('.notice-link').addEventListener('click', (e) => {
       e.preventDefault();
-      hideNotice();
+      hideNotice(false);
       selectSession(opts.action.sid);
     });
+  } else if (opts.type === 'warn') {
+    // Warn banners get an explicit close button so the user can dismiss intentionally.
+    // Clicking × triggers the 5-min suppression window; the auto-timer does not.
+    banner.innerHTML =
+      escHtml(message) +
+      '<button class="notice-close" aria-label="Dismiss">×</button>';
+    banner.querySelector('.notice-close').addEventListener('click', () => hideNotice(true));
   } else {
     banner.textContent = message;
   }
-  noticeDismissTimer = setTimeout(hideNotice, 3500);
+  // B5: timer calls hideNotice(false) — auto-dismiss is NOT a user dismissal.
+  noticeDismissTimer = setTimeout(() => hideNotice(false), opts.timeout || 3500);
 }
 
 async function copyToClipboard(text) {
@@ -4309,6 +4377,7 @@ async function loadSettings() {
     if (!res.ok) return;
     const c = res.config;
     document.getElementById('s-audio-source').value = c.audio.audio_source || 'system';
+    document.getElementById('s-keep-bt-playback').checked = c.audio.keep_bluetooth_playback !== false;
     document.getElementById('s-mic-boost').value = c.audio.mic_boost;
     document.getElementById('s-sample-rate').value = c.audio.sample_rate;
     document.getElementById('s-model-size').value = c.streaming.model_size;
@@ -4590,6 +4659,7 @@ async function saveSettings() {
   const body = {
     audio: {
       audio_source: document.getElementById('s-audio-source').value,
+      keep_bluetooth_playback: document.getElementById('s-keep-bt-playback').checked,
       mic_boost: parseFloat(document.getElementById('s-mic-boost').value),
       sample_rate: parseInt(document.getElementById('s-sample-rate').value),
     },
