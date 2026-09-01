@@ -457,6 +457,10 @@ class AudioConfig:
     auto_detect_devices: bool = True
     system_device: str = "0"
     mic_device: str = "1"
+    # When the default input is also the default output (AirPods, etc.),
+    # record with the built-in mic instead so macOS does not flip the
+    # headset to HFP. Off = use the headset mic and accept mono playback.
+    keep_bluetooth_playback: bool = True
 
 
 def _resolve(toml_value, env_fallback_fn):
@@ -630,6 +634,7 @@ class AppConfig:
         auto_detect = _get_toml_bool(audio_section, "auto_detect_devices")
         system_device = _get_toml_str(audio_section, "system_device")
         mic_device = _get_toml_str(audio_section, "mic_device")
+        keep_bluetooth_playback = _get_toml_bool(audio_section, "keep_bluetooth_playback")
 
         # Resolve audio_source: prefer explicit setting, fall back to mic_only compat
         resolved_mic_only = _resolve(mic_only, lambda: get_bool_env("MIC_ONLY", False))
@@ -647,6 +652,10 @@ class AppConfig:
             auto_detect_devices=_resolve(auto_detect, lambda: get_bool_env("AUTO_DETECT_DEVICES", True)),
             system_device=_resolve(system_device, lambda: get_str_env("SYSTEM_DEVICE", "0")),
             mic_device=_resolve(mic_device, lambda: get_str_env("MIC_DEVICE", "1")),
+            keep_bluetooth_playback=_resolve(
+                keep_bluetooth_playback,
+                lambda: get_bool_env("KEEP_BLUETOOTH_PLAYBACK", True),
+            ),
         )
 
         # Streaming
@@ -921,6 +930,7 @@ def config_to_dict(cfg: AppConfig) -> dict[str, Any]:
             "auto_detect_devices": cfg.audio.auto_detect_devices,
             "system_device": cfg.audio.system_device,
             "mic_device": cfg.audio.mic_device,
+            "keep_bluetooth_playback": cfg.audio.keep_bluetooth_playback,
         },
         "streaming": {
             "chunk_duration": cfg.streaming.chunk_duration,
