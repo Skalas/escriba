@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import atexit
 import concurrent.futures
 import functools
 import json
 import logging
 import os
 import random
+import signal
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -26,6 +29,14 @@ _LOCAL_GENERATION_TIMEOUT = 300  # seconds; token generation only
 # Parent ProcessPool wait exceeds load+gen so IPC/scheduling skew does not kill
 # a worker that met both internal budgets.
 _LOCAL_INFERENCE_PARENT_GRACE_SECONDS = 60
+# How often a worker checks whether its parent is still alive (#215).
+_ORPHAN_WATCHDOG_POLL_SECONDS = 5.0
+# How long the startup sweep waits for SIGTERM before escalating to SIGKILL.
+_ORPHAN_REAP_GRACE_SECONDS = 5.0
+# Bounded wait for the inference lock during shutdown; see _LocalInferenceProcess.
+_SHUTDOWN_LOCK_TIMEOUT = 2.0
+# Command-line markers identifying a ProcessPoolExecutor worker or its tracker.
+_ORPHAN_CMD_MARKERS = ("multiprocessing.spawn", "multiprocessing.resource_tracker")
 
 T = TypeVar("T")
 
@@ -282,6 +293,64 @@ _model_cache = _LocalModelCache()
 # T1: Subprocess-based local inference
 # ---------------------------------------------------------------------------
 
+_watchdog_started = False
+_watchdog_lock = threading.Lock()
+
+
+def _exit_when_orphaned(initial_ppid: int, poll_seconds: float) -> None:
+    """Self-reap once this worker's parent is gone (#215).
+
+    Pool workers stopped being daemonic in CPython 3.9, so when the app dies by
+    AppKit teardown or SIGKILL nothing reaps them: launchd adopts the worker and
+    its ~14 GB model stays resident until the machine is rebooted. Comparing
+    against the parent observed at start rather than testing ``ppid == 1``
+    detects reparenting without misfiring in a process legitimately owned by
+    launchd -- which the app itself is.
+
+    ``os._exit`` is deliberate: it skips atexit and interpreter finalization,
+    neither of which has anything worth flushing here, and it cannot be blocked
+    by a worker already wedged inside a Metal call.
+    """
+    while True:
+        if os.getppid() != initial_ppid:
+            os._exit(0)
+        time.sleep(poll_seconds)
+
+
+def _ensure_orphan_watchdog(parent_pid: int) -> None:
+    """Start the parent-death watchdog once per worker process.
+
+    ``parent_pid`` must be evaluated in the *parent* and passed in. Reading
+    ``os.getppid()` here instead would lose the race where the parent dies
+    during spawn: the child would then take 1 as its own baseline and never
+    consider itself orphaned -- disarming the watchdog for exactly the worker
+    that most needs it.
+
+    Only ever called in a pool worker. Arming it in the parent would make the
+    app exit on its own reparenting, which is normal for a launchd-owned app.
+    """
+    global _watchdog_started
+    with _watchdog_lock:
+        if _watchdog_started:
+            return
+        threading.Thread(
+            target=_exit_when_orphaned,
+            args=(parent_pid, _ORPHAN_WATCHDOG_POLL_SECONDS),
+            name="mlx-orphan-watchdog",
+            daemon=True,
+        ).start()
+        _watchdog_started = True
+
+
+def _worker_init(parent_pid: int) -> None:
+    """Pool worker bootstrap: arm the parent-death watchdog before any work.
+
+    Runs as the ProcessPoolExecutor initializer, so the watchdog is live from
+    worker startup rather than from the first task body.
+    """
+    _ensure_orphan_watchdog(parent_pid)
+
+
 def _subprocess_run_inference(
     prompt: str,
     model_id: str,
@@ -342,12 +411,54 @@ class _LocalInferenceProcess:
     def __init__(self) -> None:
         self._executor: concurrent.futures.ProcessPoolExecutor | None = None
         self._lock = threading.RLock()
+        # Set once shutdown starts and never cleared: the process is going away.
+        self._shutting_down = False
 
     def _get_executor(self) -> concurrent.futures.ProcessPoolExecutor:
         with self._lock:
+            if self._shutting_down:
+                raise RuntimeError("Local inference is shutting down")
             if self._executor is None:
-                self._executor = concurrent.futures.ProcessPoolExecutor(max_workers=1)
+                self._executor = concurrent.futures.ProcessPoolExecutor(
+                    max_workers=1,
+                    initializer=_worker_init,
+                    initargs=(os.getpid(),),
+                )
             return self._executor
+
+    def shutdown(self, *, lock_timeout: float = _SHUTDOWN_LOCK_TIMEOUT) -> None:
+        """Kill the worker and drop the pool.
+
+        Idempotent and safe to call when no pool has been created. This is the
+        supported entry point for callers outside this module -- the app must
+        not reach into ``_reset_executor``.
+
+        Deliberately does *not* block on the lock the way ``_reset_executor``
+        does: ``run`` holds it across a wait of up to ~16 minutes, and quit runs
+        on the main thread. Waiting would freeze the app whenever a summary is
+        in flight -- precisely when the user force-quits, stranding the very
+        worker this is meant to reap. If the lock is busy we kill the workers
+        anyway; the in-flight ``run`` then sees a broken pool and resets it
+        through its own exception path.
+        """
+        # Raised before the lock attempt so a run() blocked on the lock sees it
+        # the moment it wakes, rather than rebuilding the pool we just killed.
+        self._shutting_down = True
+        acquired = self._lock.acquire(timeout=lock_timeout)
+        try:
+            executor = self._executor
+            if executor is None:
+                return
+            self._terminate_workers(executor)
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                logger.debug("Inference pool shutdown failed", exc_info=True)
+            if acquired:
+                self._executor = None
+        finally:
+            if acquired:
+                self._lock.release()
 
     def _reset_executor(self, *, kill_workers: bool = False) -> None:
         with self._lock:
@@ -375,7 +486,16 @@ class _LocalInferenceProcess:
         procs = getattr(executor, "_processes", None)
         if not procs:
             return
-        workers = list(procs.values())
+        # shutdown() may call this without the lock, concurrently with the
+        # pool's own manager thread mutating _processes.
+        try:
+            workers = list(procs.values())
+        except RuntimeError:
+            try:
+                workers = list(procs.values())
+            except RuntimeError:
+                logger.warning("Could not snapshot inference workers to terminate")
+                return
         for proc in workers:
             try:
                 if proc.is_alive():
@@ -401,15 +521,25 @@ class _LocalInferenceProcess:
         job_timeout = _LOCAL_MODEL_LOAD_TIMEOUT + _LOCAL_GENERATION_TIMEOUT
         parent_timeout = job_timeout + _LOCAL_INFERENCE_PARENT_GRACE_SECONDS
         for attempt in range(LOCAL_MODEL_MAX_ATTEMPTS):
+            # Checked every attempt, not just the first: a shutdown that loses
+            # the lock race breaks the in-flight pool, and retrying that here
+            # would spawn a fresh 14 GB worker as the app exits -- orphaning it.
+            if self._shutting_down:
+                logger.info("Declining local inference: shutdown in progress")
+                return None
             with self._lock:
-                executor = self._get_executor()
-                future = executor.submit(
-                    _subprocess_run_inference,
-                    prompt,
-                    model_id,
-                    max_tokens,
-                    enable_thinking,
-                )
+                try:
+                    executor = self._get_executor()
+                    future = executor.submit(
+                        _subprocess_run_inference,
+                        prompt,
+                        model_id,
+                        max_tokens,
+                        enable_thinking,
+                    )
+                except RuntimeError as exc:
+                    logger.info("Local inference unavailable: %s", exc)
+                    return None
                 try:
                     return future.result(timeout=parent_timeout)
                 except TimeoutError as exc:
@@ -443,6 +573,124 @@ class _LocalInferenceProcess:
 
 
 _local_inference_process = _LocalInferenceProcess()
+
+
+def shutdown_local_inference() -> None:
+    """Reap the persistent local-inference worker (#215).
+
+    Registered below as an atexit hook and called explicitly from the menu bar
+    quit path, which tears down through AppKit and never reaches atexit.
+    """
+    try:
+        _local_inference_process.shutdown()
+    except Exception:
+        logger.warning("Local inference shutdown failed", exc_info=True)
+
+
+atexit.register(shutdown_local_inference)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _signal_pid(pid: int, sig: int) -> None:
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        logger.debug("Could not signal orphaned worker %d", pid, exc_info=True)
+
+
+def _find_orphaned_worker_pids() -> list[int]:
+    """PIDs of pool workers from previous runs that launchd has adopted.
+
+    A worker belonging to a *live* Escriba is parented to that app, not to
+    launchd, so restricting the sweep to ``PPID 1`` keeps a concurrently running
+    instance's in-flight inference safe.
+    """
+    if sys.prefix == sys.base_prefix:
+        # Outside a venv, sys.prefix is a shared interpreter prefix and would
+        # match other applications' pool workers. Ownership is unprovable here.
+        logger.debug("Not running from a venv; skipping the orphan sweep")
+        return []
+
+    try:
+        completed = subprocess.run(
+            ["ps", "-Ao", "pid=,ppid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except Exception:
+        logger.debug("Could not enumerate processes for the orphan sweep", exc_info=True)
+        return []
+
+    self_pid = os.getpid()
+    pids: list[int] = []
+    for line in completed.stdout.splitlines():
+        parts = line.split(maxsplit=2)
+        if len(parts) < 3:
+            continue
+        pid_text, ppid_text, command = parts
+        if ppid_text != "1" or sys.prefix not in command:
+            continue
+        if not any(marker in command for marker in _ORPHAN_CMD_MARKERS):
+            continue
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid != self_pid:
+            pids.append(pid)
+    return pids
+
+
+def reap_orphaned_inference_workers(
+    *, grace_seconds: float = _ORPHAN_REAP_GRACE_SECONDS
+) -> int:
+    """SIGTERM inference workers stranded by earlier app runs (#215).
+
+    Existing installs already carry orphans that no amount of new shutdown code
+    can reach, and each one pins ~14 GB. Running this at startup is what makes
+    the fix retroactive. Returns the number of processes signalled.
+    """
+    pids = _find_orphaned_worker_pids()
+    if not pids:
+        return 0
+
+    logger.warning(
+        "Reaping %d orphaned inference worker(s) left by a previous run: %s",
+        len(pids),
+        ", ".join(str(pid) for pid in pids),
+    )
+    for pid in pids:
+        _signal_pid(pid, signal.SIGTERM)
+
+    # Re-check liveness before escalating so a worker that already exited on
+    # SIGTERM is not signalled again. This narrows, but cannot close, the
+    # PID-reuse window: a recycled PID reads as alive. Must run at least once
+    # even when the grace is zero.
+    deadline = time.monotonic() + grace_seconds
+    survivors = [pid for pid in pids if _pid_alive(pid)]
+    while survivors and time.monotonic() < deadline:
+        time.sleep(0.25)
+        survivors = [pid for pid in survivors if _pid_alive(pid)]
+    for pid in survivors:
+        logger.warning("Orphaned worker %d ignored SIGTERM; sending SIGKILL", pid)
+        _signal_pid(pid, signal.SIGKILL)
+
+    return len(pids)
 
 
 def configure_local_cache(ttl: int = 300) -> None:

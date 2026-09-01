@@ -15,6 +15,10 @@ from escriba.app.menubar import TranscriberMenuBar
 def _stub_quit_application(monkeypatch):
     """quit_app ends with rumps.quit_application(); never run the real one in tests."""
     monkeypatch.setattr(menubar.rumps, "quit_application", lambda: None)
+    # quit_app also reaps the shared inference singleton (#215), which latches a
+    # permanent shutting-down flag. Real for an exiting app, poison for a test
+    # session: later tests would find local inference refusing to start.
+    monkeypatch.setattr(menubar, "shutdown_local_inference", lambda: None)
 
 
 class _FakeAppState:
@@ -135,3 +139,25 @@ def test_t4_quit_closes_db_when_no_active_session():
     TranscriberMenuBar.quit_app(self, None)
 
     assert db.closed is True
+
+
+def test_215_quit_reaps_the_local_inference_worker(monkeypatch):
+    """rumps.quit_application() bypasses atexit, so quit must reap explicitly.
+
+    Without this the non-daemon MLX worker is adopted by launchd holding ~14 GB,
+    once per app restart, until reboot.
+    """
+    events: list[str] = []
+    monkeypatch.setattr(
+        menubar, "shutdown_local_inference", lambda: events.append("shutdown")
+    )
+    monkeypatch.setattr(menubar.rumps, "quit_application", lambda: events.append("quit"))
+
+    class FakeDB:
+        def close(self):
+            events.append("db")
+
+    TranscriberMenuBar.quit_app(_fake_menubar(None, FakeDB()), None)
+
+    # The worker must be gone before AppKit tears the interpreter down.
+    assert events == ["db", "shutdown", "quit"]

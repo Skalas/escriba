@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import plistlib
+import signal
 import stat
 import subprocess
+import threading
 import time
 from enum import Enum
 from pathlib import Path
@@ -17,6 +20,10 @@ from escriba.app.database import Database
 from escriba.app.server import AppState, PORT, _ThreadingHTTPServer, start_server
 from escriba.audio.call_state import CallEvent
 from escriba.config import AppConfig
+from escriba.summarize.llm_summary import (
+    reap_orphaned_inference_workers,
+    shutdown_local_inference,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -478,7 +485,44 @@ class TranscriberMenuBar(rumps.App):
         # Only close the DB once we know no stop is still writing to it.
         if stop_completed:
             self.db.close()
+        # rumps.quit_application() terminates through AppKit, so the atexit hook
+        # concurrent.futures relies on never runs and the (non-daemon) MLX
+        # worker would be adopted by launchd holding ~14 GB (#215).
+        shutdown_local_inference()
         rumps.quit_application()
+
+
+def _install_inference_shutdown_signals() -> None:
+    """Reap the inference worker on SIGTERM, then fall back to the default.
+
+    Covers ordinary termination (``kill``, ``launchctl stop``). SIGINT is
+    deliberately not handled: ``rumps.App.run`` installs a Mach interrupt
+    handler that replaces any Python-level SIGINT handler, so Ctrl-C routes
+    straight to ``NSApp.terminate:`` and a handler registered here would be
+    dead code. That path, like SIGKILL and AppKit teardown, is covered by the
+    worker-side watchdog.
+    """
+    try:
+        previous = signal.getsignal(signal.SIGTERM)
+    except (ValueError, OSError):
+        logger.debug("Could not read the current SIGTERM handler", exc_info=True)
+        return
+
+    def _handler(signum, frame, _previous=previous):
+        shutdown_local_inference()
+        if callable(_previous):
+            _previous(signum, frame)
+            return
+        # SIG_DFL, SIG_IGN, or None (a handler installed from non-Python code,
+        # which PyObjC does). Falling through without re-raising would consume
+        # the signal and leave the app running.
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    try:
+        signal.signal(signal.SIGTERM, _handler)
+    except (ValueError, OSError):
+        logger.debug("Could not install the SIGTERM shutdown handler", exc_info=True)
 
 
 def run_menubar_app(config: AppConfig | None = None):
@@ -505,6 +549,21 @@ def run_menubar_app(config: AppConfig | None = None):
         configure_local_cache(ttl=config.local_llm.cache_ttl)
     except Exception:
         logger.debug("Could not configure local LLM cache", exc_info=True)
+
+    # Installs predating #215 have stranded workers no shutdown hook can reach.
+    # Runs off the main thread: the sweep shells out to ps and can wait out a
+    # SIGTERM grace, and nothing should delay the menu bar appearing.
+    def _sweep_orphans() -> None:
+        try:
+            reap_orphaned_inference_workers()
+        except Exception:
+            logger.warning("Orphaned inference worker sweep failed", exc_info=True)
+
+    threading.Thread(
+        target=_sweep_orphans, name="inference-orphan-sweep", daemon=True
+    ).start()
+
+    _install_inference_shutdown_signals()
 
     # Pre-build dashboard app at startup (so first "Open Dashboard" is instant)
     try:
