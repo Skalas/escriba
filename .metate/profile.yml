@@ -13,7 +13,6 @@ implementer:
   model: claude-sonnet-4-6 # blank = adapter default
   autonomous: false        # claude backend only. true → bootstrap whitelists `Bash(claude -p:*)`
 
-sessionFile: ".metate/session.json"
 isolation: none            # none | worktree
 
 # --- review (metate-review) -----------------------------------------------
@@ -35,7 +34,7 @@ reviewFocus: |
   - .env values never carry inline comments (python-dotenv parses them into the value).
 
 # --- prep (metate-prep) ---------------------------------------------------
-prep:
+start:
   baseBranch: main
   readingOrder:            # docs to read before building, in order
     - ROADMAP.md
@@ -77,7 +76,7 @@ assumptions:
 # --- smoke (metate-smoke) -------------------------------------------------
 # No automated e2e suite (menubar app). Behavior proof = run the app and exercise
 # the record → transcribe → summarize loop in the dashboard.
-smoke:
+verify:
   command: "uv run escriba app"   # launch app + dashboard at http://127.0.0.1:19876
   seedCommand: ""                 # n/a — no fixture seed
   humanGates:                     # hardware-only criteria, walked by the user
@@ -87,7 +86,7 @@ smoke:
       why: "The only recovery path covering the recorded failure. Cannot be verified headlessly — a terminal tap reads digital zeros under TCC."
 
 # --- aftercare (metate-aftercare) -----------------------------------------
-aftercare:
+ship:
   release:
     enabled: true
     scheme: semver
@@ -101,45 +100,41 @@ aftercare:
     # So a release here means: bump pyproject.toml + the src/escriba/__init__.py
     # fallback in the sprint PR, and let ship cut the tag after merge.
     versionFile: "pyproject.toml"
-    planFile: ".metate/release.json"
   deliverables:
     - ROADMAP.md           # update milestone checkboxes / "Where we are"
     - CHANGELOG.md         # create/append the release feature list
     - README.md            # keep feature list + version current
 
-# --- ship (metate-ship) ---------------------------------------------------
-ship:
   prTarget: main
   commitStyle: "conventional, bisectable, one per layer"
   issueCloseKeyword: "Closes"   # PR body keyword for auto-close
-issueLedger: ".metate/issues.json"   # issues filed by prep, read by ship for auto-close
 codebaseMemory:
   enabled: true            # codebase-memory-mcp wired + repo indexed (project Users-skalas-github-skalas-escriba)
   reindex: git             # git | always | manual — refresh the graph between rounds after the implementer patches
   indexCommand: ""         # blank = rely on the auto_index git watcher; else an explicit reindex command
-review:
+# --- build (metate-build): round 0 writes, rounds 1–3 review
+build:
   autoFix: all
-  maxRounds: 3             # the engine's cap — see enforce below
-  # `tap-profile-switch-recovery` ran NINE rounds. Rounds 4-9 ran outside
-  # metate-review and left no artifacts in .metate/review/, so the cap never
-  # applied. The cap is not bureaucracy: it is the signal to stop polishing and
-  # go get real feedback. Had it fired at round 3, the 2026-08-22 correction
-  # would have arrived before six more rounds of hardening the wrong design.
-  enforce: artifacts       # every round must write .metate/review/round<N>-findings.json
-  onCapReached: go-to-smoke  # a 4th round is a smoke trip, not another round
-  # A design change invalidates the acceptance criteria. metate had no step that
-  # reconciled the two, which is how T1 came to assert the exact opposite of the
-  # code while issue #205 still carried the original wording and would have been
-  # auto-closed by the PR.
-  onDesignChange: rederive-dod   # editing the plan's design marks the DoD stale
-  dodStaleBlocksShip: true       # ship refuses until T* and the ledger agree
-discover:
+    maxRounds: 3             # the engine's cap — see enforce below
+    # `tap-profile-switch-recovery` ran NINE rounds. Rounds 4-9 ran outside
+    # metate-review and left no artifacts in .metate/review/, so the cap never
+    # applied. The cap is not bureaucracy: it is the signal to stop polishing and
+    # go get real feedback. Had it fired at round 3, the 2026-08-22 correction
+    # would have arrived before six more rounds of hardening the wrong design.
+    enforce: artifacts       # every round must write .metate/review/round<N>-findings.json
+    onCapReached: go-to-smoke  # a 4th round is a smoke trip, not another round
+    # A design change invalidates the acceptance criteria. metate had no step that
+    # reconciled the two, which is how T1 came to assert the exact opposite of the
+    # code while issue #205 still carried the original wording and would have been
+    # auto-closed by the PR.
+    onDesignChange: rederive-dod   # editing the plan's design marks the DoD stale
+    dodStaleBlocksShip: true       # ship refuses until T* and the ledger agree
+scope:
   signals:                 # which sources to sweep for candidate work
     aftercare: true        # last sprint's deliverables (roadmap, next-sprint pointers) — the loop-closing input
     codebaseMemory: true   # graph: dead code, high fan-out, churn, coverage gaps (needs codebaseMemory.enabled)
     issues: true           # open gh issues + techDebtFile items whose trigger has fired
     gitHistory: true       # churn hotspots + TODO/FIXME/HACK scan (cheapest, noisiest)
-  planFile: ".metate/plan.md"   # discover writes here; prep reads it as its entry doc
   candidates: 5            # how many ranked candidates to propose
 orchestrator:
   backend: claude          # claude | codex | cursor
