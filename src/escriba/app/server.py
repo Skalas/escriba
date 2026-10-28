@@ -169,7 +169,14 @@ class AppState:
                         503,
                     )
                 else:
-                    response = ({"ok": True}, 200)
+                    response = (
+                        {
+                            "ok": True,
+                            "status": "started",
+                            "session_id": new_session.canonical_session_id,
+                        },
+                        200,
+                    )
 
         return response
 
@@ -248,6 +255,7 @@ else:
     STATIC_DIR = Path(__file__).parent / "static"
 
 PORT = 19876
+WAV_HEADER_BYTES = 44
 
 _CALENDAR_ALLOWLIST_MISMATCH_HINT = (
     "None of your selected calendars were found in Calendar.app. "
@@ -946,6 +954,29 @@ class _Handler(BaseHTTPRequestHandler):
             raise ApiError("Database not available", 503)
         return db
 
+    def _trigger_knowledge_export(self, session_id: str) -> None:
+        """Re-sync a saved session to the knowledge store after it changed.
+
+        Active recordings are skipped: ``TranscriptionSession.stop()`` exports
+        them once finalized.
+        """
+        db = self._get_db()
+        with self.app_state._lock:
+            config = self.app_state.config
+            active = self.app_state.session
+        if not db or not config:
+            return
+        if active and active.is_active and active.db_session_id == session_id:
+            return
+        from escriba.knowledge.export_worker import run_knowledge_store_export
+
+        threading.Thread(
+            target=run_knowledge_store_export,
+            args=(db, session_id, config),
+            daemon=True,
+            name=f"knowledge-export-{session_id[:8]}",
+        ).start()
+
     def _get_db(self) -> Database | None:
         return self.app_state.db
 
@@ -1115,6 +1146,7 @@ class _Handler(BaseHTTPRequestHandler):
             if speaker_key not in known_speakers:
                 return {"ok": False, "error": "Unknown speaker for session"}, 400
         db.set_speaker_label(session_id, speaker_key, display_name)
+        self._trigger_knowledge_export(session_id)
         return {"ok": True}, 200
 
     def _start_recording(self, body: dict | None = None) -> tuple[dict, int]:
@@ -1130,12 +1162,13 @@ class _Handler(BaseHTTPRequestHandler):
             if not session or not session.is_active:
                 return {"ok": False, "error": "Not recording"}, 409
             db_session_id = session.db_session_id
+            accepted_ids = {db_session_id, session.session_id} - {None}
         if not db_session_id:
             return {"ok": False, "error": "Session not yet created"}, 409
         client_session_id = body.get("session_id")
         if not client_session_id or not isinstance(client_session_id, str):
             raise ApiError("session_id is required", 400)
-        if client_session_id != db_session_id:
+        if client_session_id not in accepted_ids:
             return {"ok": False, "error": "Session mismatch"}, 409
         db = self._require_db()
         user_notes = body.get("user_notes", "")
@@ -1166,9 +1199,9 @@ class _Handler(BaseHTTPRequestHandler):
             return not_ready
 
         try:
-            notes = session.generate_notes(prompt=prompt, model=model)
-            if notes:
-                return {"ok": True, "notes": notes}, 200
+            result = session.generate_notes(prompt=prompt, model=model)
+            if result:
+                return result, 200
             return {
                 "ok": False,
                 "error": "No transcript to summarize, or API key not set",
@@ -1248,6 +1281,7 @@ class _Handler(BaseHTTPRequestHandler):
         # matches split symmetry; user's manually-typed name is replaced
         # if the LLM returns a better one.
         self._regenerate_title(db, merged_id)
+        self._trigger_knowledge_export(merged_id)
 
         return {"ok": True, "session_id": merged_id}, 200
 
@@ -1355,6 +1389,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         first_title = self._regenerate_title(db, session_id)
         second_title = self._regenerate_title(db, new_id)
+        self._trigger_knowledge_export(session_id)
+        self._trigger_knowledge_export(new_id)
 
         return {
             "ok": True,
@@ -1402,6 +1438,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not db.get_session(session_id):
             return {"ok": False, "error": "Session not found"}, 404
         db.rename_session(session_id, name)
+        self._trigger_knowledge_export(session_id)
         return {"ok": True}, 200
 
     def _delete_session(self, session_id: str) -> tuple[dict, int]:
@@ -1438,6 +1475,16 @@ class _Handler(BaseHTTPRequestHandler):
             with self.app_state._lock:
                 config = self.app_state.config
             segments = retranscribe_from_wav(audio_path, config)
+            if not segments and audio_path.stat().st_size > WAV_HEADER_BYTES:
+                logger.warning(
+                    "Re-transcribe of %s produced no segments; keeping transcript",
+                    session_id,
+                )
+                return {
+                    "ok": False,
+                    "error": "Re-transcription produced no segments; "
+                    "existing transcript preserved",
+                }, 500
 
             db.delete_segments(session_id)
             if segments:
@@ -1450,6 +1497,7 @@ class _Handler(BaseHTTPRequestHandler):
                 db.set_session_status(session_id, "completed")
                 self._discard_stale_session_error(session_id)
 
+            self._trigger_knowledge_export(session_id)
             return {"ok": True, "segment_count": len(segments)}, 200
         except Exception as e:
             logger.error("Re-transcribe failed: %s", e, exc_info=True)
@@ -1848,6 +1896,7 @@ class _Handler(BaseHTTPRequestHandler):
         if notes is None:
             notes = ""
         db.save_notes(session_id, notes)
+        self._trigger_knowledge_export(session_id)
         return {"ok": True}, 200
 
     def _append_notes(self, session_id: str, body: dict) -> tuple[dict, int]:
@@ -1860,6 +1909,7 @@ class _Handler(BaseHTTPRequestHandler):
         combined = db.append_notes(session_id, new_notes)
         if combined is None:
             return {"ok": False, "error": "Session not found"}, 404
+        self._trigger_knowledge_export(session_id)
         return {"ok": True, "notes_text": combined}, 200
 
     def _save_session_user_notes(self, session_id: str, body: dict) -> tuple[dict, int]:
@@ -1872,6 +1922,7 @@ class _Handler(BaseHTTPRequestHandler):
         if user_notes is None:
             user_notes = ""
         db.save_user_notes(session_id, user_notes)
+        self._trigger_knowledge_export(session_id)
         return {"ok": True}, 200
 
     # --- Folders ---

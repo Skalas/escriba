@@ -60,6 +60,8 @@ def test_t1_concurrent_recording_start_yields_one_active_session(
     created: list[object] = []
 
     class FakeSession:
+        canonical_session_id = "fake-session"
+
         def __init__(self, config, database=None):
             self.config = config
             self.db = database
@@ -122,6 +124,8 @@ def test_t3_structured_http_status_codes(app_state: AppState) -> None:
     assert payload["ok"] is False
 
     class ActiveSession:
+        canonical_session_id = "fake-session"
+
         def __init__(self, config, database=None):
             self.config = config
             self.db = database
@@ -268,6 +272,8 @@ def test_tg1_try_start_recording_releases_lock_before_slow_start(
     lock_acquired_during_start = threading.Event()
 
     class SlowSession:
+        canonical_session_id = "fake-session"
+
         def __init__(self, config, database=None):
             self.config = config
             self.db = database
@@ -575,6 +581,7 @@ def test_recording_user_notes_rejects_stale_session_id(app_state: AppState) -> N
     class ActiveSession:
         is_active = True
         db_session_id = "current-sess"
+        session_id = "20260101_120000"
 
     app_state.session = ActiveSession()  # type: ignore[assignment]
 
@@ -594,6 +601,7 @@ def test_recording_user_notes_requires_session_id(app_state: AppState) -> None:
     class ActiveSession:
         is_active = True
         db_session_id = "current-sess"
+        session_id = "20260101_120000"
 
     app_state.session = ActiveSession()  # type: ignore[assignment]
 
@@ -606,23 +614,49 @@ def test_recording_user_notes_persists_for_matching_session_id(
 ) -> None:
     """POST /api/recording/user-notes saves when session_id matches active session."""
     handler = _make_handler(app_state)
-    session_id = app_state.db.create_session(name="Live")
+    db_id = app_state.db.create_session(name="Live")
 
     class ActiveSession:
         is_active = True
-        db_session_id = session_id
+        db_session_id = db_id
+        session_id = "20260101_120000"
 
     app_state.session = ActiveSession()  # type: ignore[assignment]
 
     payload, status = handler._save_recording_user_notes({
-        "session_id": session_id,
+        "session_id": db_id,
         "user_notes": "live jots",
     })
     assert status == 200
     assert payload["ok"] is True
-    row = app_state.db.get_session(session_id)
+    row = app_state.db.get_session(db_id)
     assert row is not None
     assert row["user_notes"] == "live jots"
+
+
+def test_recording_user_notes_accepts_legacy_timestamp_session_id(
+    app_state: AppState,
+) -> None:
+    """The legacy timestamp id is accepted but notes still land on the DB row."""
+    handler = _make_handler(app_state)
+    db_id = app_state.db.create_session(name="Live")
+
+    class ActiveSession:
+        is_active = True
+        db_session_id = db_id
+        session_id = "20260101_120000"
+
+    app_state.session = ActiveSession()  # type: ignore[assignment]
+
+    payload, status = handler._save_recording_user_notes({
+        "session_id": "20260101_120000",
+        "user_notes": "legacy id jots",
+    })
+    assert status == 200
+    assert payload["ok"] is True
+    row = app_state.db.get_session(db_id)
+    assert row is not None
+    assert row["user_notes"] == "legacy id jots"
 
 
 # ---------------------------------------------------------------------------

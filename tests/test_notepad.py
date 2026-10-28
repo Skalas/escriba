@@ -106,7 +106,9 @@ def test_generate_notes_no_prompt_honors_user_notes(tmp_path: Path) -> None:
         result = sess.generate_notes(prompt=None)
 
     db.close()
-    assert result == "notes", "generate_notes should have returned the mocked notes"
+    assert result is not None and result["latest_notes"] == "notes", (
+        "generate_notes should have returned the mocked notes"
+    )
     assert "critical context" in captured.get("user_notes", ""), (
         "_generate_custom_notes was not called with user_notes — "
         "pre-fix code routes to generate_summary() instead"
@@ -139,7 +141,11 @@ def test_generate_notes_persists_result_to_db(tmp_path: Path) -> None:
     db_session = db.get_session(session_id)
     db.close()
 
-    assert result == "Enhanced notes"
+    assert result == {
+        "ok": True,
+        "notes": "Enhanced notes",
+        "latest_notes": "Enhanced notes",
+    }
     assert db_session is not None
     assert db_session["notes_text"] == "Enhanced notes", (
         "generate_notes did not persist the result — "

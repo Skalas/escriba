@@ -57,6 +57,7 @@ PROCESS_JOIN_MIN_TIMEOUT_S = 60.0
 # refining. Two concurrent mlx-lm generations crash Metal, so if the thread is
 # still alive after this, the refine pass is skipped.
 TITLE_JOIN_TIMEOUT_S = 30.0
+NOTES_MAX_TOKENS = 4096
 
 
 # macOS names the built-in input after the machine model ("MacBook Pro
@@ -390,9 +391,6 @@ class TranscriptionSession:
                 "db stop_session",
                 lambda: self.db.stop_session(self.db_session_id, status=status),
             )
-            self._run_cleanup_step(
-                "knowledge store export", self._schedule_knowledge_store_export
-            )
 
         # Wait for the preliminary title thread — running two mlx-lm
         # generations concurrently crashes Metal. Only refine if it actually
@@ -414,6 +412,12 @@ class TranscriptionSession:
                 "pass to avoid a concurrent mlx-lm generation",
                 TITLE_JOIN_TIMEOUT_S,
             )
+
+        # Export after title refinement so the knowledge-store file is named
+        # with the final title rather than the provisional one.
+        self._run_cleanup_step(
+            "knowledge store export", self._schedule_knowledge_store_export
+        )
 
         logger.info("Session stopped: %s", self.session_id)
 
@@ -1145,6 +1149,11 @@ class TranscriptionSession:
             key = next(iter(self._warnings))
             return key, self._warnings[key]
 
+    @property
+    def canonical_session_id(self) -> str | None:
+        """The id the dashboard and DB agree on: the DB row id once it exists."""
+        return self.db_session_id or self.session_id
+
     def get_status(self) -> dict[str, Any]:
         elapsed = ""
         if self.start_time:
@@ -1155,7 +1164,8 @@ class TranscriptionSession:
 
         return {
             "is_active": self.is_active,
-            "session_id": self.session_id,
+            "session_id": self.canonical_session_id,
+            "db_session_id": self.db_session_id,
             "elapsed": elapsed,
             "segments_count": len(self.get_segments()),
             "error": self.error,
@@ -1173,7 +1183,13 @@ class TranscriptionSession:
 
     def generate_notes(
         self, prompt: str | None = None, model: str | None = None
-    ) -> str | None:
+    ) -> dict[str, Any] | None:
+        """Generate notes and append them to the session's saved notes.
+
+        Returns ``{"ok", "notes", "latest_notes"}`` where ``notes`` is the
+        accumulated notes text (so callers never drop earlier generations) and
+        ``latest_notes`` is just this run's output.
+        """
         transcript = self.get_transcript()
         if not transcript:
             return None
@@ -1198,9 +1214,18 @@ class TranscriptionSession:
             result = generate_summary(transcript, model=effective_model)
             notes = _summary_to_markdown(result) if result else None
 
-        if notes and self.db and self.db_session_id:
+        if not notes:
+            return None
+        accumulated = notes
+        if self.db and self.db_session_id:
             self.db.append_notes(self.db_session_id, notes)
-        return notes
+            updated_session = self.db.get_session(self.db_session_id)
+            accumulated = (updated_session or {}).get("notes_text") or notes
+            # An active recording is exported by stop(); only re-sync a
+            # finished session whose notes changed after the fact.
+            if not self.is_active:
+                self._schedule_knowledge_store_export()
+        return {"ok": True, "notes": accumulated, "latest_notes": notes}
 
     def _schedule_knowledge_store_export(self) -> None:
         """Fire-and-forget knowledge export so stop() is not blocked on I/O."""
@@ -1441,14 +1466,16 @@ def _generate_custom_notes(
             # Thinking off: on a long transcript the reasoning block eats the
             # whole token budget and the model never reaches its answer.
             return _call_llm_local(
-                full_prompt, model_id, max_tokens=4096, enable_thinking=False
+                full_prompt, model_id, max_tokens=NOTES_MAX_TOKENS, enable_thinking=False
             )
         elif provider == "gemini":
             resolved_model = model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
             return _call_llm_gemini(full_prompt, resolved_model)
         elif provider == "claude":
             resolved_model = model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
-            return _call_llm_claude(full_prompt, resolved_model)
+            return _call_llm_claude(
+                full_prompt, resolved_model, max_tokens=NOTES_MAX_TOKENS
+            )
         else:
             if provider == "none":
                 logger.info("No AI provider available — skipping notes")

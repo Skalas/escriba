@@ -583,7 +583,7 @@ def test_t1_stop_runs_every_cleanup_step_independently(
             session.stop()
 
         # Every step ran despite flush and export raising.
-        assert calls == ["flush", "close", "export", "knowledge", "refine"]
+        assert calls == ["flush", "close", "export", "refine", "knowledge"]
         assert session.db_session_id is not None
         row = db.get_session(session.db_session_id)
         assert row is not None and row["status"] in ("completed", "error")

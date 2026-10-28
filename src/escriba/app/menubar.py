@@ -234,7 +234,7 @@ class TranscriberMenuBar(rumps.App):
         with self.app_state._lock:
             session = self.app_state.session
             is_recording = bool(session and session.is_active)
-            current_id = session.session_id if session else None
+            current_id = session.canonical_session_id if session else None
 
         auto_started = (
             self._auto_started_session_id is not None
@@ -390,7 +390,7 @@ class TranscriberMenuBar(rumps.App):
         with self.app_state._lock:
             session = self.app_state.session
             self._auto_started_session_id = (
-                session.session_id if (auto and session) else None
+                session.canonical_session_id if (auto and session) else None
             )
 
         self._recording_item.title = "Stop Recording"

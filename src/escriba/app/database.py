@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -91,6 +91,15 @@ def _dedupe_segments_and_create_unique_index(conn: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_segments_session_timing "
         "ON segments(session_id, start_time, end_time)"
     )
+
+
+MERGED_NOTES_SEPARATOR = "\n\n---\n\n"
+
+
+def _join_notes(notes: Iterable[str | None]) -> str | None:
+    """Join the non-empty notes in order; None when there is nothing to keep."""
+    parts = [n.strip() for n in notes if n and n.strip()]
+    return MERGED_NOTES_SEPARATOR.join(parts) or None
 
 
 def _create_speaker_labels_table(conn: sqlite3.Connection) -> None:
@@ -717,7 +726,14 @@ class Database:
         `started_at`, of ``(audio_path, offset_seconds, duration_seconds)``.
         The caller uses it to concatenate the physical WAV files with the
         same offsets used to rebase segment timestamps.
+
+        Raises ``ValueError`` for duplicate ids, missing sessions, or any
+        session that is still recording. The merged row carries the sources'
+        user notes, AI notes, and speaker labels (earlier sessions win on
+        label conflicts).
         """
+        if len(set(session_ids)) != len(session_ids):
+            raise ValueError("Cannot merge a session with itself (duplicate ids)")
         with self._lock:
             merged_id = str(uuid.uuid4())
             now = datetime.now(timezone.utc).isoformat()
@@ -726,7 +742,8 @@ class Database:
             # chronological and matches the order the user recorded them.
             placeholders = ",".join("?" for _ in session_ids)
             src_rows = self._conn.execute(
-                f"SELECT id, started_at, duration_seconds, audio_path "
+                f"SELECT id, started_at, duration_seconds, audio_path, status, "
+                f"user_notes, notes_text "
                 f"FROM sessions WHERE id IN ({placeholders}) "
                 f"ORDER BY started_at ASC",
                 session_ids,
@@ -737,6 +754,8 @@ class Database:
                 raise ValueError(
                     "Cannot merge nonexistent session(s): " + ", ".join(missing_ids)
                 )
+            if any(row["status"] == "active" for row in src_rows):
+                raise ValueError("Cannot merge an active (recording) session")
 
             offsets: list[tuple[str | None, float, float]] = []
             cumulative = 0.0
@@ -751,14 +770,16 @@ class Database:
                 self._conn.execute(
                     "INSERT INTO sessions ("
                     "id, name, started_at, duration_seconds, "
-                    "status, parent_session_ids"
-                    ") VALUES (?, ?, ?, ?, 'merged', ?)",
+                    "status, parent_session_ids, user_notes, notes_text"
+                    ") VALUES (?, ?, ?, ?, 'merged', ?, ?, ?)",
                     (
                         merged_id,
                         name,
                         merged_started_iso,
                         cumulative or None,
                         json.dumps(session_ids),
+                        _join_notes(row["user_notes"] for row in src_rows),
+                        _join_notes(row["notes_text"] for row in src_rows),
                     ),
                 )
 
@@ -791,6 +812,13 @@ class Database:
                             dropped,
                             src_id,
                         )
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO speaker_labels "
+                        "(session_id, speaker_key, display_name) "
+                        "SELECT ?, speaker_key, display_name "
+                        "FROM speaker_labels WHERE session_id = ?",
+                        (merged_id, src_id),
+                    )
 
             return merged_id, offsets
 
