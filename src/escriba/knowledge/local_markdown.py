@@ -1,4 +1,5 @@
 """LocalMarkdownAdapter — writes one .md per session."""
+
 from __future__ import annotations
 import logging
 from pathlib import Path
@@ -28,6 +29,7 @@ class LocalMarkdownAdapter(KnowledgeStore):
             path = self._output_dir / filename
             content = self._build_markdown(session, summary_json, segments)
             path.write_text(content, encoding="utf-8")
+            self._remove_stale_exports(session, path)
             logger.info(
                 "KnowledgeStore: exported session %s → %s",
                 session.get("id"),
@@ -40,6 +42,16 @@ class LocalMarkdownAdapter(KnowledgeStore):
                 exc,
                 exc_info=True,
             )
+
+    def _remove_stale_exports(self, session: dict[str, Any], current: Path) -> None:
+        """Delete earlier exports of this session written under an older name."""
+        session_id = (session.get("id") or "")[:8]
+        if not session_id:
+            return
+        for stale in self._output_dir.glob(f"*_{session_id}.md"):
+            if stale != current:
+                stale.unlink(missing_ok=True)
+                logger.info("KnowledgeStore: removed stale export %s", stale)
 
     @staticmethod
     def _safe_filename(session: dict[str, Any]) -> str:

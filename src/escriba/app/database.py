@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -68,9 +68,7 @@ def _create_session_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_folder ON sessions(folder_id)"
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)")
 
 
 def _dedupe_segments_and_create_unique_index(conn: sqlite3.Connection) -> None:
@@ -91,6 +89,15 @@ def _dedupe_segments_and_create_unique_index(conn: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_segments_session_timing "
         "ON segments(session_id, start_time, end_time)"
     )
+
+
+MERGED_NOTES_SEPARATOR = "\n\n---\n\n"
+
+
+def _join_notes(notes: Iterable[str | None]) -> str | None:
+    """Join the non-empty notes in order; None when there is nothing to keep."""
+    parts = [n.strip() for n in notes if n and n.strip()]
+    return MERGED_NOTES_SEPARATOR.join(parts) or None
 
 
 def _create_speaker_labels_table(conn: sqlite3.Connection) -> None:
@@ -188,9 +195,7 @@ class Database:
                 legacy_db = _LEGACY_DB_DIR / _DB_FILENAME
                 if legacy_db.exists():
                     shutil.copy2(legacy_db, db_path)
-                    logger.info(
-                        "Migrated database from %s to %s", legacy_db, db_path
-                    )
+                    logger.info("Migrated database from %s to %s", legacy_db, db_path)
         self._db_path = db_path
         self._lock = threading.RLock()
         with self._lock:
@@ -279,7 +284,11 @@ class Database:
     # --- Sessions ---
 
     def create_session(
-        self, name: str, model: str | None = None, language: str | None = None, backend: str | None = None
+        self,
+        name: str,
+        model: str | None = None,
+        language: str | None = None,
+        backend: str | None = None,
     ) -> str:
         with self._lock:
             session_id = str(uuid.uuid4())
@@ -347,7 +356,9 @@ class Database:
                 return None
             session = dict(row)
             if self._is_missing_audio_path(session.get("audio_path")):
-                relinked = self._relink_session_audio_if_orphaned(session_id, commit=True)
+                relinked = self._relink_session_audio_if_orphaned(
+                    session_id, commit=True
+                )
                 if relinked:
                     session["audio_path"] = relinked
             return session
@@ -450,11 +461,7 @@ class Database:
     @staticmethod
     def _escape_like(value: str) -> str:
         """Escape SQL LIKE wildcards so user input is matched literally."""
-        return (
-            value.replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     @staticmethod
     def _segment_snippet(text: str, max_len: int = 160) -> str:
@@ -540,7 +547,9 @@ class Database:
 
         merged.sort(key=lambda item: item["id"])
         merged.sort(
-            key=lambda item: item["start_time"] if item["start_time"] is not None else 0.0
+            key=lambda item: (
+                item["start_time"] if item["start_time"] is not None else 0.0
+            )
         )
         merged.sort(key=lambda item: item["_started_at"] or "", reverse=True)
         for item in merged:
@@ -550,7 +559,9 @@ class Database:
 
     def delete_segments(self, session_id: str):
         with self._lock:
-            self._conn.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
+            self._conn.execute(
+                "DELETE FROM segments WHERE session_id = ?", (session_id,)
+            )
             self._conn.commit()
 
     def update_audio_path(self, session_id: str, audio_path: str):
@@ -717,7 +728,14 @@ class Database:
         `started_at`, of ``(audio_path, offset_seconds, duration_seconds)``.
         The caller uses it to concatenate the physical WAV files with the
         same offsets used to rebase segment timestamps.
+
+        Raises ``ValueError`` for duplicate ids, missing sessions, or any
+        session that is still recording. The merged row carries the sources'
+        user notes, AI notes, and speaker labels (earlier sessions win on
+        label conflicts).
         """
+        if len(set(session_ids)) != len(session_ids):
+            raise ValueError("Cannot merge a session with itself (duplicate ids)")
         with self._lock:
             merged_id = str(uuid.uuid4())
             now = datetime.now(timezone.utc).isoformat()
@@ -726,7 +744,8 @@ class Database:
             # chronological and matches the order the user recorded them.
             placeholders = ",".join("?" for _ in session_ids)
             src_rows = self._conn.execute(
-                f"SELECT id, started_at, duration_seconds, audio_path "
+                f"SELECT id, started_at, duration_seconds, audio_path, status, "
+                f"user_notes, notes_text "
                 f"FROM sessions WHERE id IN ({placeholders}) "
                 f"ORDER BY started_at ASC",
                 session_ids,
@@ -737,6 +756,8 @@ class Database:
                 raise ValueError(
                     "Cannot merge nonexistent session(s): " + ", ".join(missing_ids)
                 )
+            if any(row["status"] == "active" for row in src_rows):
+                raise ValueError("Cannot merge an active (recording) session")
 
             offsets: list[tuple[str | None, float, float]] = []
             cumulative = 0.0
@@ -751,14 +772,16 @@ class Database:
                 self._conn.execute(
                     "INSERT INTO sessions ("
                     "id, name, started_at, duration_seconds, "
-                    "status, parent_session_ids"
-                    ") VALUES (?, ?, ?, ?, 'merged', ?)",
+                    "status, parent_session_ids, user_notes, notes_text"
+                    ") VALUES (?, ?, ?, ?, 'merged', ?, ?, ?)",
                     (
                         merged_id,
                         name,
                         merged_started_iso,
                         cumulative or None,
                         json.dumps(session_ids),
+                        _join_notes(row["user_notes"] for row in src_rows),
+                        _join_notes(row["notes_text"] for row in src_rows),
                     ),
                 )
 
@@ -791,6 +814,13 @@ class Database:
                             dropped,
                             src_id,
                         )
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO speaker_labels "
+                        "(session_id, speaker_key, display_name) "
+                        "SELECT ?, speaker_key, display_name "
+                        "FROM speaker_labels WHERE session_id = ?",
+                        (merged_id, src_id),
+                    )
 
             return merged_id, offsets
 
@@ -830,9 +860,7 @@ class Database:
             new_part = (new_notes or "").strip()
             if not new_part:
                 return row["notes_text"] or ""
-            combined = (
-                f"{existing}{separator}{new_part}" if existing else new_part
-            )
+            combined = f"{existing}{separator}{new_part}" if existing else new_part
             self._conn.execute(
                 "UPDATE sessions SET notes_text = ? WHERE id = ?",
                 (combined, session_id),

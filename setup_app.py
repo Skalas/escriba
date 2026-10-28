@@ -39,6 +39,7 @@ def build():
     # Clean previous build
     if APP_DIR.exists():
         import shutil
+
         shutil.rmtree(APP_DIR)
 
     # Create directory structure
@@ -53,7 +54,9 @@ def build():
         (static_dst / f.name).write_bytes(f.read_bytes())
 
     # Copy Swift audio-capture binary if available
-    swift_bin = PROJECT_DIR / "swift-audio-capture" / ".build" / "release" / "audio-capture"
+    swift_bin = (
+        PROJECT_DIR / "swift-audio-capture" / ".build" / "release" / "audio-capture"
+    )
     if swift_bin.exists():
         dst = RESOURCES_DIR / "audio-capture"
         dst.write_bytes(swift_bin.read_bytes())
@@ -67,7 +70,9 @@ def build():
     if icon_src.exists():
         (RESOURCES_DIR / "Escriba.icns").write_bytes(icon_src.read_bytes())
     else:
-        print(f"Warning: icon not found at {icon_src}, run: uv run python scripts/generate_icon.py")
+        print(
+            f"Warning: icon not found at {icon_src}, run: uv run python scripts/generate_icon.py"
+        )
 
     # Write Info.plist
     plist = {
@@ -92,6 +97,7 @@ def build():
 
     # Resolve uv path at build time so the launcher works from .app context
     import shutil as _shutil
+
     uv_path = _shutil.which("uv")
     if not uv_path:
         raise RuntimeError("uv not found on PATH")
@@ -106,7 +112,7 @@ unset VIRTUAL_ENV LOCAL_TRANSCRIBER_CONFIG 2>/dev/null
 LOG_DIR="$(dirname "{log_file}")"
 mkdir -p "$LOG_DIR"
 cd "{PROJECT_DIR}"
-exec "{uv_path}" run escriba app >> "{log_file}" 2>&1
+exec "{uv_path}" run --frozen escriba app >> "{log_file}" 2>&1
 """)
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 

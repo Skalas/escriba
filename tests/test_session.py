@@ -57,12 +57,15 @@ def mocked_session(
     mock_transcriber.lock = threading.Lock()
     mock_transcriber.export_transcript.return_value = None
 
-    with patch(
-        "escriba.transcribe.streaming_mlx.StreamingTranscriberMLX",
-        return_value=mock_transcriber,
-    ), patch.object(TranscriptionSession, "_start_mic_capture"), patch.object(
-        TranscriptionSession, "_refine_title"
-    ), patch.object(TranscriptionSession, "_export"):
+    with (
+        patch(
+            "escriba.transcribe.streaming_mlx.StreamingTranscriberMLX",
+            return_value=mock_transcriber,
+        ),
+        patch.object(TranscriptionSession, "_start_mic_capture"),
+        patch.object(TranscriptionSession, "_refine_title"),
+        patch.object(TranscriptionSession, "_export"),
+    ):
         session = TranscriptionSession(minimal_config, database=db)
         session.start()
         yield session
@@ -101,12 +104,15 @@ def test_t8_audio_wav_persisted_on_stop(
     mock_transcriber.lock = threading.Lock()
 
     try:
-        with patch(
-            "escriba.transcribe.streaming_mlx.StreamingTranscriberMLX",
-            return_value=mock_transcriber,
-        ), patch.object(TranscriptionSession, "_start_mic_capture"), patch.object(
-            TranscriptionSession, "_refine_title"
-        ), patch.object(TranscriptionSession, "_export"):
+        with (
+            patch(
+                "escriba.transcribe.streaming_mlx.StreamingTranscriberMLX",
+                return_value=mock_transcriber,
+            ),
+            patch.object(TranscriptionSession, "_start_mic_capture"),
+            patch.object(TranscriptionSession, "_refine_title"),
+            patch.object(TranscriptionSession, "_export"),
+        ):
             session = TranscriptionSession(minimal_config, database=db)
             session.start()
             assert session._audio_writer is not None
@@ -153,8 +159,12 @@ def test_t9_local_llm_calls_use_subprocess_worker() -> None:
         return "generated"
 
     with patch.dict("sys.modules", {"mlx_lm": MagicMock()}):
-        with patch.object(llm_summary._local_inference_process, "run", side_effect=capture_run):
-            result = llm_summary._call_llm_local("p", "m", max_tokens=32, enable_thinking=False)
+        with patch.object(
+            llm_summary._local_inference_process, "run", side_effect=capture_run
+        ):
+            result = llm_summary._call_llm_local(
+                "p", "m", max_tokens=32, enable_thinking=False
+            )
 
     assert result == "generated"
     assert calls == [("p", "m", 32, False)]
@@ -507,9 +517,7 @@ def test_t1_retranscribe_faster_whisper_passes_full_streaming_config(
 # ---------------------------------------------------------------------------
 
 
-def _make_active_session(
-    config: AppConfig, db: Database
-) -> TranscriptionSession:
+def _make_active_session(config: AppConfig, db: Database) -> TranscriptionSession:
     """Build a session that is 'active' with a mock transcriber, no threads."""
     session = TranscriptionSession(config, database=db)
     session.db_session_id = db.create_session(
@@ -535,8 +543,9 @@ def test_t1_stop_finalizes_db_even_when_capture_teardown_raises(
         session.screen_capture = MagicMock()
         session.screen_capture.stop.side_effect = RuntimeError("teardown boom")
 
-        with patch.object(TranscriptionSession, "_refine_title"), patch.object(
-            TranscriptionSession, "_schedule_knowledge_store_export"
+        with (
+            patch.object(TranscriptionSession, "_refine_title"),
+            patch.object(TranscriptionSession, "_schedule_knowledge_store_export"),
         ):
             session.stop()
 
@@ -569,21 +578,23 @@ def test_t1_stop_runs_every_cleanup_step_independently(
 
             return _step
 
-        with patch.object(
-            session, "_flush_buffer", side_effect=rec("flush", raise_it=True)
-        ), patch.object(
-            session, "_close_audio_file", side_effect=rec("close")
-        ), patch.object(
-            session, "_export", side_effect=rec("export", raise_it=True)
-        ), patch.object(
-            session, "_schedule_knowledge_store_export", side_effect=rec("knowledge")
-        ), patch.object(
-            session, "_refine_title", side_effect=rec("refine")
+        with (
+            patch.object(
+                session, "_flush_buffer", side_effect=rec("flush", raise_it=True)
+            ),
+            patch.object(session, "_close_audio_file", side_effect=rec("close")),
+            patch.object(session, "_export", side_effect=rec("export", raise_it=True)),
+            patch.object(
+                session,
+                "_schedule_knowledge_store_export",
+                side_effect=rec("knowledge"),
+            ),
+            patch.object(session, "_refine_title", side_effect=rec("refine")),
         ):
             session.stop()
 
         # Every step ran despite flush and export raising.
-        assert calls == ["flush", "close", "export", "knowledge", "refine"]
+        assert calls == ["flush", "close", "export", "refine", "knowledge"]
         assert session.db_session_id is not None
         row = db.get_session(session.db_session_id)
         assert row is not None and row["status"] in ("completed", "error")
@@ -606,12 +617,12 @@ def test_t2_slow_process_thread_join_skips_flush_and_close(
         still_alive.is_alive.return_value = True
         session._process_thread = still_alive
 
-        with patch.object(session, "_flush_buffer") as flush, patch.object(
-            session, "_close_audio_file"
-        ) as close, patch.object(
-            TranscriptionSession, "_schedule_knowledge_store_export"
-        ), patch.object(TranscriptionSession, "_refine_title"), patch.object(
-            session, "_export"
+        with (
+            patch.object(session, "_flush_buffer") as flush,
+            patch.object(session, "_close_audio_file") as close,
+            patch.object(TranscriptionSession, "_schedule_knowledge_store_export"),
+            patch.object(TranscriptionSession, "_refine_title"),
+            patch.object(session, "_export"),
         ):
             session.stop()
 
@@ -640,11 +651,13 @@ def test_t3_slow_title_thread_skips_refine(
         title_thread.is_alive.return_value = True
         session._title_thread = title_thread
 
-        with patch.object(session, "_refine_title") as refine, patch.object(
-            TranscriptionSession, "_schedule_knowledge_store_export"
-        ), patch.object(session, "_export"), patch.object(
-            session, "_flush_buffer"
-        ), patch.object(session, "_close_audio_file"):
+        with (
+            patch.object(session, "_refine_title") as refine,
+            patch.object(TranscriptionSession, "_schedule_knowledge_store_export"),
+            patch.object(session, "_export"),
+            patch.object(session, "_flush_buffer"),
+            patch.object(session, "_close_audio_file"),
+        ):
             session.stop()
 
         refine.assert_not_called()
@@ -666,11 +679,13 @@ def test_t3_finished_title_thread_allows_refine(
         title_thread.is_alive.return_value = False
         session._title_thread = title_thread
 
-        with patch.object(session, "_refine_title") as refine, patch.object(
-            TranscriptionSession, "_schedule_knowledge_store_export"
-        ), patch.object(session, "_export"), patch.object(
-            session, "_flush_buffer"
-        ), patch.object(session, "_close_audio_file"):
+        with (
+            patch.object(session, "_refine_title") as refine,
+            patch.object(TranscriptionSession, "_schedule_knowledge_store_export"),
+            patch.object(session, "_export"),
+            patch.object(session, "_flush_buffer"),
+            patch.object(session, "_close_audio_file"),
+        ):
             session.stop()
 
         refine.assert_called_once()
@@ -701,12 +716,12 @@ def test_slow_final_flush_is_waited_out_and_finalized(
         thread.start()
         session._process_thread = thread
 
-        with patch.object(session, "_flush_buffer") as flush, patch.object(
-            session, "_close_audio_file"
-        ) as close, patch.object(
-            TranscriptionSession, "_schedule_knowledge_store_export"
-        ), patch.object(TranscriptionSession, "_refine_title"), patch.object(
-            session, "_export"
+        with (
+            patch.object(session, "_flush_buffer") as flush,
+            patch.object(session, "_close_audio_file") as close,
+            patch.object(TranscriptionSession, "_schedule_knowledge_store_export"),
+            patch.object(TranscriptionSession, "_refine_title"),
+            patch.object(session, "_export"),
         ):
             session.stop()
 

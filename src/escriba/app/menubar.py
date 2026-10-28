@@ -112,7 +112,9 @@ webview.create_window('Escriba', url, width=1060, height=720)
 webview.start()
 " "$@"
 """)
-        launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        launcher.chmod(
+            launcher.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        )
         logger.info("Created dashboard app at %s", _DASHBOARD_APP)
 
     return _DASHBOARD_APP
@@ -127,6 +129,7 @@ def _find_icon() -> Path | None:
         return icon
     # Check inside .app bundle
     import sys
+
     if getattr(sys, "frozen", False):
         bundle_icon = Path(sys.executable).parent.parent / "Resources" / "Escriba.icns"
         if bundle_icon.exists():
@@ -163,7 +166,9 @@ class TranscriberMenuBar(rumps.App):
         self._call_item = rumps.MenuItem("", callback=self._record_detected_call)
         self._call_item.hidden = True
 
-        self._recording_item = rumps.MenuItem("Start Recording", callback=self.toggle_recording)
+        self._recording_item = rumps.MenuItem(
+            "Start Recording", callback=self.toggle_recording
+        )
         self.menu = [
             self._call_item,
             self._recording_item,
@@ -205,7 +210,9 @@ class TranscriberMenuBar(rumps.App):
             new_config.streaming.backend,
             new_config.streaming.model_size,
         )
-        _notify("Escriba", "Config reloaded", f"model={new_config.streaming.model_size}")
+        _notify(
+            "Escriba", "Config reloaded", f"model={new_config.streaming.model_size}"
+        )
         return new_config
 
     @rumps.timer(2)
@@ -234,7 +241,7 @@ class TranscriberMenuBar(rumps.App):
         with self.app_state._lock:
             session = self.app_state.session
             is_recording = bool(session and session.is_active)
-            current_id = session.session_id if session else None
+            current_id = session.canonical_session_id if session else None
 
         auto_started = (
             self._auto_started_session_id is not None
@@ -328,9 +335,7 @@ class TranscriberMenuBar(rumps.App):
             )
             if "Record" in result.stdout:
                 self._call_item.hidden = True
-                self._begin_start_recording_session(
-                    detected_app=app_name, auto=True
-                )
+                self._begin_start_recording_session(detected_app=app_name, auto=True)
             else:
                 self._prompt_cooldown_until = (
                     time.time() + self.config.auto_record.cooldown_seconds
@@ -390,7 +395,7 @@ class TranscriberMenuBar(rumps.App):
         with self.app_state._lock:
             session = self.app_state.session
             self._auto_started_session_id = (
-                session.session_id if (auto and session) else None
+                session.canonical_session_id if (auto and session) else None
             )
 
         self._recording_item.title = "Stop Recording"
@@ -426,8 +431,11 @@ class TranscriberMenuBar(rumps.App):
                 raise FileNotFoundError(f"Dashboard app not found: {app_bundle}")
             subprocess.Popen(["open", "-a", str(app_bundle), "--args", url])
         except Exception:
-            logger.warning("Dashboard app launch failed, falling back to browser", exc_info=True)
+            logger.warning(
+                "Dashboard app launch failed, falling back to browser", exc_info=True
+            )
             import webbrowser
+
             webbrowser.open(url)
 
     def _terminate_dashboard(self):
@@ -544,7 +552,9 @@ def run_menubar_app(config: AppConfig | None = None):
         config = AppConfig.load()
 
     logger.info(
-        "Config: backend=%s, model=%s", config.streaming.backend, config.streaming.model_size
+        "Config: backend=%s, model=%s",
+        config.streaming.backend,
+        config.streaming.model_size,
     )
 
     # Configure local LLM cache TTL from config

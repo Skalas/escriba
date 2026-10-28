@@ -58,6 +58,10 @@ def build_session_export_markdown(
         lines.extend(metadata)
         lines.append("")
 
+    user_notes = (session.get("user_notes") or "").strip()
+    if user_notes:
+        lines.extend(["## User Notes", "", user_notes, ""])
+
     notes_text = (session.get("notes_text") or "").strip()
     if notes_text:
         lines.extend(["## Notes", "", notes_text, ""])
@@ -94,6 +98,10 @@ def build_session_export_txt(
     if session.get("started_at") or duration is not None:
         lines.append("")
 
+    user_notes = (session.get("user_notes") or "").strip()
+    if user_notes:
+        lines.extend(["User Notes", user_notes, ""])
+
     notes_text = (session.get("notes_text") or "").strip()
     if notes_text:
         lines.extend(["Notes", notes_text, ""])
@@ -109,6 +117,7 @@ def build_session_export_txt(
             lines.append(f"{timestamp}  {text}")
 
     return "\n".join(lines)
+
 
 logger = logging.getLogger(__name__)
 

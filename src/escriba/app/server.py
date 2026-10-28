@@ -169,7 +169,14 @@ class AppState:
                         503,
                     )
                 else:
-                    response = ({"ok": True}, 200)
+                    response = (
+                        {
+                            "ok": True,
+                            "status": "started",
+                            "session_id": new_session.canonical_session_id,
+                        },
+                        200,
+                    )
 
         return response
 
@@ -217,9 +224,7 @@ class AppState:
         with self._lock:
             self._stop_in_progress = False
 
-    def complete_stop_recording(
-        self, session: TranscriptionSession
-    ) -> dict[str, Any]:
+    def complete_stop_recording(self, session: TranscriptionSession) -> dict[str, Any]:
         """
         Run ``session.stop()`` then release the stop claim.
 
@@ -242,12 +247,14 @@ class AppState:
             self.finish_stop_recording()
         return {"ok": True, "session_id": session.db_session_id}
 
+
 if getattr(sys, "frozen", False):
     STATIC_DIR = Path(sys.executable).parent.parent / "Resources" / "static"
 else:
     STATIC_DIR = Path(__file__).parent / "static"
 
 PORT = 19876
+WAV_HEADER_BYTES = 44
 
 _CALENDAR_ALLOWLIST_MISMATCH_HINT = (
     "None of your selected calendars were found in Calendar.app. "
@@ -525,7 +532,9 @@ class _Handler(BaseHTTPRequestHandler):
             raise ApiError("Invalid Host header", 421)
 
     @staticmethod
-    def _apply_calendar_error(payload: dict[str, Any], calendar_error: str | None) -> None:
+    def _apply_calendar_error(
+        payload: dict[str, Any], calendar_error: str | None
+    ) -> None:
         """Attach calendar_error and user-facing hints to an API payload."""
         if not calendar_error:
             return
@@ -601,17 +610,25 @@ class _Handler(BaseHTTPRequestHandler):
         """Dispatch a POST path to its handler; returns a (payload, status) tuple."""
         _exact: dict[str, Callable[[], tuple]] = {
             "/api/config/reload": self._reload_config,
-            "/api/recording/start": lambda: self._start_recording(self._parse_json_body()),
+            "/api/recording/start": lambda: self._start_recording(
+                self._parse_json_body()
+            ),
             "/api/recording/stop": self._stop_recording,
             "/api/recording/user-notes": lambda: self._save_recording_user_notes(
                 self._parse_json_body()
             ),
             "/api/notes": lambda: self._generate_notes(self._parse_json_body()),
-            "/api/prompts/enhance": lambda: self._enhance_prompt(self._parse_json_body()),
-            "/api/sessions/merge": lambda: self._merge_sessions(self._parse_json_body()),
+            "/api/prompts/enhance": lambda: self._enhance_prompt(
+                self._parse_json_body()
+            ),
+            "/api/sessions/merge": lambda: self._merge_sessions(
+                self._parse_json_body()
+            ),
             "/api/sessions/move": lambda: self._move_sessions(self._parse_json_body()),
             "/api/folders": lambda: self._create_folder(self._parse_json_body()),
-            "/api/download-model": lambda: self._download_model(self._parse_json_body()),
+            "/api/download-model": lambda: self._download_model(
+                self._parse_json_body()
+            ),
             "/api/download-model/cancel": lambda: self._cancel_model_download(),
             "/api/update/install": lambda: self._start_update_install(),
         }
@@ -623,7 +640,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _route_post_session(self, path: str) -> tuple:
         """Dispatch POST /api/sessions/<id>/<action> with strict path validation."""
-        tail = path[len("/api/sessions/"):]
+        tail = path[len("/api/sessions/") :]
         parts = tail.split("/")
         if len(parts) != 2 or not parts[0] or not parts[1]:
             return {"ok": False, "error": "Not found"}, 404
@@ -632,8 +649,13 @@ class _Handler(BaseHTTPRequestHandler):
         if action == "export":
             body = self._parse_json_body()
             if body.get("save"):
-                return self._save_session_export(session_id, str(body.get("format", "md")))
-            return {"ok": False, "error": "Use GET for JSON export or POST with save:true"}, 400
+                return self._save_session_export(
+                    session_id, str(body.get("format", "md"))
+                )
+            return {
+                "ok": False,
+                "error": "Use GET for JSON export or POST with save:true",
+            }, 400
         if action == "retranscribe":
             return self._retranscribe_session(session_id)
         if action == "split":
@@ -662,19 +684,25 @@ class _Handler(BaseHTTPRequestHandler):
                 if not session_id:
                     self._respond(({"ok": False, "error": "Not found"}, 404))
                 else:
-                    self._respond(self._rename_session(session_id, self._parse_json_body()))
+                    self._respond(
+                        self._rename_session(session_id, self._parse_json_body())
+                    )
             elif path.startswith("/api/sessions/") and path.endswith("/speakers"):
                 session_id = path.split("/api/sessions/")[1].rsplit("/speakers", 1)[0]
                 if not session_id:
                     self._respond(({"ok": False, "error": "Not found"}, 404))
                 else:
-                    self._respond(self._set_speaker_label(session_id, self._parse_json_body()))
+                    self._respond(
+                        self._set_speaker_label(session_id, self._parse_json_body())
+                    )
             elif path.startswith("/api/folders/") and path.endswith("/rename"):
                 folder_id = path.split("/api/folders/")[1].rsplit("/rename", 1)[0]
                 if not folder_id:
                     self._respond(({"ok": False, "error": "Not found"}, 404))
                 else:
-                    self._respond(self._rename_folder(folder_id, self._parse_json_body()))
+                    self._respond(
+                        self._rename_folder(folder_id, self._parse_json_body())
+                    )
             else:
                 self._respond(({"ok": False, "error": "Not found"}, 404))
         except ApiError as exc:
@@ -767,7 +795,9 @@ class _Handler(BaseHTTPRequestHandler):
             "format": export_format,
         }, 200
 
-    def _save_session_export(self, session_id: str, fmt: str = "md") -> tuple[dict, int]:
+    def _save_session_export(
+        self, session_id: str, fmt: str = "md"
+    ) -> tuple[dict, int]:
         """Write a session export to ~/Downloads and return its path."""
         resolved = self._resolve_session_export(session_id, fmt)
         if isinstance(resolved[0], dict):
@@ -776,8 +806,16 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             saved_path = save_session_export_to_downloads(content, filename)
         except OSError as exc:
-            logger.error("Failed to save export for session %s: %s", session_id, exc, exc_info=True)
-            return {"ok": False, "error": "Failed to save export file (disk full or permission error?)"}, 500
+            logger.error(
+                "Failed to save export for session %s: %s",
+                session_id,
+                exc,
+                exc_info=True,
+            )
+            return {
+                "ok": False,
+                "error": "Failed to save export file (disk full or permission error?)",
+            }, 500
         return {
             "ok": True,
             "display_path": format_path_for_display(saved_path),
@@ -922,9 +960,7 @@ class _Handler(BaseHTTPRequestHandler):
             # Stream-and-count: read one byte over the cap so we can detect it.
             data = self.rfile.read(MAX_BODY_BYTES + 1)
             if len(data) > MAX_BODY_BYTES:
-                raise ApiError(
-                    f"Request body exceeds {MAX_BODY_BYTES} bytes", 413
-                )
+                raise ApiError(f"Request body exceeds {MAX_BODY_BYTES} bytes", 413)
             return data
         try:
             length = int(raw_length)
@@ -933,9 +969,7 @@ class _Handler(BaseHTTPRequestHandler):
         if length < 0:
             raise ApiError("Invalid Content-Length header", 400)
         if length > MAX_BODY_BYTES:
-            raise ApiError(
-                f"Request body exceeds {MAX_BODY_BYTES} bytes", 413
-            )
+            raise ApiError(f"Request body exceeds {MAX_BODY_BYTES} bytes", 413)
         if length == 0:
             return b""
         return self.rfile.read(length)
@@ -945,6 +979,29 @@ class _Handler(BaseHTTPRequestHandler):
         if not db:
             raise ApiError("Database not available", 503)
         return db
+
+    def _trigger_knowledge_export(self, session_id: str) -> None:
+        """Re-sync a saved session to the knowledge store after it changed.
+
+        Active recordings are skipped: ``TranscriptionSession.stop()`` exports
+        them once finalized.
+        """
+        db = self._get_db()
+        with self.app_state._lock:
+            config = self.app_state.config
+            active = self.app_state.session
+        if not db or not config:
+            return
+        if active and active.is_active and active.db_session_id == session_id:
+            return
+        from escriba.knowledge.export_worker import run_knowledge_store_export
+
+        threading.Thread(
+            target=run_knowledge_store_export,
+            args=(db, session_id, config),
+            daemon=True,
+            name=f"knowledge-export-{session_id[:8]}",
+        ).start()
 
     def _get_db(self) -> Database | None:
         return self.app_state.db
@@ -1115,6 +1172,7 @@ class _Handler(BaseHTTPRequestHandler):
             if speaker_key not in known_speakers:
                 return {"ok": False, "error": "Unknown speaker for session"}, 400
         db.set_speaker_label(session_id, speaker_key, display_name)
+        self._trigger_knowledge_export(session_id)
         return {"ok": True}, 200
 
     def _start_recording(self, body: dict | None = None) -> tuple[dict, int]:
@@ -1130,12 +1188,13 @@ class _Handler(BaseHTTPRequestHandler):
             if not session or not session.is_active:
                 return {"ok": False, "error": "Not recording"}, 409
             db_session_id = session.db_session_id
+            accepted_ids = {db_session_id, session.session_id} - {None}
         if not db_session_id:
             return {"ok": False, "error": "Session not yet created"}, 409
         client_session_id = body.get("session_id")
         if not client_session_id or not isinstance(client_session_id, str):
             raise ApiError("session_id is required", 400)
-        if client_session_id != db_session_id:
+        if client_session_id not in accepted_ids:
             return {"ok": False, "error": "Session mismatch"}, 409
         db = self._require_db()
         user_notes = body.get("user_notes", "")
@@ -1159,16 +1218,18 @@ class _Handler(BaseHTTPRequestHandler):
         prompt = (body.get("prompt") or "").strip() or None
         with self.app_state._lock:
             config = self.app_state.config
-        model = body.get("model") or (config.streaming.summary_model if config else None)
+        model = body.get("model") or (
+            config.streaming.summary_model if config else None
+        )
 
         not_ready = self._ensure_local_model_ready(model)
         if not_ready:
             return not_ready
 
         try:
-            notes = session.generate_notes(prompt=prompt, model=model)
-            if notes:
-                return {"ok": True, "notes": notes}, 200
+            result = session.generate_notes(prompt=prompt, model=model)
+            if result:
+                return result, 200
             return {
                 "ok": False,
                 "error": "No transcript to summarize, or API key not set",
@@ -1189,9 +1250,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             from escriba.summarize.llm_summary import enhance_prompt
 
-            improved = enhance_prompt(
-                text, model=model, preserve_placeholders=preserve
-            )
+            improved = enhance_prompt(text, model=model, preserve_placeholders=preserve)
             if improved:
                 return {"ok": True, "prompt": improved}, 200
             return {
@@ -1225,11 +1284,7 @@ class _Handler(BaseHTTPRequestHandler):
         # Concatenate WAVs (skip silently on failure — the merged session
         # is still valid as a transcript-only session, same as before).
         audio_dir = (
-            Path.home()
-            / "Library"
-            / "Application Support"
-            / "Escriba"
-            / "audio"
+            Path.home() / "Library" / "Application Support" / "Escriba" / "audio"
         )
         has_any_audio = any(p for p, _off, _d in sources if p)
         if has_any_audio:
@@ -1239,7 +1294,8 @@ class _Handler(BaseHTTPRequestHandler):
                 db.update_audio_path(merged_id, str(merged_audio))
             except ValueError as e:
                 logger.warning(
-                    "Merge audio skipped: %s", e,
+                    "Merge audio skipped: %s",
+                    e,
                 )
             except Exception:
                 logger.error("Merge audio concat failed", exc_info=True)
@@ -1248,6 +1304,7 @@ class _Handler(BaseHTTPRequestHandler):
         # matches split symmetry; user's manually-typed name is replaced
         # if the LLM returns a better one.
         self._regenerate_title(db, merged_id)
+        self._trigger_knowledge_export(merged_id)
 
         return {"ok": True, "session_id": merged_id}, 200
 
@@ -1295,11 +1352,7 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": False, "error": "Cannot split at the first segment"}, 400
 
         audio_dir = (
-            Path.home()
-            / "Library"
-            / "Application Support"
-            / "Escriba"
-            / "audio"
+            Path.home() / "Library" / "Application Support" / "Escriba" / "audio"
         )
         new_id_preview = str(uuid.uuid4())  # used only for temp filenames
         part1_tmp = None
@@ -1344,17 +1397,21 @@ class _Handler(BaseHTTPRequestHandler):
                 db.update_audio_path(new_id, str(new_audio_path))
             except Exception:
                 logger.error(
-                    "Could not finalize second-half WAV", exc_info=True,
+                    "Could not finalize second-half WAV",
+                    exc_info=True,
                 )
             try:
                 part1_tmp.replace(Path(orig_audio_path))
             except Exception:
                 logger.error(
-                    "Could not finalize first-half WAV", exc_info=True,
+                    "Could not finalize first-half WAV",
+                    exc_info=True,
                 )
 
         first_title = self._regenerate_title(db, session_id)
         second_title = self._regenerate_title(db, new_id)
+        self._trigger_knowledge_export(session_id)
+        self._trigger_knowledge_export(new_id)
 
         return {
             "ok": True,
@@ -1402,6 +1459,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not db.get_session(session_id):
             return {"ok": False, "error": "Session not found"}, 404
         db.rename_session(session_id, name)
+        self._trigger_knowledge_export(session_id)
         return {"ok": True}, 200
 
     def _delete_session(self, session_id: str) -> tuple[dict, int]:
@@ -1438,6 +1496,16 @@ class _Handler(BaseHTTPRequestHandler):
             with self.app_state._lock:
                 config = self.app_state.config
             segments = retranscribe_from_wav(audio_path, config)
+            if not segments and audio_path.stat().st_size > WAV_HEADER_BYTES:
+                logger.warning(
+                    "Re-transcribe of %s produced no segments; keeping transcript",
+                    session_id,
+                )
+                return {
+                    "ok": False,
+                    "error": "Re-transcription produced no segments; "
+                    "existing transcript preserved",
+                }, 500
 
             db.delete_segments(session_id)
             if segments:
@@ -1450,6 +1518,7 @@ class _Handler(BaseHTTPRequestHandler):
                 db.set_session_status(session_id, "completed")
                 self._discard_stale_session_error(session_id)
 
+            self._trigger_knowledge_export(session_id)
             return {"ok": True, "segment_count": len(segments)}, 200
         except Exception as e:
             logger.error("Re-transcribe failed: %s", e, exc_info=True)
@@ -1475,7 +1544,10 @@ class _Handler(BaseHTTPRequestHandler):
         if not segments:
             return {"ok": False, "error": "No segments in this session"}, 400
         transcript = _segments_to_transcript(segments)
-        prompt = (body.get("prompt") or "").strip() or "Summarize the key points, decisions, and action items. Respond in the same language as the transcript."
+        prompt = (
+            (body.get("prompt") or "").strip()
+            or "Summarize the key points, decisions, and action items. Respond in the same language as the transcript."
+        )
         with self.app_state._lock:
             config = self.app_state.config
         default_model = config.streaming.summary_model if config else "auto"
@@ -1491,7 +1563,10 @@ class _Handler(BaseHTTPRequestHandler):
             from escriba.app.session import _generate_custom_notes
 
             notes = _generate_custom_notes(
-                transcript, prompt, model=model, system_prompt=system_prompt,
+                transcript,
+                prompt,
+                model=model,
+                system_prompt=system_prompt,
                 user_notes=user_notes,
             )
             if notes:
@@ -1587,7 +1662,9 @@ class _Handler(BaseHTTPRequestHandler):
             update_config_toml({"streaming": {"summary_model": model_id}}, config_path)
             self._reload_live_config()
         except Exception:
-            logger.warning("Could not persist summary_model=%s", model_id, exc_info=True)
+            logger.warning(
+                "Could not persist summary_model=%s", model_id, exc_info=True
+            )
 
     def _reload_live_config(self):
         """Reload escriba.toml + .env into the running config (shared write path)."""
@@ -1656,7 +1733,10 @@ class _Handler(BaseHTTPRequestHandler):
         with self.app_state._lock:
             session = self.app_state.session
             if session and session.is_active:
-                return {"ok": False, "error": "Stop recording before changing settings"}, 409
+                return {
+                    "ok": False,
+                    "error": "Stop recording before changing settings",
+                }, 409
 
         import os
         import shutil
@@ -1693,6 +1773,7 @@ class _Handler(BaseHTTPRequestHandler):
                     os.environ["HUGGINGFACE_HUB_TOKEN"] = v
             # API keys changed — flush the models cache so next /api/models reflects them.
             from escriba.summarize.llm_summary import invalidate_models_cache
+
             invalidate_models_cache()
 
         toml_data = {k: v for k, v in body.items() if k not in env_key_names}
@@ -1771,8 +1852,7 @@ class _Handler(BaseHTTPRequestHandler):
         # Validate/serialize every update up front so a bad value aborts before
         # any partial write to disk.
         formatted = {
-            key: _Handler._format_env_line(key, value)
-            for key, value in updates.items()
+            key: _Handler._format_env_line(key, value) for key, value in updates.items()
         }
 
         updated_keys = set()
@@ -1848,6 +1928,7 @@ class _Handler(BaseHTTPRequestHandler):
         if notes is None:
             notes = ""
         db.save_notes(session_id, notes)
+        self._trigger_knowledge_export(session_id)
         return {"ok": True}, 200
 
     def _append_notes(self, session_id: str, body: dict) -> tuple[dict, int]:
@@ -1860,6 +1941,7 @@ class _Handler(BaseHTTPRequestHandler):
         combined = db.append_notes(session_id, new_notes)
         if combined is None:
             return {"ok": False, "error": "Session not found"}, 404
+        self._trigger_knowledge_export(session_id)
         return {"ok": True, "notes_text": combined}, 200
 
     def _save_session_user_notes(self, session_id: str, body: dict) -> tuple[dict, int]:
@@ -1872,6 +1954,7 @@ class _Handler(BaseHTTPRequestHandler):
         if user_notes is None:
             user_notes = ""
         db.save_user_notes(session_id, user_notes)
+        self._trigger_knowledge_export(session_id)
         return {"ok": True}, 200
 
     # --- Folders ---
