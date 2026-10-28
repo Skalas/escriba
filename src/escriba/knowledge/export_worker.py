@@ -1,4 +1,5 @@
 """Background knowledge-store export worker."""
+
 from __future__ import annotations
 
 import logging

@@ -263,6 +263,7 @@ def test_respond_unexpected_swallows_client_disconnect_on_write(
 # T4 — TG1: lock-hold latency
 # ---------------------------------------------------------------------------
 
+
 def test_tg1_try_start_recording_releases_lock_before_slow_start(
     app_state: AppState,
 ) -> None:
@@ -315,6 +316,7 @@ def test_tg1_try_start_recording_releases_lock_before_slow_start(
 # T4 — TG2: on-the-wire HTTP dispatch
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def live_server(minimal_config: AppConfig, tmp_path: Path):
     """Start the real HTTP server on an ephemeral port; yield (server, port)."""
@@ -327,7 +329,9 @@ def live_server(minimal_config: AppConfig, tmp_path: Path):
     db.close()
 
 
-def _http(port: int, method: str, path: str, body: bytes = b"", headers: dict | None = None) -> tuple[int, dict]:
+def _http(
+    port: int, method: str, path: str, body: bytes = b"", headers: dict | None = None
+) -> tuple[int, dict]:
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     # State-changing routes require application/json (CSRF guard). Default it
     # here so routing tests behave like a real same-origin client; the Host
@@ -346,7 +350,9 @@ def _http(port: int, method: str, path: str, body: bytes = b"", headers: dict | 
 def test_tg2_get_update_check_returns_payload(live_server) -> None:
     """GET /api/update-check returns structured update metadata."""
     _, port = live_server
-    fake = UpdateCheckResult(ok=True, current="1.3.0", latest="v1.4.0", update_available=True)
+    fake = UpdateCheckResult(
+        ok=True, current="1.3.0", latest="v1.4.0", update_available=True
+    )
     with patch("escriba.app.server.check_for_updates", return_value=fake):
         status, body = _http(port, "GET", "/api/update-check")
     assert status == 200
@@ -423,6 +429,7 @@ def test_tg2_unknown_route_returns_404(live_server) -> None:
 # ---------------------------------------------------------------------------
 # T5 — chunked / missing Content-Length body-size cap
 # ---------------------------------------------------------------------------
+
 
 def test_t5_no_content_length_oversized_body_rejected_413(app_state: AppState) -> None:
     """Bodies without Content-Length that exceed the cap must return 413."""
@@ -517,8 +524,14 @@ def test_t6_post_user_notes_persists(live_server) -> None:
 
     payload = json.dumps({"user_notes": "my context"}).encode()
     status, body = _http(
-        port, "POST", f"/api/sessions/{session_id}/user-notes", payload,
-        headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
+        port,
+        "POST",
+        f"/api/sessions/{session_id}/user-notes",
+        payload,
+        headers={
+            "Content-Type": "application/json",
+            "Content-Length": str(len(payload)),
+        },
     )
     assert status == 200
     assert body["ok"] is True
@@ -536,8 +549,14 @@ def test_t6_post_user_notes_bad_body_returns_400(live_server) -> None:
 
     payload = json.dumps({"user_notes": 123}).encode()
     status, body = _http(
-        port, "POST", f"/api/sessions/{session_id}/user-notes", payload,
-        headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
+        port,
+        "POST",
+        f"/api/sessions/{session_id}/user-notes",
+        payload,
+        headers={
+            "Content-Type": "application/json",
+            "Content-Length": str(len(payload)),
+        },
     )
     assert status == 400
     assert body["ok"] is False
@@ -551,15 +570,23 @@ def test_t6_post_user_notes_null_coerced_to_empty_string(live_server) -> None:
 
     payload = json.dumps({"user_notes": None}).encode()
     status, body = _http(
-        port, "POST", f"/api/sessions/{session_id}/user-notes", payload,
-        headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
+        port,
+        "POST",
+        f"/api/sessions/{session_id}/user-notes",
+        payload,
+        headers={
+            "Content-Type": "application/json",
+            "Content-Length": str(len(payload)),
+        },
     )
     assert status == 200
     assert body["ok"] is True
 
     stored = db.get_session(session_id)
     assert stored is not None
-    assert stored["user_notes"] == "", f"Expected empty string, got {stored['user_notes']!r}"
+    assert stored["user_notes"] == "", (
+        f"Expected empty string, got {stored['user_notes']!r}"
+    )
 
 
 def test_t6_post_user_notes_malformed_path_returns_404(live_server) -> None:
@@ -567,8 +594,14 @@ def test_t6_post_user_notes_malformed_path_returns_404(live_server) -> None:
     _, port = live_server
     payload = json.dumps({"user_notes": "x"}).encode()
     status, body = _http(
-        port, "POST", "/api/sessions//user-notes", payload,
-        headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
+        port,
+        "POST",
+        "/api/sessions//user-notes",
+        payload,
+        headers={
+            "Content-Type": "application/json",
+            "Content-Length": str(len(payload)),
+        },
     )
     assert status == 404
     assert body["ok"] is False
@@ -585,10 +618,12 @@ def test_recording_user_notes_rejects_stale_session_id(app_state: AppState) -> N
 
     app_state.session = ActiveSession()  # type: ignore[assignment]
 
-    payload, status = handler._save_recording_user_notes({
-        "session_id": "old-sess",
-        "user_notes": "stale notes",
-    })
+    payload, status = handler._save_recording_user_notes(
+        {
+            "session_id": "old-sess",
+            "user_notes": "stale notes",
+        }
+    )
     assert status == 409
     assert payload["ok"] is False
     assert payload["error"] == "Session mismatch"
@@ -623,10 +658,12 @@ def test_recording_user_notes_persists_for_matching_session_id(
 
     app_state.session = ActiveSession()  # type: ignore[assignment]
 
-    payload, status = handler._save_recording_user_notes({
-        "session_id": db_id,
-        "user_notes": "live jots",
-    })
+    payload, status = handler._save_recording_user_notes(
+        {
+            "session_id": db_id,
+            "user_notes": "live jots",
+        }
+    )
     assert status == 200
     assert payload["ok"] is True
     row = app_state.db.get_session(db_id)
@@ -648,10 +685,12 @@ def test_recording_user_notes_accepts_legacy_timestamp_session_id(
 
     app_state.session = ActiveSession()  # type: ignore[assignment]
 
-    payload, status = handler._save_recording_user_notes({
-        "session_id": "20260101_120000",
-        "user_notes": "legacy id jots",
-    })
+    payload, status = handler._save_recording_user_notes(
+        {
+            "session_id": "20260101_120000",
+            "user_notes": "legacy id jots",
+        }
+    )
     assert status == 200
     assert payload["ok"] is True
     row = app_state.db.get_session(db_id)
@@ -662,6 +701,7 @@ def test_recording_user_notes_accepts_legacy_timestamp_session_id(
 # ---------------------------------------------------------------------------
 # v1.0.0 T4 — /api/version no longer leaks the absolute project_dir path
 # ---------------------------------------------------------------------------
+
 
 def test_t4_version_omits_absolute_project_dir(live_server) -> None:
     """GET /api/version returns build info but not the absolute project_dir path."""
@@ -678,7 +718,10 @@ def test_t4_version_omits_absolute_project_dir(live_server) -> None:
 # persister (a server-side save would race the SPA and duplicate/clobber notes).
 # ---------------------------------------------------------------------------
 
-def test_t5_generate_notes_returns_without_server_side_persist(app_state: AppState) -> None:
+
+def test_t5_generate_notes_returns_without_server_side_persist(
+    app_state: AppState,
+) -> None:
     """Generation returns the notes but must NOT itself write notes_text.
 
     The SPA combines the generated text with any existing notes and persists it
@@ -883,6 +926,7 @@ def test_start_update_install_rejects_during_start_in_progress(
 # Atomic append-notes (#174 / T1–T4)
 # ---------------------------------------------------------------------------
 
+
 def test_append_notes_endpoint_persists_combined_text(app_state: AppState) -> None:
     """POST /api/sessions/:id/append-notes atomically merges notes."""
     db = app_state.db
@@ -905,9 +949,7 @@ def test_append_notes_endpoint_persists_combined_text(app_state: AppState) -> No
 
 def test_append_notes_endpoint_404_for_missing_session(app_state: AppState) -> None:
     handler = _make_handler(app_state)
-    payload, status = handler._append_notes(
-        "missing-session", {"append_text": "nope"}
-    )
+    payload, status = handler._append_notes("missing-session", {"append_text": "nope"})
     assert status == 404
     assert payload["ok"] is False
 
@@ -915,7 +957,9 @@ def test_append_notes_endpoint_404_for_missing_session(app_state: AppState) -> N
 def test_start_recording_accepts_optional_session_name(app_state: AppState) -> None:
     """POST /api/recording/start may pre-title the session from a calendar event."""
     handler = _make_handler(app_state)
-    with patch.object(app_state, "try_start_recording", return_value=({"ok": True}, 200)) as mocked:
+    with patch.object(
+        app_state, "try_start_recording", return_value=({"ok": True}, 200)
+    ) as mocked:
         payload, status = handler._start_recording({"name": "Standup with design"})
     assert status == 200
     assert payload["ok"] is True
@@ -1015,7 +1059,9 @@ def test_calendar_calendars_surfaces_permission_error(app_state: AppState) -> No
     assert "permission_hint" in payload
 
 
-def test_calendar_calendars_surfaces_allowlist_mismatch_hint(app_state: AppState) -> None:
+def test_calendar_calendars_surfaces_allowlist_mismatch_hint(
+    app_state: AppState,
+) -> None:
     from escriba.config import AppConfig, CalendarConfig
 
     handler = _make_handler(app_state)
@@ -1057,7 +1103,6 @@ def test_calendar_calendars_rejects_foreign_host(live_server) -> None:
     assert body["ok"] is False
 
 
-
 def test_stopped_session_error_is_served_once(app_state: AppState) -> None:
     """A stop-time error must not pin the dashboard banner open forever."""
     handler = _make_handler(app_state)
@@ -1075,7 +1120,10 @@ def test_stopped_session_error_is_served_once(app_state: AppState) -> None:
 
     def consume():
         error, stopped.error = stopped.error, None
-        stopped.get_status.return_value = {**stopped.get_status.return_value, "error": None}
+        stopped.get_status.return_value = {
+            **stopped.get_status.return_value,
+            "error": None,
+        }
         return error
 
     stopped.consume_error.side_effect = consume
@@ -1103,7 +1151,9 @@ def test_active_session_error_is_not_consumed(app_state: AppState) -> None:
     active.consume_error.assert_not_called()
 
 
-def test_active_session_oneshot_warning_survives_status_call(app_state: AppState) -> None:
+def test_active_session_oneshot_warning_survives_status_call(
+    app_state: AppState,
+) -> None:
     """A one-shot warning set at start() must survive a status call that does not render it.
 
     W1: direct/mic_fallback are set once and never re-armed. If _get_status
@@ -1126,20 +1176,28 @@ def test_active_session_oneshot_warning_survives_status_call(app_state: AppState
     second = handler._get_status()
 
     # Warning visible on both calls — peek does not consume it.
-    assert first.get("warning") == "Microphone unavailable — recording system audio only"
+    assert (
+        first.get("warning") == "Microphone unavailable — recording system audio only"
+    )
     assert first.get("warning_source") == "direct"
-    assert second.get("warning") == "Microphone unavailable — recording system audio only"
+    assert (
+        second.get("warning") == "Microphone unavailable — recording system audio only"
+    )
     # consume_warning_item must never be called while is_active.
     active.consume_warning_item.assert_not_called()
     assert active.peek_warning_item.call_count == 2
 
 
-def test_retranscribe_clears_errored_status(app_state: AppState, tmp_path: Path) -> None:
+def test_retranscribe_clears_errored_status(
+    app_state: AppState, tmp_path: Path
+) -> None:
     """A rebuilt transcript supersedes the stop-time failure."""
     handler = _make_handler(app_state)
     db = app_state.db
     assert db is not None
-    session_id = db.create_session(name="s", model="tiny", language="es", backend="mlx-whisper")
+    session_id = db.create_session(
+        name="s", model="tiny", language="es", backend="mlx-whisper"
+    )
     db.stop_session(session_id, status="error")
     audio = tmp_path / "s.wav"
     audio.write_bytes(b"RIFF")
@@ -1163,7 +1221,9 @@ def test_retranscribe_discards_stale_session_error(
     handler = _make_handler(app_state)
     db = app_state.db
     assert db is not None
-    session_id = db.create_session(name="s", model="tiny", language="es", backend="mlx-whisper")
+    session_id = db.create_session(
+        name="s", model="tiny", language="es", backend="mlx-whisper"
+    )
     db.stop_session(session_id, status="error")
     audio = tmp_path / "s.wav"
     audio.write_bytes(b"RIFF")
@@ -1187,6 +1247,7 @@ def test_retranscribe_discards_stale_session_error(
 
 
 # --- capture warnings on the status endpoint --------------------------------
+
 
 def test_status_endpoint_delivers_the_warning_once(tmp_path) -> None:
     """A stopped session's warning is delivered once, not pinned to the banner.

@@ -1,4 +1,5 @@
 """LocalMarkdownAdapter — writes one .md per session."""
+
 from __future__ import annotations
 import logging
 from pathlib import Path

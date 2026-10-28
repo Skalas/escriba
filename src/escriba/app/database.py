@@ -68,9 +68,7 @@ def _create_session_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_folder ON sessions(folder_id)"
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)")
 
 
 def _dedupe_segments_and_create_unique_index(conn: sqlite3.Connection) -> None:
@@ -197,9 +195,7 @@ class Database:
                 legacy_db = _LEGACY_DB_DIR / _DB_FILENAME
                 if legacy_db.exists():
                     shutil.copy2(legacy_db, db_path)
-                    logger.info(
-                        "Migrated database from %s to %s", legacy_db, db_path
-                    )
+                    logger.info("Migrated database from %s to %s", legacy_db, db_path)
         self._db_path = db_path
         self._lock = threading.RLock()
         with self._lock:
@@ -288,7 +284,11 @@ class Database:
     # --- Sessions ---
 
     def create_session(
-        self, name: str, model: str | None = None, language: str | None = None, backend: str | None = None
+        self,
+        name: str,
+        model: str | None = None,
+        language: str | None = None,
+        backend: str | None = None,
     ) -> str:
         with self._lock:
             session_id = str(uuid.uuid4())
@@ -356,7 +356,9 @@ class Database:
                 return None
             session = dict(row)
             if self._is_missing_audio_path(session.get("audio_path")):
-                relinked = self._relink_session_audio_if_orphaned(session_id, commit=True)
+                relinked = self._relink_session_audio_if_orphaned(
+                    session_id, commit=True
+                )
                 if relinked:
                     session["audio_path"] = relinked
             return session
@@ -459,11 +461,7 @@ class Database:
     @staticmethod
     def _escape_like(value: str) -> str:
         """Escape SQL LIKE wildcards so user input is matched literally."""
-        return (
-            value.replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     @staticmethod
     def _segment_snippet(text: str, max_len: int = 160) -> str:
@@ -549,7 +547,9 @@ class Database:
 
         merged.sort(key=lambda item: item["id"])
         merged.sort(
-            key=lambda item: item["start_time"] if item["start_time"] is not None else 0.0
+            key=lambda item: (
+                item["start_time"] if item["start_time"] is not None else 0.0
+            )
         )
         merged.sort(key=lambda item: item["_started_at"] or "", reverse=True)
         for item in merged:
@@ -559,7 +559,9 @@ class Database:
 
     def delete_segments(self, session_id: str):
         with self._lock:
-            self._conn.execute("DELETE FROM segments WHERE session_id = ?", (session_id,))
+            self._conn.execute(
+                "DELETE FROM segments WHERE session_id = ?", (session_id,)
+            )
             self._conn.commit()
 
     def update_audio_path(self, session_id: str, audio_path: str):
@@ -858,9 +860,7 @@ class Database:
             new_part = (new_notes or "").strip()
             if not new_part:
                 return row["notes_text"] or ""
-            combined = (
-                f"{existing}{separator}{new_part}" if existing else new_part
-            )
+            combined = f"{existing}{separator}{new_part}" if existing else new_part
             self._conn.execute(
                 "UPDATE sessions SET notes_text = ? WHERE id = ?",
                 (combined, session_id),

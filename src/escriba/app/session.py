@@ -63,7 +63,14 @@ NOTES_MAX_TOKENS = 4096
 # macOS names the built-in input after the machine model ("MacBook Pro
 # Microphone", "Mac Studio Microphone"), which is the only handle Core Audio
 # gives us to tell it apart from Continuity and USB inputs.
-_BUILT_IN_MIC_MARKERS = ("macbook", "imac", "mac mini", "mac studio", "mac pro", "built-in")
+_BUILT_IN_MIC_MARKERS = (
+    "macbook",
+    "imac",
+    "mac mini",
+    "mac studio",
+    "mac pro",
+    "built-in",
+)
 
 
 def _is_built_in_mic(name: str) -> bool:
@@ -83,7 +90,12 @@ class _SessionStartAborted(Exception):
 # entirely); direct/mic_fallback are lowest (set-once informational at start()).
 # Unknown keys fall back to insertion order via the loop-exit path in peek_warning_item.
 _WARNING_PRIORITY = (
-    "tap_dead", "system", "mic", "mic_shared_output", "mic_fallback", "direct",
+    "tap_dead",
+    "system",
+    "mic",
+    "mic_shared_output",
+    "mic_fallback",
+    "direct",
 )
 
 
@@ -116,12 +128,18 @@ class TranscriptionSession:
         self._warnings_lock = threading.Lock()  # W1: guards _warnings across threads
         self._silent_system_seconds: float = 0.0
         self._system_degraded: bool = False
-        self._last_system_signal_ts: float = 0.0   # B4: wall-clock of last non-silent system pcm
-        self._system_tracking_started: float = 0.0  # B4: when _track_system_silence first called
+        self._last_system_signal_ts: float = (
+            0.0  # B4: wall-clock of last non-silent system pcm
+        )
+        self._system_tracking_started: float = (
+            0.0  # B4: when _track_system_silence first called
+        )
         self._mic_rms_low_seconds: float = 0.0
         self._mic_degraded: bool = False
-        self._last_mic_signal_ts: float = 0.0   # B4: wall-clock of last healthy mic rms
-        self._mic_tracking_started: float = 0.0  # B4: when _track_mic_degradation first called
+        self._last_mic_signal_ts: float = 0.0  # B4: wall-clock of last healthy mic rms
+        self._mic_tracking_started: float = (
+            0.0  # B4: when _track_mic_degradation first called
+        )
         self._tap_dead: bool = False  # W4: latched when Swift tap emits '[tap] dead'
         self._audio_file: Path | None = None
         self._audio_writer: wave.Wave_write | None = None
@@ -156,7 +174,9 @@ class TranscriptionSession:
 
     def _open_audio_file(self):
         """Open a WAV file to record the session audio."""
-        audio_dir = Path.home() / "Library" / "Application Support" / "Escriba" / "audio"
+        audio_dir = (
+            Path.home() / "Library" / "Application Support" / "Escriba" / "audio"
+        )
         audio_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{self.db_session_id or self.session_id}.wav"
         self._audio_file = audio_dir / filename
@@ -178,7 +198,12 @@ class TranscriptionSession:
             except Exception as e:
                 logger.error("Failed to close audio file: %s", e)
             self._audio_writer = None
-        if self._audio_file and self._audio_file.exists() and self.db and self.db_session_id:
+        if (
+            self._audio_file
+            and self._audio_file.exists()
+            and self.db
+            and self.db_session_id
+        ):
             self.db.update_audio_path(self.db_session_id, str(self._audio_file))
 
     def start(self):
@@ -211,11 +236,13 @@ class TranscriptionSession:
             model_size = self.config.streaming.model_size
             language = self.config.streaming.language
             name = (
-                (self.initial_name or "").strip()
-                or f"Session {self.start_time.strftime('%Y-%m-%d %H:%M')}"
-            )
+                self.initial_name or ""
+            ).strip() or f"Session {self.start_time.strftime('%Y-%m-%d %H:%M')}"
             self.db_session_id = self.db.create_session(
-                name=name, model=model_size, language=language, backend=backend,
+                name=name,
+                model=model_size,
+                language=language,
+                backend=backend,
             )
 
         # Open WAV file for audio recording
@@ -232,7 +259,9 @@ class TranscriptionSession:
             language = self.config.streaming.language
             logger.info(
                 "Session config: backend=%s, model=%s, language=%s",
-                backend, model_size, language,
+                backend,
+                model_size,
+                language,
             )
 
             try:
@@ -255,7 +284,9 @@ class TranscriptionSession:
                     self.screen_capture = ScreenCaptureAudioCapture(
                         sample_rate=self.config.audio.sample_rate,
                         channels=self.config.audio.channels,
-                        audio_callback=self._on_system_audio if audio_source == "both" else self._on_audio_data,
+                        audio_callback=self._on_system_audio
+                        if audio_source == "both"
+                        else self._on_audio_data,
                         on_tap_dead=self._on_tap_dead,
                     )
                 except ImportError as e:
@@ -274,14 +305,18 @@ class TranscriptionSession:
                 try:
                     self._start_mic_capture(mix_mode=audio_source == "both")
                 except Exception as e:
-                    logger.error("Failed to start microphone capture: %s", e, exc_info=True)
+                    logger.error(
+                        "Failed to start microphone capture: %s", e, exc_info=True
+                    )
                     # In "both" mode the system tap is already running, so a mic
                     # failure costs one of two sources — not the recording. A
                     # headset in Bluetooth call mode routinely holds the mic
                     # exclusively; dropping the whole session over it loses the
                     # very call the user meant to capture.
                     if audio_source == "mic":
-                        self.error = "Failed to start microphone capture. Check permissions."
+                        self.error = (
+                            "Failed to start microphone capture. Check permissions."
+                        )
                         raise _SessionStartAborted from e
                     self._set_warning(
                         "direct",
@@ -321,14 +356,18 @@ class TranscriptionSession:
             try:
                 self.screen_capture.stop()
             except Exception:
-                logger.warning("Failed to stop screen capture during abort", exc_info=True)
+                logger.warning(
+                    "Failed to stop screen capture during abort", exc_info=True
+                )
             self.screen_capture = None
         self._close_audio_file()
         if self.db and self.db_session_id:
             try:
                 self.db.stop_session(self.db_session_id, status="error")
             except Exception:
-                logger.warning("Failed to mark session errored during abort", exc_info=True)
+                logger.warning(
+                    "Failed to mark session errored during abort", exc_info=True
+                )
 
     @staticmethod
     def _run_cleanup_step(name: str, step) -> bool:
@@ -533,12 +572,15 @@ class TranscriptionSession:
             logger.warning(
                 "Wanted to avoid the shared device %r but every alternative "
                 "failed to open — recording it after all; system audio may go "
-                "silent if the Bluetooth profile switches", shared_name,
+                "silent if the Bluetooth profile switches",
+                shared_name,
             )
             return
         logger.info(
             "Default mic %r is also the output device — recording %r to keep "
-            "playback in A2DP", shared_name, self._mic_device_name,
+            "playback in A2DP",
+            shared_name,
+            self._mic_device_name,
         )
         self._set_warning(
             "mic_shared_output",
@@ -564,7 +606,8 @@ class TranscriptionSession:
             return
         logger.warning(
             "Default mic %r unavailable; recording with %r instead",
-            default_name, self._mic_device_name,
+            default_name,
+            self._mic_device_name,
         )
         self._set_warning(
             "mic_fallback",
@@ -583,9 +626,7 @@ class TranscriptionSession:
             "Try stopping and restarting the recording.",
         )
 
-    def _candidate_mic_devices(
-        self, demote_default: bool = False
-    ) -> list[int | None]:
+    def _candidate_mic_devices(self, demote_default: bool = False) -> list[int | None]:
         """The default input, then the built-in mic, then anything else.
 
         The built-in mic outranks the rest of the fallbacks because the other
@@ -664,7 +705,11 @@ class TranscriptionSession:
             )
             actual_rate = target_rate
         except Exception:
-            logger.info("Mic doesn't support %dHz, using native %dHz with resampling", target_rate, device_rate)
+            logger.info(
+                "Mic doesn't support %dHz, using native %dHz with resampling",
+                target_rate,
+                device_rate,
+            )
             actual_rate = device_rate
 
         needs_resample = actual_rate != target_rate
@@ -697,7 +742,11 @@ class TranscriptionSession:
         self._mic_device_name = sd.query_devices(device, kind="input")["name"]
         logger.info(
             "Started microphone capture (device=%s, device_rate=%s, target_rate=%s, resample=%s, mix_mode=%s)",
-            self._mic_device_name, actual_rate, target_rate, needs_resample, mix_mode,
+            self._mic_device_name,
+            actual_rate,
+            target_rate,
+            needs_resample,
+            mix_mode,
         )
 
     def _chunk_pcm_byte_size(self) -> int:
@@ -845,7 +894,8 @@ class TranscriptionSession:
         # that has never produced any is usually just an idle output device.
         saw_signal = self._last_system_signal_ts > 0.0
         threshold = (
-            SYSTEM_SILENCE_WARN_SECONDS if saw_signal
+            SYSTEM_SILENCE_WARN_SECONDS
+            if saw_signal
             else SYSTEM_SILENCE_COLD_WARN_SECONDS
         )
         if silent_seconds < threshold:
@@ -860,7 +910,8 @@ class TranscriptionSession:
             )
         # W3: mic_active is True only when mic is actually capturing in this session.
         mic_active = (
-            self.config.audio.audio_source in ("both", "mic") and self._mic_stream is not None
+            self.config.audio.audio_source in ("both", "mic")
+            and self._mic_stream is not None
         )
         minutes = int(threshold // 60)
         if mic_active:
@@ -926,7 +977,8 @@ class TranscriptionSession:
             logger.warning(
                 "Microphone level has been below RMS threshold (%d dBFS) for %.0fs "
                 "— mic may be degraded or muted",
-                _MIC_THRESHOLD_DBFS, silent_seconds,
+                _MIC_THRESHOLD_DBFS,
+                silent_seconds,
             )
         self._set_warning(
             "mic",
@@ -1018,7 +1070,7 @@ class TranscriptionSession:
         if not self.db or not self.db_session_id:
             return
         segments = self.get_segments()
-        new_segments = segments[self._last_segment_count:]
+        new_segments = segments[self._last_segment_count :]
         if new_segments:
             self.db.add_segments(self.db_session_id, new_segments)
             self._last_segment_count = len(segments)
@@ -1244,6 +1296,7 @@ class TranscriptionSession:
             name=f"knowledge-export-{session_id[:8]}",
         ).start()
 
+
 def _markdown_list_item(value: object) -> str | None:
     """Return stripped text for a bullet item, or None when empty."""
     if value is None:
@@ -1283,9 +1336,7 @@ def _summary_to_markdown(result: dict[str, Any]) -> str:
     key_points = result.get("key_points")
     if isinstance(key_points, list):
         bullets = [
-            f"- {text}"
-            for item in key_points
-            if (text := _markdown_list_item(item))
+            f"- {text}" for item in key_points if (text := _markdown_list_item(item))
         ]
         if bullets:
             sections.append("## Key Points\n\n" + "\n".join(bullets))
@@ -1303,9 +1354,7 @@ def _summary_to_markdown(result: dict[str, Any]) -> str:
     decisions = result.get("decisions")
     if isinstance(decisions, list):
         bullets = [
-            f"- {text}"
-            for item in decisions
-            if (text := _markdown_list_item(item))
+            f"- {text}" for item in decisions if (text := _markdown_list_item(item))
         ]
         if bullets:
             sections.append("## Decisions\n\n" + "\n".join(bullets))
@@ -1313,9 +1362,7 @@ def _summary_to_markdown(result: dict[str, Any]) -> str:
     topics = result.get("topics")
     if isinstance(topics, list):
         bullets = [
-            f"- {text}"
-            for item in topics
-            if (text := _markdown_list_item(item))
+            f"- {text}" for item in topics if (text := _markdown_list_item(item))
         ]
         if bullets:
             sections.append("## Topics\n\n" + "\n".join(bullets))
@@ -1417,7 +1464,10 @@ def _build_custom_prompt(
                 transcript=transcript, prompt=prompt, user_notes=user_notes or ""
             )
         except Exception:
-            logger.warning("DEFAULT_SYSTEM_PROMPT format also failed; using bare fallback", exc_info=True)
+            logger.warning(
+                "DEFAULT_SYSTEM_PROMPT format also failed; using bare fallback",
+                exc_info=True,
+            )
             rendered = f"{transcript}\n\n{prompt}"
 
     if not has_user_notes_placeholder and user_notes:
@@ -1445,7 +1495,9 @@ def _generate_custom_notes(
         resolve_provider_and_model,
     )
 
-    full_prompt = _build_custom_prompt(transcript, prompt, system_prompt, user_notes=user_notes)
+    full_prompt = _build_custom_prompt(
+        transcript, prompt, system_prompt, user_notes=user_notes
+    )
 
     provider, model_id = resolve_provider_and_model(model)
 
@@ -1466,13 +1518,20 @@ def _generate_custom_notes(
             # Thinking off: on a long transcript the reasoning block eats the
             # whole token budget and the model never reaches its answer.
             return _call_llm_local(
-                full_prompt, model_id, max_tokens=NOTES_MAX_TOKENS, enable_thinking=False
+                full_prompt,
+                model_id,
+                max_tokens=NOTES_MAX_TOKENS,
+                enable_thinking=False,
             )
         elif provider == "gemini":
-            resolved_model = model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+            resolved_model = (
+                model_id or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+            )
             return _call_llm_gemini(full_prompt, resolved_model)
         elif provider == "claude":
-            resolved_model = model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+            resolved_model = (
+                model_id or os.getenv("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
+            )
             return _call_llm_claude(
                 full_prompt, resolved_model, max_tokens=NOTES_MAX_TOKENS
             )
@@ -1503,7 +1562,10 @@ def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
 
     logger.info(
         "Re-transcribing %s: %d frames, backend=%s, model=%s",
-        audio_path.name, total_frames, backend, model_size,
+        audio_path.name,
+        total_frames,
+        backend,
+        model_size,
     )
 
     transcriber = _build_transcriber(config, realtime_output=False)
@@ -1512,7 +1574,7 @@ def retranscribe_from_wav(audio_path: Path, config) -> list[dict]:
     min_bytes = sample_rate * 2  # at least 0.5s
 
     for offset in range(0, len(all_pcm), chunk_bytes):
-        chunk_pcm = all_pcm[offset:offset + chunk_bytes]
+        chunk_pcm = all_pcm[offset : offset + chunk_bytes]
         if len(chunk_pcm) < min_bytes:
             continue
         wav_data = _build_wav(chunk_pcm, sample_rate, channels)

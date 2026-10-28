@@ -118,6 +118,7 @@ def build_session_export_txt(
 
     return "\n".join(lines)
 
+
 logger = logging.getLogger(__name__)
 
 

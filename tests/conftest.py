@@ -1,4 +1,5 @@
 """Shared test helpers and fixtures."""
+
 from __future__ import annotations
 
 from io import BytesIO
